@@ -137,6 +137,10 @@ export default defineConfig({
       ],
     },
 
+    socialLinks: [
+      { icon: "github", link: "https://github.com/netonframework/neton" },
+    ],
+
     search: {
       provider: "local",
     },
