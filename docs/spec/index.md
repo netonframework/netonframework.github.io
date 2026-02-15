@@ -21,10 +21,11 @@
 
 ## 安全
 
-- [安全规范 v1](./security.md) — Principal、Authenticator、Guard、授权管道
+- [安全规范 v1.2](./security.md) — Identity、Authenticator、Guard、@Permission、PermissionEvaluator、授权管道
 - [安全 v1.1 API Freeze](./security-v1.1-freeze.md) — UserId、Identity 接口冻结
 - [JWT 认证器规范](./jwt-authenticator.md) — JWT HS256 认证
-- [AuthenticationPrincipal 设计](./authentication-principal-design.md) — @AuthenticationPrincipal 注解
+- [安全 v1.2 API Freeze](./security-v1.2-freeze.md) — @Permission、PermissionEvaluator、路由组安全配置冻结
+- [@CurrentUser 设计](./authentication-principal-design.md) — @CurrentUser 注入机制设计
 
 ## 日志
 

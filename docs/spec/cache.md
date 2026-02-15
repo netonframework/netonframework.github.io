@@ -1,10 +1,10 @@
-# Neton 缓存规范 v1（设计冻结）
+# Neton 缓存规范
 
 > **定位**：Neton 统一缓存抽象，**性能优先**。一级缓存（L1）本地内存 + 二级缓存（L2）**强绑定 neton-redis**，用户不关心层级，只关心「读/写/失效」语义与吞吐。
 >
 > **状态**：**v1 设计冻结**。实现只允许按本规范填空，不新增抽象；「九、实现冻结约束」6 条为工程约束，必须遵守。
 >
-> **v1 范围**：Cache / CacheManager / CacheConfig / Cacheable / CacheEvict；L1(LRU+TTL) + L2(仅 neton-redis)；Cache-aside；key 前缀由 CacheConfig；**二进制序列化**（不默认 JSON）；进程内 singleflight。
+> **v1 范围**：Cache / CacheManager / CacheConfig / Cacheable / CachePut / CacheEvict；L1(LRU+TTL) + L2(仅 neton-redis)；Cache-aside；key 前缀由 CacheConfig；**二进制序列化**（不默认 JSON）；进程内 singleflight；注解式缓存。
 
 ---
 
@@ -16,6 +16,7 @@
 | **L2 强绑定** | v1 的 L2 **仅** neton-redis 实现，不做可插拔 L2；保证行为与依赖可控。 |
 | **用户不关心层级** | 业务只面对 `Cache` / `@Cacheable`，由框架负责 L1→L2→loader 的透明分层。 |
 | **Cache-aside** | 读：先 L1 → miss 再 L2 → miss 再 loader 回填 L2+L1；写：默认 evict（最一致），可选 put。 |
+| **声明式缓存** | 读 = getOrPut 声明式；更新/删除 = 方法成功返回后再 put/delete；key 写法直觉。 |
 
 ---
 
@@ -141,53 +142,240 @@ interface CacheManager {
 
 ---
 
-## 五、注解与 DX（v1 最小集）
+## 五、注解式缓存（v1 最小集）
 
-### 5.1 @Cacheable（v1 冻结行为）
+### 5.1 @Cacheable —— 读缓存 + 回源 + 回填
 
-- 方法级：返回值按 key 缓存；key 由 CacheConfig 的 key 模板或默认 hash(args) 决定；TTL 可覆盖 CacheConfig。
-- 示例：`@Cacheable("user", key = "user:{id}")`，或仅 `@Cacheable("user")` 用参数哈希。
-- **v1 不支持**：`condition`、`unless`、`beforeInvocation`、复杂组合（划清界限）。
+**语义**：等价于对「方法返回值」做 **getOrPut**：命中直接返回；miss 执行方法体（loader），结果非 null 则 put，null 是否缓存由 CacheConfig.nullTtl 决定；进程内 per-key singleflight（底座已实现）。
 
-### 5.2 @CacheEvict（v1 冻结行为）
+```kotlin
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.SOURCE)
+annotation class Cacheable(
+    val name: String,           // 缓存名，对应 CacheConfig.name / getCache(name)
+    val key: String = "",       // 空则默认 hash(args)；否则模板，如 "id:{id}"，占位符 {paramName}
+    val ttlMs: Long = 0,        // 0 表示用 CacheConfig.ttl；>0 表示该条 TTL 毫秒
+)
+```
 
-- 方法**执行后**触发失效；默认只 delete 对应 key；`allEntries = true` 时 clear 该 cache。
-- **v1 不支持**：condition、unless、beforeInvocation、复杂组合。
+**v1 冻结行为**：
 
-### 5.3 编程式 API
+| 行为 | 说明 |
+|------|------|
+| 命中 | 直接返回缓存值，不执行方法。 |
+| miss | 执行方法体，返回值作为 loader 结果。 |
+| 回填 | 结果非 null → put(key, value, ttl)；null → 若 config.nullTtl != null 则缓存 null（底座语义）。 |
+| 异常 | 方法抛异常 → 不写入缓存；singleflight 时等待方共享同一异常。 |
+| TTL | ttlMs > 0 用注解 ttl（毫秒转 Duration），否则用 CacheConfig.ttl。 |
+| key | key 非空则按模板解析（见 5.5）；空则默认 hash(方法参数列表)。 |
 
-- `cacheManager.getCache&lt;User, User&gt;("user").getOrPut(id) { userRepo.findById(id) }`
-- 或由 KSP/字节码在 `@Cacheable` 方法外围生成等价 getOrPut + 调用。
+**示例**：
+
+```kotlin
+@Cacheable(name = "user", key = "id:{id}", ttlMs = 10_000)
+suspend fun getUser(id: Long): User?
+```
 
 ---
 
-## 六、并发与进阶（v1 可选）
+### 5.2 @CachePut —— 方法成功返回后 put
+
+**语义**：**先执行方法，成功返回后再 put**（失败不 put）。用于更新缓存（如更新用户后写回缓存）。
+
+```kotlin
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.SOURCE)
+annotation class CachePut(
+    val name: String,
+    val key: String = "",
+    val ttlMs: Long = 0,         // 0 表示用 CacheConfig.ttl
+)
+```
+
+**v1 冻结行为**：
+
+| 行为 | 说明 |
+|------|------|
+| 执行顺序 | **先执行方法体**，再根据返回值处理缓存。 |
+| 成功 | 方法正常返回（非异常）→ put(key, 返回值, ttl)。 |
+| 失败 | 方法抛异常 → **不 put**。 |
+| key / ttl | 同 @Cacheable：key 模板或 hash(args)；ttlMs 为 0 用 config.ttl。 |
+
+**示例**：
+
+```kotlin
+@CachePut(name = "user", key = "id:{id}")
+suspend fun updateUser(id: Long, req: UpdateUserReq): User
+```
+
+---
+
+### 5.3 @CacheEvict —— 方法成功返回后 delete / clear
+
+**语义**：**先执行方法，成功返回后再删缓存**（失败不删）。单 key 删除或 allEntries 时 clear。
+
+```kotlin
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.SOURCE)
+annotation class CacheEvict(
+    val name: String,
+    val key: String = "",       // 空且 allEntries=false 时用 hash(args)
+    val allEntries: Boolean = false,
+)
+```
+
+**v1 冻结行为**：
+
+| 行为 | 说明 |
+|------|------|
+| 执行顺序 | **先执行方法体**，再根据结果处理缓存。 |
+| 成功 | 方法正常返回 → allEntries=false 则 delete(key)；allEntries=true 则 clear()。 |
+| 失败 | 方法抛异常 → **不 delete / 不 clear**。 |
+| key | allEntries=false 时：key 非空按模板，空则 hash(args)；allEntries=true 时 key 忽略。 |
+
+**示例**：
+
+```kotlin
+@CacheEvict(name = "user", key = "id:{id}")
+suspend fun deleteUser(id: Long)
+
+@CacheEvict(name = "user", allEntries = true)
+suspend fun reloadAllUsers()
+```
+
+---
+
+### 5.4 编程式 API
+
+- `cacheManager.getCache<User, User>("user").getOrPut(id) { userRepo.findById(id) }`
+- 或由 KSP/字节码在 `@Cacheable` 方法外围生成等价 getOrPut + 调用。
+
+### 5.5 Key 表达式（v1 冻结）
+
+- **只支持**：
+  - **`{paramName}`**：从方法参数按名取值，与 @Lock、Parameter Binding 同一套解析。
+  - **可选**：`{param.property}`（嵌套属性）；v1 若支持需谨慎，KMP 反射成本高，**更建议 KSP 展开为显式参数参与 key**，避免运行时反射。
+- **默认**：未提供 key 或 key 为空时，**hash(方法参数列表)** 作为 keyPart（与底座 2.5 一致）。
+- **v1 明确不做**：❌ SpEL、❌ 复杂表达式、❌ 函数调用。
+
+### 5.6 CacheName 与前缀（不要求业务手写）
+
+- 业务只写 **name**（如 `"user"`），不写 Redis 前缀。
+- **v1 冻结 key 结构（三段）**：
+  1. **RedisClient 全局前缀**：如 `neton:`（由 RedisConfig.keyPrefix 配置）
+  2. **模块命名空间**：cache / lock / kv 等由各模块自己加（cache 层用 `cache:{name}`）
+  3. **业务 key**：`{cacheName}:{keyPart}`（如 `user:id:123`）
+- 最终示例：`neton:cache:user:id:123`、lock 为 `neton:lock:order:123`。所有 Redis 数据一眼可辨模块；clear/scan 的 match 规则简单、不误删；用户永远不手写前缀。
+- 注解层仅传递 **name** 与 **解析后的 keyPart**，由 CacheManager.getCache(name) 与底层 Redis 完成完整 key 拼接。
+
+---
+
+## 六、KSP 织入模板（与 CacheManager/Cache 对接）
+
+### 6.1 生成代码与底座的对接方式
+
+- 在 **编译期** 识别带 @Cacheable / @CachePut / @CacheEvict 的 **suspend 函数**。
+- 生成逻辑为「在方法外围包一层」：先解析 key（模板或 hash），再调用 Cache 的 getOrPut / put / delete / clear。
+
+**（v1 冻结）CacheManager 的获取方式**：生成代码**必须**通过 HttpContext 的应用上下文获取 CacheManager，不得在各模块自建获取方式：
+
+```kotlin
+val ctx = context.getApplicationContext() ?: throw HttpException(500, "Cache annotations require NetonContext")
+val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "CacheManager not bound. Install cache { } to enable @Cacheable/@CachePut/@CacheEvict.")
+```
+
+- 拿不到 NetonContext 或 CacheManager 时，**抛 HttpException 500**（与 validation registry 的 warn 规则相比更硬，避免静默回退导致行为不一致）。
+- 这样 KSP 模板唯一，不会出现"各写各的"分歧。
+
+**（v1 冻结）返回值与序列化器约束**：
+
+- v1 **只支持** 返回类型为 **@Serializable** 且能稳定拿到 **serializer()** 的类型。
+- 返回类型**允许 T?**（Cacheable 常见）。
+- **不支持**：Result\<T\>、Flow\<T\>、List\<T\> 等复杂泛型（除非实现验证过 serializer 可稳定获取）。
+- **Unit / Nothing**：**不允许**标注 @Cacheable / @CachePut（KSP 编译期报错）。
+- 上述写进规范后，KSP 实现不再纠结边界情况。
+
+**（v1 冻结）key 默认 hash(args) 的稳定性**：
+
+- **必须稳定、可重现**，否则版本升级会导致 key 变化、缓存全失效。
+- **输入**：按**参数声明顺序**，**包含 null**；使用**稳定编码**（禁止依赖 `toString()` 等不稳定表示）。
+- **输出**：v1 写死一种算法，例如 **xxHash / Murmur3 / SHA-256 截断** 之一，生成**定长 hex 字符串**；实现与文档一致，不可随版本更换算法。
+
+**（v1 冻结）@CacheEvict allEntries 的 L2 行为**：
+
+- `allEntries=true` → 调用 `cache.clear()`；其 L2 行为**直接遵循 9.2**：SCAN 优先，无 SCAN 时在 allowKeysClear 下可 KEYS 过渡并 WARN，否则抛异常。注解层不再单独定义 clear 语义。
+
+### 6.2 @Cacheable 织入骨架
+
+```kotlin
+// 伪代码：KSP 为 suspend fun getUser(id: Long): User? 生成（handler 内）
+val ctx = context.getApplicationContext() ?: throw HttpException(500, "Cache annotations require NetonContext")
+val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "CacheManager not bound. Install cache { } to enable @Cacheable.")
+val cache = cacheManager.getCache<User>("user")
+val key = if (keyTemplate.isEmpty()) stableHashKey(args) else resolveKeyTemplate(keyTemplate, args)  // 与 @Lock 同套解析
+val ttl = if (annotation.ttlMs > 0) annotation.ttlMs.toLong().milliseconds else null
+return cache.getOrPut(key, ttl) { ctrl.getUser(id) }
+```
+
+- **resolveKeyTemplate**：与 @Lock 的 key 解析同一套（如 `args.first("id")` 等拼成 key 字符串）。
+- **stableHashKey(args)**：按 6.1 的 hash 稳定性规则，按参数声明顺序生成稳定 hex。
+- **ctrl.getUser(id)**：原方法调用（参数列表与 handler 入参一致）。
+
+### 6.3 @CachePut 织入骨架
+
+```kotlin
+val result = ctrl.updateUser(id, req)  // 先执行业务
+val ctx = context.getApplicationContext() ?: throw HttpException(500, "...")
+val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "...")
+val cache = cacheManager.getCache<User>("user")
+val key = if (keyTemplate.isEmpty()) stableHashKey(args) else resolveKeyTemplate(keyTemplate, args)
+val ttl = if (annotation.ttlMs > 0) annotation.ttlMs.toLong().milliseconds else null
+cache.put(key, result, ttl)
+return result
+```
+
+- **先执行方法**，再 put；若方法抛异常，不执行 put。
+
+### 6.4 @CacheEvict 织入骨架
+
+```kotlin
+// 单 key
+ctrl.deleteUser(id)  // 先执行业务
+val ctx = context.getApplicationContext() ?: throw HttpException(500, "...")
+val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "...")
+val cache = cacheManager.getCache<Any?>("user")  // 仅 delete/clear，类型可擦除
+val key = resolveKeyTemplate(keyTemplate, args)
+cache.delete(key)
+// return 原方法返回值（Unit 则 return Unit）
+
+// allEntries = true
+ctrl.reloadAllUsers()
+val cache = cacheManager.getCache<Any?>("user")
+cache.clear()  // L2 行为遵循 9.2（SCAN 优先、KEYS 过渡）
+```
+
+- **先执行方法**，再 delete 或 clear；若方法抛异常，不删缓存。**allEntries 时 clear() 的 L2 语义见 9.2**。
+
+### 6.5 依赖与放置
+
+- **注解定义**：放在 **neton-cache**（与 Cache/CacheManager 同模块）。
+- **KSP 处理器**：放在 **neton-ksp**（与 @Lock 织入一起）；生成代码 import neton.cache.*，应用模块需依赖 neton-cache。
+- **CacheManager 注入**：v1 固定为 **context.getApplicationContext()!!.get(CacheManager::class)**，拿不到则抛 HttpException 500（见 6.1）。
+
+---
+
+## 七、并发与进阶（v1 可选）
 
 - **Singleflight（进程内）**：同一进程内、同一 key、并发 getOrPut 时，只执行一次 loader，其余等待并共享结果；v1 **只做进程内 singleflight**，避免惊群。
-- **v1 不做**：❌ Redis 分布式锁、❌ RedLock、❌ 跨进程 singleflight（复杂度与错误成本极高，真需要的场景极少）。**分布式锁**由 **neton-redis** 提供，见 [Neton-Redis-Lock-Spec-v1](./redis-lock.md)；业务需跨进程互斥时使用 `@Lock` 或 `LockManager`，与缓存语义分离。
+- **v1 不做**：❌ Redis 分布式锁、❌ RedLock、❌ 跨进程 singleflight（复杂度与错误成本极高，真需要的场景极少）。**分布式锁**由 **neton-redis** 提供，见相关 Lock 规范；业务需跨进程互斥时使用 `@Lock` 或 `LockManager`，与缓存语义分离。
 - **缓存预热**：v1 可不做，由业务在启动时主动 getOrPut 或 put。
 
 ---
 
-## 七、模块与依赖
+## 八、模块与依赖
 
 - **neton-cache**：定义 `Cache`、`CacheManager`、`CacheConfig`、注解；实现 L1(LRU+TTL)；**依赖 neton-redis**，L2 仅使用 neton-redis 提供的接口（如 RedisClient 或专为 cache 封装的 Backing）。
 - **neton-redis**：需提供可供 cache 使用的「按 key 读写二进制或字符串」的能力；若当前仅有 String，可先扩展 `getBytes`/`setBytes` 或约定 value 为 UTF-8 编码的字符串（过渡），再在 cache 侧用二进制 codec 写入前序列化为 bytes 再转 String 存（不理想）；**更推荐 neton-redis 直接支持 ByteArray value**，供 neton-cache 存二进制 payload。
-
----
-
-## 八、v1 准冻结清单
-
-- [x] Cache / CacheManager 接口签名（不含 contains）
-- [x] CacheConfig（name、**codec**、ttl、nullTtl、maxSize、enableL1、**allowKeysClear**；前缀由 neton-redis 统一管理）
-- [x] Key 规则：默认 hash(args)；支持 `"user:{id}"` 模板；**前缀由 RedisConfig.keyPrefix + cache:name**；❌ 无 SpEL/复杂表达式/函数调用
-- [x] L2 强绑定 neton-redis，不开放其它 L2
-- [x] 序列化：**默认 ProtoBuf**，可选 JSON（仅调试）；**value 带 Codec Header（9.1）**；Redis raw bytes
-- [x] Cache-aside 读路径；写默认 evict（delete/clear）
-- [x] @Cacheable / @CacheEvict：仅 key/ttl/allEntries，❌ 无 condition/unless/beforeInvocation
-- [x] 进程内 singleflight；❌ 无分布式锁/RedLock/跨进程 singleflight
-- [x] 可选：null 缓存
-- [x] **实现冻结约束（v1.0）**：见下一节，共 6 条，实现必须遵守。
 
 ---
 
@@ -222,7 +410,37 @@ CODEC: 0x00 = null（无 payload）；0x01 = ProtoBuf；0x02 = Json
 
 ---
 
-## 十、v2 预留
+## 十、v1 准冻结清单
+
+- [x] Cache / CacheManager 接口签名（不含 contains）
+- [x] CacheConfig（name、**codec**、ttl、nullTtl、maxSize、enableL1、**allowKeysClear**；前缀由 neton-redis 统一管理）
+- [x] Key 规则：默认 hash(args)；支持 `"user:{id}"` 模板；**前缀由 RedisConfig.keyPrefix + cache:name**；❌ 无 SpEL/复杂表达式/函数调用
+- [x] L2 强绑定 neton-redis，不开放其它 L2
+- [x] 序列化：**默认 ProtoBuf**，可选 JSON（仅调试）；**value 带 Codec Header（9.1）**；Redis raw bytes
+- [x] Cache-aside 读路径；写默认 evict（delete/clear）
+- [x] @Cacheable / @CachePut / @CacheEvict：仅 key/ttl/allEntries，❌ 无 condition/unless/beforeInvocation
+- [x] 进程内 singleflight；❌ 无分布式锁/RedLock/跨进程 singleflight
+- [x] 可选：null 缓存
+- [x] **实现冻结约束（v1.0）**：见第九节，共 6 条，实现必须遵守
+- [x] **KSP 织入模板**：通过 HttpContext 获取 CacheManager；返回值仅 @Serializable；key hash 稳定性；@CacheEvict allEntries 遵循 9.2
+
+---
+
+## 十一、v1 不做的（明确边界）
+
+| 不做 | 说明 |
+|------|------|
+| condition / unless | 不按条件决定是否缓存/失效；v2 可选。 |
+| beforeInvocation | Put/Evict 一律 **方法成功返回后** 再写/删。 |
+| 多 cacheName 组合 | 一个注解只绑一个 name。 |
+| 分布式 cachefill | 不做「跨实例 singleflight」；业务需时在 loader 外包 @Lock，显式选锁 key。 |
+| SpEL / 复杂 key 表达式 | 仅 `{paramName}`（及可选 `{param.property}` + KSP 展开）。 |
+| 其它 L2 实现 | v2 预留（如 Caffeine-only、其它分布式缓存）。 |
+| contains(key) | v2 预留，统计/调试用途。 |
+
+---
+
+## 十二、v2 预留
 
 - 其它 L2 实现（如 Caffeine-only、其它分布式缓存）
 - JSON 作为可选 Codec（调试或兼容）、contains(key)、统计指标
@@ -230,12 +448,12 @@ CODEC: 0x00 = null（无 payload）；0x01 = ProtoBuf；0x02 = Json
 
 ---
 
-## 十一、下一步（实现顺序）
+## 十三、下一步（实现顺序）
 
 1. **最小可用版本（不做注解）**：neton-cache 模块；Cache / CacheManager / CacheConfig；L1(LRU+TTL)；L2(neton-redis)；getOrPut + **进程内 singleflight**。✅ 已完成。
-2. **注解层**：@Cacheable / @CachePut / @CacheEvict + KSP 织入；语义与 API 见 **[Neton-Cache-Annotation-Spec-v1](./cache-annotation.md)**（3 个注解、key 模板与 @Lock 同套）。
+2. **注解层**：@Cacheable / @CachePut / @CacheEvict + KSP 织入；语义与 API 见第五、六节（3 个注解、key 模板与 @Lock 同套）。
 3. **neton-redis**：ByteArray 读写、SCAN/KEYS 降级已就绪。
 
 ---
 
-**文档状态**：**v1 设计冻结**。实现须遵守「九、实现冻结约束（v1.0 附录）」6 条；注解层按 [Neton-Cache-Annotation-Spec-v1](./cache-annotation.md) 填空；后续扩展走 v2，不推翻本版。
+**文档状态**：**v1 设计冻结**。实现须遵守「九、实现冻结约束（v1.0 附录）」6 条；注解层按第五、六节填空；后续扩展走 v2，不推翻本版。

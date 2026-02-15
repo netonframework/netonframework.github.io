@@ -22,7 +22,7 @@
 ### 2.1 推断顺序（优先级从高到低）
 
 1. **显式注解**：若参数带 `@PathVariable` / `@Query` / `@QueryParam` / `@Body` / `@FormParam` / `@Header` / `@Cookie`，按注解语义解析，**不**做约定推断。
-2. **上下文类型注入**：若参数类型为 `HttpContext` / `HttpRequest` / `HttpResponse` / `HttpSession` / `Principal`，直接注入，不占「参数名 → 来源」规则。
+2. **上下文类型注入**：若参数类型为 `HttpContext` / `HttpRequest` / `HttpResponse` / `HttpSession` / `Identity`，直接注入，不占「参数名 → 来源」规则。
 3. **Path 匹配**：若路由 pattern 含 `{paramName}` 且方法参数名为 `paramName`，则从路径解析，等价于 `@PathVariable("paramName")`。
 4. **Body 推断**：若 HTTP 方法为 POST / PUT / PATCH 且参数类型为**复杂类型**（data class / 非简单类型），则从请求体 JSON 反序列化，等价于 `@Body`。
 5. **Query 推断**：若为 GET / HEAD / DELETE（或无 body 的请求）且参数为**简单类型**，则从 Query 解析，参数名即 query key，等价于 `@QueryParam(name)`。
@@ -94,7 +94,7 @@ fun create(@Body request: BindingUserRequest): String
   - `HttpContext` / `context: HttpContext` → 当前请求上下文
   - 可选别名：支持 `ctx: Ctx` 或 `c: Ctx`（类型别名指向 `HttpContext`）以提升人体工程学
   - `HttpRequest` / `HttpResponse` / `HttpSession` → 请求 / 响应 / 会话
-  - `Principal`（或 `@AuthenticationPrincipal`）→ 当前认证用户
+  - `Identity`（或 `@CurrentUser`）→ 当前认证用户
 - 这些参数**不需要**任何注解。
 
 ### 2.8 歧义硬规则（避免用户猜框架）
@@ -138,7 +138,7 @@ fun create(@Body request: BindingUserRequest): String
 | 表单字段 | `@FormParam("name")` | 显式 |
 | 请求头 | `@Header("X-Name")` | 必须显式 |
 | Cookie | `@Cookie("name")` | 必须显式 |
-| 当前用户 | 无（类型 `Principal`）或 `@AuthenticationPrincipal` | 按类型注入 |
+| 当前用户 | 无（类型 `Identity`）或 `@CurrentUser` | 按类型注入 |
 
 **结论**：日常仅需记 3 类——`@Path`/`@PathVariable`、`@Query`/`@QueryParam`、`@Header` / `@Cookie`；其余靠约定。
 

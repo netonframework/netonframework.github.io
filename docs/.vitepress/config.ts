@@ -100,14 +100,18 @@ export default defineConfig({
         {
           text: "安全",
           items: [
-            { text: "安全规范 v1", link: "/spec/security" },
+            { text: "安全规范 v1.2", link: "/spec/security" },
             {
               text: "安全 v1.1 API Freeze",
               link: "/spec/security-v1.1-freeze",
             },
+            {
+              text: "安全 v1.2 API Freeze",
+              link: "/spec/security-v1.2-freeze",
+            },
             { text: "JWT 认证器规范", link: "/spec/jwt-authenticator" },
             {
-              text: "AuthenticationPrincipal 设计",
+              text: "@CurrentUser 设计",
               link: "/spec/authentication-principal-design",
             },
           ],

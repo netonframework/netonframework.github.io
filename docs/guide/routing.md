@@ -88,18 +88,22 @@ class SimpleController {
 
 ### 认证用户注入
 
-使用 `@AuthenticationPrincipal` 注解注入当前认证用户信息：
+使用 `@CurrentUser` 注解或直接声明 `Identity` 类型参数注入当前认证用户信息：
 
 ```kotlin
 @Controller("/simple")
 class SimpleController {
     @Get("/profile")
-    fun getProfile(@AuthenticationPrincipal user: Principal?): String {
-        return if (user != null) {
-            "当前用户: ${user.id}, 角色: ${user.roles}"
-        } else {
-            "未认证用户"
-        }
+    @RequireAuth
+    fun getProfile(@CurrentUser identity: Identity): String {
+        return "当前用户: ${identity.id}, 角色: ${identity.roles}"
+    }
+
+    @Get("/visitor")
+    @AllowAnonymous
+    fun visitor(identity: Identity?): String {
+        // Identity 类型自动注入，无需 @CurrentUser
+        return identity?.id ?: "未认证用户"
     }
 }
 ```
@@ -178,11 +182,20 @@ class HttpMethodController {
 [[groups]]
 name = "admin"
 mount = "/admin"
+requireAuth = true
+allowAnonymous = ["/login", "/register"]
 
 [[groups]]
 name = "app"
 mount = "/app"
 ```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | String | 路由组名称 |
+| `mount` | String | URL 前缀 |
+| `requireAuth` | Boolean | 该组是否默认要求认证（默认 false） |
+| `allowAnonymous` | List&lt;String&gt; | 白名单路径，即使 requireAuth=true 也允许匿名（默认空） |
 
 ### 目录约定
 
@@ -230,8 +243,10 @@ class AdminIndexController {
 
 路由组中的控制器可以使用安全注解控制访问权限：
 
-- `@RequireAuth` -- 标记在类上，该控制器所有方法默认需要认证
-- `@AllowAnonymous` -- 标记在方法上，覆盖类级别的认证要求，允许匿名访问
+- `@RequireAuth` -- 标记在类或方法上，要求认证
+- `@AllowAnonymous` -- 标记在类或方法上，覆盖认证要求，允许匿名访问（优先级最高）
+- `@Permission("system:user:edit")` -- 标记在类或方法上，要求指定权限
+- `@CurrentUser` -- 标记在方法参数上，注入当前 Identity（Identity 类型参数可省略此注解）
 
 ### 模块化路由组
 

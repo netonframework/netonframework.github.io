@@ -67,7 +67,7 @@ data class UserRole(
 
 ## Table 操作（KSP 生成）
 
-KSP 会为每个标注了 `@Table` 的 Entity 自动生成对应的 Table 对象（如 `User` -> `UserTable`）。Table 实现了 `Table&lt;T&gt;` 接口，提供完整的单表 CRUD 能力：
+KSP 会为每个标注了 `@Table` 的 Entity 自动生成对应的 Table 对象（如 `User` -> `UserTable`）。Table 实现了 `Table&lt;T, ID&gt;` 接口（ID 由主键类型推导，常见为 Long），提供完整的单表 CRUD 能力：
 
 ### 基础 CRUD
 
@@ -110,93 +110,75 @@ UserTable.updateBatch(users)
 
 ## 查询 DSL
 
-Neton 提供类型安全的查询 DSL，通过 `where` 构建条件：
+Neton 提供类型安全的查询 DSL，通过 `query { where { } }` 构建条件。`where` 块内使用 `ColumnRef` 与 `PredicateScope` 的 `all`、`and`、`or` 等：
+
+```kotlin
+import neton.database.dsl.ColumnRef
+```
 
 ### 基础查询
 
 ```kotlin
 // 等值查询
-val activeUsers = UserTable.where { User::status eq 1 }.list()
+val activeUsers = UserTable.query { where { ColumnRef("status") eq 1 } }.list()
 
 // 比较查询
-val adults = UserTable.where { User::age gt 18 }.list()
+val adults = UserTable.query { where { ColumnRef("age") gt 18 } }.list()
 
 // 模糊查询
-val matched = UserTable.where { User::name like "%Alice%" }.list()
+val matched = UserTable.query { where { ColumnRef("name") like "%Alice%" } }.list()
 
 // 查询全部
-val all = UserTable.where { all() }.list()
+val all = UserTable.query { where { all() } }.list()
 ```
 
 ### 组合条件
 
 ```kotlin
 // AND 组合
-val result = UserTable.where {
-    (User::status eq 1) and (User::age gt 18)
+val result = UserTable.query {
+    where { and(ColumnRef("status") eq 1, ColumnRef("age") gt 18) }
 }.list()
 
 // OR 组合
-val result = UserTable.where {
-    (User::name eq "Alice") or (User::name eq "Bob")
+val result = UserTable.query {
+    where { or(ColumnRef("name") eq "Alice", ColumnRef("name") eq "Bob") }
 }.list()
 ```
 
-### 排序、分页、限制
+### 排序、分页
 
 ```kotlin
-// 排序
-val sorted = UserTable.where { User::status eq 1 }
-    .orderBy(User::age, ascending = false)
-    .list()
+// 排序 + 分页（page 从 1 开始）
+val sorted = UserTable.query {
+    where { ColumnRef("status") eq 1 }
+    orderBy(ColumnRef("age").desc())
+    limitOffset(20, 0)
+}.list()
 
-// 限制数量
-val top10 = UserTable.where { User::status eq 1 }
-    .limit(10)
-    .list()
-
-// 分页（page 从 1 开始）
-val page = UserTable.where { User::status eq 1 }
-    .page(1, 20)
-    .list()
-
-// 获取分页信息（包含总数、总页数等）
-val pageResult = UserTable.where { User::status eq 1 }
-    .page(1, 20)
-    .listPage()
-// pageResult.items   -> List<User>
-// pageResult.total   -> 总记录数
-// pageResult.page    -> 当前页
-// pageResult.pageSize -> 每页大小
+// 分页（含 total、totalPages）
+val pageResult = UserTable.query { where { ColumnRef("status") eq 1 } }.page(1, 20)
+// pageResult.items      -> List<User>
+// pageResult.total      -> 总记录数
+// pageResult.page       -> 当前页
+// pageResult.size       -> 每页大小
 // pageResult.totalPages -> 总页数
 ```
 
-### 单条查询
+### 单条查询与计数
 
 ```kotlin
-// 获取第一条（可能为 null）
-val first: User? = UserTable.where { User::status eq 1 }.first()
+// 单条（等价于 list().firstOrNull()）
+val first = UserTable.query { where { ColumnRef("status") eq 1 }; limitOffset(1, 0) }.list().firstOrNull()
 
-// 获取唯一一条（不存在或多条时抛异常）
-val unique: User = UserTable.where { User::email eq "alice@example.com" }.one()
+// 条件查单条（便捷方法）
+val one = UserTable.oneWhere { ColumnRef("email") eq "alice@example.com" }
 
-// 是否存在
-val exists: Boolean = UserTable.where { User::email eq "alice@example.com" }.exists()
+// 条件是否存在
+val exists = UserTable.existsWhere { ColumnRef("email") eq "alice@example.com" }
 
 // 计数
-val count: Long = UserTable.where { User::status eq 1 }.count()
-```
-
-### 批量删除与更新
-
-```kotlin
-// 条件删除
-val deleted: Long = UserTable.where { User::status eq 0 }.delete()
-
-// 条件更新
-val updated: Long = UserTable.where { User::status eq 0 }.update {
-    // UpdateScope DSL
-}
+val count = UserTable.query { where { ColumnRef("status") eq 1 } }.count()
 ```
 
 ## 安装数据库组件
@@ -246,6 +228,7 @@ fun main(args: Array<String>) {
 ```kotlin
 import model.User
 import model.UserTable
+import neton.database.dsl.ColumnRef
 import neton.core.annotations.*
 import neton.core.http.*
 import neton.logging.Logger
@@ -257,7 +240,7 @@ class UserController(private val log: Logger) {
 
     @Get
     suspend fun all(): List<User> =
-        UserTable.where { User::status eq 1 }.list()
+        UserTable.query { where { ColumnRef("status") eq 1 } }.list()
 
     @Get("/{id}")
     suspend fun get(id: Long): User? {

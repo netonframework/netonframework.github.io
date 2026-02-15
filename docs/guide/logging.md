@@ -275,6 +275,7 @@ import neton.core.annotations.*
 import neton.core.http.*
 import neton.logging.Logger
 import neton.logging.Log
+import neton.database.dsl.ColumnRef
 
 @Controller("/api/orders")
 @Log
@@ -286,7 +287,7 @@ class OrderController(private val log: Logger) {
     ): List<Order> {
         log.info("order.list", mapOf("status" to status))
         return if (status != null) {
-            OrderTable.where { Order::status eq status }.list()
+            OrderTable.query { where { ColumnRef("status") eq status } }.list()
         } else {
             OrderTable.findAll()
         }

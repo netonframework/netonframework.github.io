@@ -38,12 +38,12 @@ Neton 的安全体系作为内建中间件，在每个请求的 handler 执行**
 
 ### 2.1 Authenticator（认证：你是谁）
 
-Authenticator 从请求中提取并验证身份，返回 `Identity`（或旧称 `Principal`）：
+Authenticator 从请求中提取并验证身份，返回 `Identity`：
 
 ```kotlin
 interface Authenticator {
-    suspend fun authenticate(context: RequestContext): Principal?
     val name: String
+    suspend fun authenticate(context: RequestContext): Identity?
 }
 ```
 
@@ -62,8 +62,7 @@ Guard 在认证之后检查当前用户是否有权访问目标资源：
 
 ```kotlin
 interface Guard {
-    suspend fun authorize(principal: Principal?, context: RequestContext): Boolean
-    val name: String
+    suspend fun checkPermission(identity: Identity?, context: RequestContext): Boolean
 }
 ```
 

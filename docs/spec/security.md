@@ -1,8 +1,8 @@
-# Neton 安全规范 v1
+# Neton 安全规范
 
-> **定位**：定义 Neton 安全模块的架构、接口、注解与请求处理流程。与 [Neton-Core-Spec v1](./core.md) 第八节一致，并整合 [AuthenticationPrincipal注解设计](./authentication-principal-design.md) 的设计目标与优化方向。
+> **定位**：定义 Neton 安全模块的架构、接口、注解、JWT 认证器、请求处理流程与契约测试。
 >
-> **参考**：历史安全设计（已统一为 Neton 命名）；本文以**当前实现**为准，差异与待优化项在文中注明。
+> **原则**：Native-first、轻量、类型安全、单点 fail-fast。
 
 ---
 
@@ -12,90 +12,190 @@
 
 | 目标 | 描述 |
 |------|------|
-| **认证与授权分离** | Authenticator 负责「你是谁」，Guard 负责「你能做什么」 |
+| **认证与授权分离** | Authenticator 负责「你是谁」，Guard + @Permission 负责「你能做什么」 |
 | **代码优先** | 支持 100% 代码注册认证/守卫逻辑，灵活可控 |
-| **注解驱动** | 控制器或方法可标记 `@AllowAnonymous`、`@RolesAllowed`、`@RequireAuth`、`@AuthenticationPrincipal` |
-| **统一 Principal 模型** | 登录用户信息标准化，支持后续授权、日志、审计 |
+| **注解驱动** | 控制器或方法可标记 `@AllowAnonymous`、`@RolesAllowed`、`@RequireAuth`、`@Permission`、`@CurrentUser` |
+| **统一 Identity 模型** | 登录用户信息标准化（id、roles、permissions），支持后续授权、日志、审计 |
+| **权限评估可扩展** | `PermissionEvaluator` fun interface，业务可替换实现 superadmin 等逻辑 |
 | **多种认证实现** | 支持 Session、JWT、Basic、Mock 等认证方案 |
-| **可选配置驱动** | 对简单场景提供 security.conf 支持（非必须） |
 | **Native-first** | 安全抽象层无 JVM 专有依赖，适配 Kotlin/Native 与协程 |
-
-### 1.2 与设计文档的命名统一
-
-- 设计文档中历史 **Kerisy** 已统一为 **Neton**
-- **Guard** 在旧设计中用于认证（authenticate），当前实现中 **Authenticator** 负责认证、**Guard** 负责授权，本规范采用后者
 
 ---
 
-## 二、核心接口
+## 二、类型体系
 
-### 2.1 Principal（用户主体）
+### 2.1 UserId（强类型 ID）
 
 ```kotlin
-interface Principal {
-    val id: String
-    val roles: List<String>
-    val attributes: Map<String, Any> get() = emptyMap()
-    
-    fun hasRole(role: String): Boolean
-    fun hasAnyRole(vararg roles: String): Boolean
-    fun hasAllRoles(vararg roles: String): Boolean
+@JvmInline
+value class UserId(val value: ULong) {
+    companion object {
+        fun parse(s: String): UserId = UserId(s.toULong())
+    }
 }
 ```
 
-| 方法 | 说明 |
+JWT / header / session 拿到的永远是 string，Authenticator 从 token 读出 `sub` 后调用 `UserId.parse(sub)` 得到 `UserId`。
+
+**UserId.parse 错误语义**：
+
+| 场景 | 异常 | HTTP 映射 |
+|------|------|-----------|
+| 解析失败（来自 token/session） | `AuthenticationException(code="InvalidUserId", message="Invalid user id", path="sub")` | 401 |
+| 解析失败（来自配置或内部调用） | 同上或 `ConfigTypeException` | 500 |
+
+**AuthenticationException 结构**：
+
+| 字段 | InvalidUserId 时 | 说明 |
+|------|-----------------|------|
+| `code` | `"InvalidUserId"` | 必须一致，禁止 "INVALID_USER_ID" 等变体 |
+| `message` | `"Invalid user id"` | 必须一致，供 ErrorResponse.body 和客户端国际化 |
+| `path` | `"sub"` | JWT/sub 场景必须设置；配置错误场景可选 |
+
+认证语义不应映射 400。parse 不得返回 nullable 或 silent fallback。
+
+### 2.2 Identity（用户身份）
+
+```kotlin
+// neton-core 定义
+interface Identity {
+    val id: String
+    val roles: Set<String>
+    val permissions: Set<String>
+
+    fun hasRole(role: String): Boolean = role in roles
+    fun hasPermission(p: String): Boolean = p in permissions
+    fun hasAnyRole(vararg rs: String): Boolean = rs.any { it in roles }
+    fun hasAllRoles(vararg rs: String): Boolean = rs.all { it in roles }
+    fun hasAnyPermission(vararg ps: String): Boolean = ps.any { it in permissions }
+    fun hasAllPermissions(vararg ps: String): Boolean = ps.all { it in permissions }
+}
+```
+
+| 属性 | 说明 |
 |------|------|
-| `id` | 用户唯一标识 |
-| `roles` | 角色列表 |
-| `attributes` | 扩展属性（如 permissions、tenantId 等） |
-| `hasRole` / `hasAnyRole` / `hasAllRoles` | 角色检查便捷方法 |
+| `id` | 用户唯一标识（String） |
+| `roles` | 角色集合（Set，大小写敏感） |
+| `permissions` | 权限集合（Set，大小写敏感，推荐 `module:action` 格式） |
 
-**v1 优化建议**：
-- 新增 `hasPermission(permission: String): Boolean` 作为可选扩展，从 `attributes["permissions"]` 读取
-- 提供 `UserPrincipal(id, roles, attributes)` 数据类实现
+**继承链**：
+- neton-core: `Identity { id: String, roles: Set, permissions: Set }`
+- neton-security: `Identity : core.Identity { userId: UserId; override val id = userId.value.toString() }`
+- `IdentityUser(userId, roles, permissions)` — 默认实现数据类
 
-### 2.2 Authenticator（认证器）
+**roles 与 permissions 定位**：
+
+| 维度 | roles | permissions |
+|------|-------|-------------|
+| 粒度 | 粗（路由组/模块级） | 细（操作级） |
+| Guard | @RolesAllowed | @Permission / PermissionEvaluator |
+| 典型使用 | AdminGuard、RoleGuard | 业务内 hasPermission 检查 |
+
+**权限字符串格式**：`resource:action`（如 `user:read`、`order:pay`）。不做 hierarchy/通配符。
+
+**roles/permissions 大小写**：统一按原样（case-sensitive）比较，必须由 issuer（token/session/DB）自行规范化，Neton 不做自动 lowercase。
+
+**不引入 attributes**：Identity 不包含 `attributes: Map<String, Any?>`，避免类型不安全、序列化困难。
+
+### 2.3 IdentityUser（默认实现）
+
+```kotlin
+data class IdentityUser(
+    override val userId: UserId,
+    override val roles: Set<String> = emptySet(),
+    override val permissions: Set<String> = emptySet()
+) : Identity
+```
+
+从 JWT array / List 构造时，必须对 roles/permissions 做 `toSet()`，保证去重。`toSet()` 仅去重完全相同字符串，不做 normalize。
+
+**用途**：MockAuthenticator、JwtAuthenticator、SessionAuthenticator 在无需查库时直接返回。业务应实现自己的 `User : Identity`，由 Authenticator 通过 UserService 加载。
+
+---
+
+## 三、核心接口
+
+### 3.1 Authenticator（认证器）
 
 ```kotlin
 interface Authenticator {
-    suspend fun authenticate(context: RequestContext): Principal?
     val name: String
+    suspend fun authenticate(context: RequestContext): Identity?
 }
 ```
 
-- **职责**：从请求中提取并验证身份（如 JWT、Session、Basic），返回 Principal 或 null
+- **职责**：从请求中提取并验证身份（如 JWT、Session、Basic），返回 Identity 或 null
 - **位置**：neton-core 定义接口，neton-security 提供实现
 
 **当前实现状态**：
-- **JwtAuthenticator** 已实现（见 [jwt-authenticator](./jwt-authenticator.md)）
-- MockAuthenticator、AnonymousAuthenticator 已实现
-- **SessionAuthenticator、BasicAuthenticator**：v1.1 计划，当前为 stub
 
-### 2.3 Guard（守卫 / 授权器）
+| 认证器 | 状态 | 说明 |
+|--------|------|------|
+| MockAuthenticator | ✅ 已实现 | 返回固定 Identity |
+| JwtAuthenticatorV1 | ✅ 已实现 | HS256，解析 sub/roles/perms |
+| SessionAuthenticator | ⚠️ 占位 | 需与 HttpSession 集成 |
+| BasicAuthenticator | ⚠️ 占位 | 需 Base64 解码 + userProvider |
+
+### 3.2 Guard（守卫 / 授权器）
 
 ```kotlin
 interface Guard {
-    suspend fun authorize(principal: Principal?, context: RequestContext): Boolean
-    val name: String
+    suspend fun checkPermission(identity: Identity?, context: RequestContext): Boolean
 }
 ```
 
 - **职责**：在已认证（或未认证）的前提下，检查是否有权访问当前资源
-- **命名统一**：Core Spec 使用 `checkPermission`，neton-security 使用 `authorize`。**本规范建议**：统一为 `authorize`，更符合「授权」语义；若需与 Core 接口对齐，可保留 `checkPermission` 作为别名
 
 **内置守卫**：
 
 | 名称 | 说明 |
 |------|------|
-| DefaultGuard | principal != null 即允许 |
-| PublicGuard / AnonymousGuard | 始终允许 |
-| AdminGuard | principal.hasRole("admin") |
+| RequireIdentityGuard | identity != null 即允许 |
+| AllowAllGuard | 始终允许 |
+| DefaultGuard | identity != null 即允许 |
+| PublicGuard | 始终允许 |
+| AdminGuard | identity.hasRole("admin") |
 | RoleGuard(roles, requireAll) | 需指定角色之一或全部 |
 | CustomGuard(name, authorizer) | 自定义 lambda |
 
-### 2.4 RequestContext（请求上下文）
+### 3.3 PermissionEvaluator（权限评估器）
 
-安全层使用的请求抽象，应由 HttpContext 适配：
+```kotlin
+fun interface PermissionEvaluator {
+    fun allowed(identity: Identity, permission: String, context: RequestContext): Boolean
+}
+```
+
+- **职责**：当路由标注 `@Permission("x:y")` 时，判定是否放行
+- **默认行为**（未设置自定义 evaluator 时）：`identity.hasPermission(permission)`
+- **典型扩展**：superadmin 绕过所有权限检查
+
+```kotlin
+security {
+    setPermissionEvaluator { identity, permission, context ->
+        identity.hasRole("superadmin") || identity.hasPermission(permission)
+    }
+}
+```
+
+### 3.4 SecurityAttributes（属性常量）
+
+```kotlin
+object SecurityAttributes {
+    const val IDENTITY = "identity"
+}
+```
+
+全链路统一使用 `SecurityAttributes.IDENTITY` 作为 HttpContext 属性键，禁止硬编码字符串。
+
+| 位置 | 引用方式 |
+|------|----------|
+| SecurityPreHandle（setAttribute / removeAttribute） | `SecurityAttributes.IDENTITY` |
+| ParameterResolver（CurrentUserResolver） | `SecurityAttributes.IDENTITY` |
+| KSP 生成代码（getAttribute） | `SecurityAttributes.IDENTITY` |
+| 契约测试（getAttribute 断言） | `SecurityAttributes.IDENTITY` |
+
+### 3.5 RequestContext（请求上下文）
 
 ```kotlin
 interface RequestContext {
@@ -103,46 +203,29 @@ interface RequestContext {
     val method: String
     val headers: Map<String, String>
     val routeGroup: String?
-    fun getQueryParameter(name: String): String?
-    fun getQueryParameters(): Map<String, List<String>>
-    suspend fun getBodyAsString(): String?
-    fun getSessionId(): String?
-    fun getRemoteAddress(): String?
 }
 ```
-
-**v1 最小实现**：RequestContext 放在 neton-http，仅需 method/path/headers/query/cookies/sessionId/remoteAddr；body 暂不读。
-
-### 2.5 AuthenticationContext
-
-```kotlin
-interface AuthenticationContext {
-    fun currentUser(): Any?
-}
-```
-
-- 供 ParameterBinder、业务代码等获取当前请求的 Principal
-- 实现应基于**请求级存储**（如 HttpContext.attributes），而非全局 ThreadLocal
 
 ---
 
-## 三、注解
+## 四、注解
 
-### 3.1 安全注解一览
+### 4.1 安全注解一览
 
 | 注解 | 作用目标 | 说明 |
 |------|----------|------|
-| `@AllowAnonymous` | CLASS, FUNCTION | 允许匿名访问，跳过认证要求 |
-| `@RolesAllowed(roles)` | CLASS, FUNCTION | 需具备指定角色之一 |
+| `@AllowAnonymous` | CLASS, FUNCTION | 允许匿名访问，优先级最高 |
 | `@RequireAuth` | CLASS, FUNCTION | 需认证，不限定角色 |
-| `@AuthenticationPrincipal(required)` | VALUE_PARAMETER | 注入当前 Principal |
+| `@RolesAllowed(roles)` | CLASS, FUNCTION | 需具备指定角色之一 |
+| `@Permission(value)` | CLASS, FUNCTION | 需具备指定权限，方法级覆盖类级 |
+| `@CurrentUser(required)` | VALUE_PARAMETER | 注入当前 Identity |
 
-### 3.2 @AuthenticationPrincipal
+### 4.2 @CurrentUser
 
 ```kotlin
 @Target(AnnotationTarget.VALUE_PARAMETER)
 @Retention(AnnotationRetention.RUNTIME)
-annotation class AuthenticationPrincipal(val required: Boolean = true)
+annotation class CurrentUser(val required: Boolean = true)
 ```
 
 | 参数 | 默认值 | 说明 |
@@ -150,287 +233,478 @@ annotation class AuthenticationPrincipal(val required: Boolean = true)
 | `required` | true | 未认证时抛异常 |
 | `required = false` | - | 未认证时注入 null，须配合 `@AllowAnonymous` |
 
-**用法示例**：
+**注入规则**（优先级从高到低）：
+
+| 优先级 | 规则 | 示例 |
+|--------|------|------|
+| 1 | 显式 `@CurrentUser` | `@CurrentUser user: User` |
+| 2 | 参数类型为 `Identity` 或其子类 → 自动注入 | `user: User` |
+| 3 | 可空类型 → `required = false` | `user: User?` |
+
+**KSP 生成代码**：
+
+```kotlin
+// 非空 Identity
+context.getAttribute(SecurityAttributes.IDENTITY) as Identity
+
+// 可空 Identity
+context.getAttribute(SecurityAttributes.IDENTITY) as? Identity
+```
+
+### 4.3 @Permission
+
+```kotlin
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.RUNTIME)
+annotation class Permission(val value: String)
+```
+
+**继承与覆盖规则**：
+
+| 场景 | 生效的 permission |
+|------|-------------------|
+| 仅类级 `@Permission("a")` | `"a"` |
+| 仅方法级 `@Permission("b")` | `"b"` |
+| 类级 `@Permission("a")` + 方法级 `@Permission("b")` | `"b"`（方法覆盖类） |
+| 无 `@Permission` | `null`（不触发权限检查） |
+
+**多注解 fail-fast**：同一方法或同一类上出现多个 `@Permission` 注解，KSP 编译期报错，拒绝生成代码。如需同时要求多个权限，使用组合 key（如 `@Permission("system:user:edit+delete")`），在 PermissionEvaluator 中解析。
+
+### 4.4 @CurrentUser 使用示例
+
+**必需认证模式**：
 
 ```kotlin
 @Get("/profile")
-fun getProfile(@AuthenticationPrincipal user: UserPrincipal): Response {
-    return Response.ok("Hello ${user.id}")
-}
-
-@Get("/welcome")
-@AllowAnonymous
-fun welcome(@AuthenticationPrincipal(required = false) user: UserPrincipal?): Response {
-    return if (user != null) Response.ok("欢迎回来，${user.id}！")
-           else Response.ok("欢迎游客！")
+@RequireAuth
+fun getProfile(@CurrentUser identity: Identity): String {
+    return "Hello ${identity.id}, 角色: ${identity.roles.joinToString(", ")}"
 }
 ```
 
-### 3.3 注解与路由的绑定
+**可选认证模式**：
 
-- KSP/ControllerScanner 在生成路由时，将 `@AllowAnonymous`、`@RolesAllowed`、`@RequireAuth` 等信息写入 `RouteDefinition` 的元数据（或 `parameterBindings` 中的 `AuthenticationPrincipal`）
-- 安全管道在执行前根据路由元数据决定：是否调用 Authenticator、是否调用 Guard、以及使用哪类 Guard
+```kotlin
+@Get("/welcome")
+@AllowAnonymous
+fun welcome(@CurrentUser(required = false) identity: Identity?): String {
+    return if (identity != null) "欢迎回来，${identity.id}！" else "欢迎游客用户！"
+}
+```
+
+**类型自动注入（无需注解）**：
+
+```kotlin
+@Get("/dashboard")
+@RequireAuth
+fun dashboard(identity: Identity): String {
+    // identity 自动从 HttpContext 注入
+    return "用户 ${identity.id} 的仪表板"
+}
+```
+
+**与 @Permission 结合**：
+
+```kotlin
+@Get("/dashboard")
+@RequireAuth
+@Permission("admin:dashboard:view")
+fun dashboard(@CurrentUser identity: Identity): String {
+    return "管理员 ${identity.id} 的仪表板"
+}
+```
+
+**与传统方式对比**：
+
+| 方面 | 传统方式 | @CurrentUser |
+|------|----------|-------------|
+| **代码量** | 多行样板代码 | 单行注解（或零注解） |
+| **类型安全** | 需要手动 cast | 编译时类型检查 |
+| **可读性** | 隐含的用户依赖 | 方法签名明确表达依赖 |
+| **测试友好** | 需要模拟 HttpContext | 直接传入 Identity 对象 |
 
 ---
 
-## 四、安全管道与请求流程
+## 五、安全管道与请求流程
 
-### 4.1 两种模式（v1.1 冻结语义）
-
-**默认无认证 ≠ 安全管道不存在**。v1 需要：安全管道存在，但默认是 no-op（或默认允许）。
+### 5.1 两种模式
 
 | 模式 | 条件 | 行为 |
 |------|------|------|
-| **模式 A** | Security 未安装（SecurityBuilder 不在 ctx） | currentUser() 返回 null；所有请求默认允许（等价 AllowAnonymous）；**但**若路由标注 @RequireAuth / @RolesAllowed → **fail-fast 500**（开发者错误：启用注解但未安装 SecurityComponent） |
-| **模式 B** | Security 已安装 | 解析路由安全元数据；执行认证/授权；principal 写入 httpContext.attributes；401/403 返回 ErrorResponse |
-| **fail-fast** | 已安装 Security 但 requireAuth 且无 Authenticator | **500**（配置错误），避免「永远 401」难排查 |
+| **模式 A** | Security 未安装 | identity 为 null；所有请求默认允许；**但** @RequireAuth → **fail-fast 500** |
+| **模式 B** | Security 已安装 | 解析路由安全元数据；执行认证/授权；identity 写入 httpContext |
 
-### 4.2 Guard 选择策略（v1.1 冻结）
+### 5.2 安全管道流程
+
+```
+runSecurityPreHandle(route, httpContext, requestContext, securityConfig, routeGroupConfigs)
+  │
+  ├─ 1. 计算 isAnonymousAllowed：
+  │     @AllowAnonymous → true
+  │     OR route.pattern in groupConfig.allowAnonymous → true
+  │     OR (!groupConfig.requireAuth && !route.requireAuth) → true
+  │     → 如果 true：removeAttribute(IDENTITY)，return
+  │
+  ├─ 2. fail-fast（安全未配置 + requireAuth → 500）
+  │
+  ├─ 3. 认证：
+  │     authenticator.authenticate(requestContext) → identity
+  │     identity == null && requireAuth → 401
+  │
+  ├─ 4. 存储 identity：
+  │     httpContext.setAttribute(SecurityAttributes.IDENTITY, identity)
+  │
+  ├─ 5. 权限检查（仅当 route.permission != null）：
+  │     evaluator.allowed(identity, permission, ctx) → false → 403
+  │     identity == null → 401
+  │
+  └─ 6. Guard 检查：
+        guard.checkPermission(identity, requestContext) → false → 403
+```
+
+**优先级**：`@AllowAnonymous` > 路由组白名单 > `group.requireAuth`
+
+### 5.3 Guard 选择策略
 
 | 条件 | 使用的 Guard | 说明 |
 |------|-------------|------|
-| `allowAnonymous == true` | PublicGuard | 永远 true，principal = null |
-| `requireAuth == false` | PublicGuard | 默认开放 |
-| `requireAuth == true` | DefaultGuard | principal != null 才允许 |
+| `allowAnonymous == true` | 跳过（直接返回） | identity 为 null |
+| `requireAuth == true` | RequireIdentityGuard（或自定义） | identity != null 才允许 |
+| `requireAuth == false` | AllowAllGuard | 默认开放 |
 
-**注意**：DefaultGuard 仅用于 requireAuth 的路由；对默认开放路由，不应因 principal==null 就 403。
-
-### 4.3 理想流程（v1.1 目标）
-
-```
-handleRoute(...)
-  ├─ build HttpContext
-  ├─ build HandlerArgs
-  ├─ security pre-handle（新增）
-  │     ├─ 从 RouteDefinition 读取 allowAnonymous、requireAuth
-  │     ├─ if allowAnonymous → principal=null，attributes["principal"]=null，直接通过
-  │     ├─ else if 未安装 Security:
-  │     │     if requireAuth → 500（配置错误）
-  │     │     else → 通过（默认开放）
-  │     ├─ else（已安装 Security）:
-  │     │     principal = authenticator.authenticate(requestContext)
-  │     │     if principal==null && requireAuth → 401
-  │     │     attributes["principal"] = principal
-  │     │     guard = requireAuth ? DefaultGuard : PublicGuard
-  │     │     if !guard.authorize(principal, requestContext) → 403
-  ├─ handler.invoke(...)
-  └─ respond
-```
-
-### 4.4 当前实现状态（v1.1 已落地）
-
-| 环节 | 状态 | 说明 |
-|------|------|------|
-| 安全管道 | ✅ 已集成 | HTTP 适配器 handleRoute 在 handler.invoke 前调用 runSecurityPreHandle |
-| 认证执行 | ✅ 已集成 | Authenticator.authenticate(requestContext) |
-| principal 存储 | ✅ 已实现 | HttpContext.attributes["principal"] |
-| Guard 执行 | ✅ 已集成 | requireAuth→DefaultGuard，else→PublicGuard |
-| fail-fast | ✅ 已实现 | 未安装 Security + @RequireAuth → 500；已安装但无 Authenticator + @RequireAuth → 500 |
-| @AuthenticationPrincipal | ✅ 已实现 | KSP 生成代码从 context.getAttribute("principal") 读取 |
-| SecurityContext | ⚠️ 辅助 | 主路径用 attributes；非 HTTP 场景可用 SecurityContext |
-
-### 4.5 异常与 HTTP 状态
+### 5.4 异常与 HTTP 状态
 
 | 场景 | HTTP 状态 | 说明 |
 |------|-----------|------|
-| 需认证但 principal 为 null | 401 Unauthorized | 认证失败或未提供凭证 |
-| principal 存在但 Guard 拒绝 | 403 Forbidden | 无权限 |
-| @AuthenticationPrincipal(required=true) 且 principal 为 null | 401 | 在参数绑定时即可抛出 |
+| 需认证但 identity 为 null | 401 Unauthorized | 认证失败或未提供凭证 |
+| identity 存在但 Guard 拒绝 | 403 Forbidden | 无权限 |
+| @Permission 权限不足 | 403 Forbidden | message 含具体权限名 |
+| @Permission 但 identity 为 null | 401 Unauthorized | 未认证 |
 | @RequireAuth 但未安装 Security | 500 | fail-fast，message 含 "SecurityComponent" |
 | @RequireAuth 但未注册 Authenticator | 500 | fail-fast，message 含 "Authenticator" |
 
-**异常类型建议**：
-- `AuthenticationException`：认证失败
-- `AuthorizationException`：授权失败（Guard 拒绝）
-- 适配器将二者映射为 401/403 及 ErrorResponse
-
 ---
 
-## 五、SecurityBuilder 与配置
+## 六、SecurityBuilder 与配置
 
-### 5.1 SecurityBuilder 接口（neton-core）
+### 6.1 SecurityBuilder 接口（neton-core）
 
 ```kotlin
 interface SecurityBuilder {
-    fun getSecurityFactory(): SecurityFactory
-    fun registerMockAuthenticator(...)
-    fun registerJwtAuthenticator(...)
-    fun registerSessionAuthenticator(...)
-    fun registerBasicAuthenticator(...)
-    fun bindDefaultGuard() / bindAdminGuard() / bindRoleGuard(...) / bindAnonymousGuard()
-    fun registerAuthenticator(...) / bindGuard(...)
+    fun registerMockAuthenticator(name: String, userId: String, roles: Set<String>, permissions: Set<String>)
+    fun registerJwtAuthenticator(secretKey: String, headerName: String, tokenPrefix: String)
+    fun setDefaultGuard(guard: Guard)
+    fun setDefaultAuthenticator(auth: Authenticator)
+    fun setGroupAuthenticator(group: String, auth: Authenticator)
+    fun setGroupGuard(group: String, guard: Guard)
+    fun setPermissionEvaluator(evaluator: PermissionEvaluator)
     fun build(): SecurityConfiguration
     fun getAuthenticationContext(): AuthenticationContext
 }
 ```
 
-- `build()` 在启动时被调用，产出 `SecurityConfiguration` 和 `AuthenticationContext`
-- `AuthenticationContext` 注入 RequestEngine / ParameterBinder，供参数解析使用
-- **v1.1 约束**：AuthenticationContext 的实现必须从**当前请求的 HttpContext** 读取 principal，而非全局单例
-
-### 5.2 代码优先配置示例
+### 6.2 SecurityConfiguration
 
 ```kotlin
-install(SecurityComponent()) {
-    registerAuthenticator(JwtAuthenticator(secretKey = "xxx"))
-    bindDefaultGuard()
-    bindGuard("admin", AdminGuard())
-    bindGuard("admin", "admin", CustomGuard("admin") { principal, ctx ->
-        principal?.hasRole("admin") == true
-    })
+data class SecurityConfiguration(
+    val isEnabled: Boolean,
+    val authenticatorCount: Int,
+    val guardCount: Int,
+    val authenticationContext: AuthenticationContext,
+    val defaultAuthenticator: Authenticator?,
+    val defaultGuard: Guard?,
+    val getAuthenticatorByGroup: ((String?) -> Authenticator?)?,
+    val getGuardByGroup: ((String?) -> Guard?)?,
+    val permissionEvaluator: PermissionEvaluator?
+)
+```
+
+---
+
+## 七、路由组安全配置
+
+### 7.1 routing.conf 新字段
+
+```toml
+[[groups]]
+name = "admin"
+mount = "/admin"
+requireAuth = true
+allowAnonymous = ["/login", "/health"]
+
+[[groups]]
+name = "app"
+mount = "/app"
+```
+
+### 7.2 RouteGroupSecurityConfig
+
+```kotlin
+data class RouteGroupSecurityConfig(
+    val requireAuth: Boolean,
+    val allowAnonymous: Set<String>
+)
+
+data class RouteGroupSecurityConfigs(
+    val configs: Map<String, RouteGroupSecurityConfig>
+)
+```
+
+RoutingComponent 启动时解析 routing.conf，构建 `RouteGroupSecurityConfigs` 并绑定到 ctx。安全管道通过 ctx 获取。
+
+### 7.3 优先级规则
+
+```
+@AllowAnonymous（注解） > allowAnonymous（白名单） > group.requireAuth > route.requireAuth
+```
+
+---
+
+## 八、JWT Authenticator 规范
+
+### 8.1 范围
+
+| 项 | 说明 |
+|----|------|
+| Header | `Authorization: Bearer <token>` |
+| 算法 | HS256（唯一支持） |
+| Claim | sub / roles / perms |
+| 时间 | 仅校验 exp |
+| 错误 | AuthenticationException(code, path) → 401 |
+
+### 8.2 Header 解析
+
+| 规则 | 说明 |
+|------|------|
+| 无 Authorization | 返回 null，不抛异常（交给 Guard） |
+| 非 Bearer 前缀 | 返回 null |
+| Bearer 后无 token | `AuthenticationException(code="MissingToken", path="Authorization")` → 401 |
+| 多余空格 | Bearer 与 token 之间单空格，trim 后解析 |
+
+### 8.3 Claim 规则
+
+| Claim | 类型 | 缺失时 | 错误时 |
+|-------|------|--------|--------|
+| sub | string | InvalidUserId | UserId.parse 抛 InvalidUserId |
+| roles | string[] | emptySet() | 非 list → emptySet，list 中非 string → 忽略 |
+| perms | string[] | emptySet() | 非 list → emptySet，list 中非 string → 忽略 |
+
+JWT Claim 格式：
+
+```json
+{
+  "sub": "123",
+  "roles": ["admin"],
+  "perms": ["user:read", "user:write"]
 }
 ```
 
-### 5.3 配置文件（security.conf）
+roles/perms 缺失时默认 `emptySet()`，不报错、不抛异常。
 
-```toml
-[security]
-enabled = true
-defaultGuard = "default"
+**权限信任边界**：
 
-[security.jwt]
-secretKey = "your-secret"
-headerName = "Authorization"
-tokenPrefix = "Bearer "
+| 模式 | 说明 |
+|------|------|
+| 模式 1（token 权威） | JWT 里的 roles/perms 直接信任，无状态（默认允许） |
+| 模式 2（DB 权威） | JWT 只携带 userId，roles/perms 服务端查库加载（业务需实现 User : Identity） |
+
+### 8.4 时间校验
+
+| Claim | 行为 |
+|-------|------|
+| exp | 必须校验，过期 → `AuthenticationException(code="TokenExpired", path="exp")` → 401 |
+| nbf | 不校验 |
+| iat | 不校验 |
+
+exp 使用秒级 epoch（NumericDate）。exp 缺失、类型错 → 按过期处理（TokenExpired）。使用系统时钟，无 clock skew 配置。
+
+### 8.5 签名与算法
+
+| 项 | 说明 |
+|----|------|
+| 算法 | HS256 |
+| 密钥 | 配置传入（String 或 ByteArray） |
+| 算法不匹配 | `AuthenticationException(code="InvalidAlgorithm", path="alg")` → 401 |
+| 签名无效 | `AuthenticationException(code="InvalidSignature", path="")` → 401 |
+
+header.alg 必须严格等于 `"HS256"`（大小写敏感）。签名比较必须 constant-time：
+
+```kotlin
+fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {
+    if (a.size != b.size) return false
+    var r = 0
+    for (i in a.indices) r = r or (a[i].toInt() xor b[i].toInt())
+    return r == 0
+}
 ```
 
-- v1 可选；若使用，由 SecurityComponent 在 init 时通过 ConfigLoader 读取
-- 优先级：CLI/ENV > security.&lt;env&gt;.conf > security.conf > 代码默认值
+### 8.6 解析失败映射规则
+
+按失败发生顺序：
+
+| 失败场景 | code | path |
+|----------|------|------|
+| 无 Authorization | 返回 null，不抛 | |
+| 非 Bearer 前缀 | 返回 null | |
+| Bearer 后无 token | MissingToken | Authorization |
+| token 三段不合法 | MissingToken | Authorization |
+| base64url decode 失败 | MissingToken | Authorization |
+| header/payload JSON 解析失败 | MissingToken | Authorization |
+| header.alg != "HS256" | InvalidAlgorithm | alg |
+| sub 缺失或空字符串 | InvalidUserId | sub |
+| sub 非法（UserId.parse 失败） | InvalidUserId | sub |
+| exp 缺失/类型错/过期 | TokenExpired | exp |
+| signature 校验失败 | InvalidSignature | (空) |
+
+### 8.7 AuthenticationException 完整映射
+
+| code | path | message |
+|------|------|---------|
+| MissingToken | Authorization | Missing or invalid Bearer token |
+| InvalidUserId | sub | Invalid user id |
+| TokenExpired | exp | Token has expired |
+| InvalidAlgorithm | alg | Unsupported algorithm |
+| InvalidSignature | (空) | Invalid signature |
 
 ---
 
-## 六、SecurityContext 与请求级 Principal 存储
-
-### 6.1 问题
-
-- `SecurityContext` 当前为 ThreadLocal 风格，在 Kotlin/Native、协程环境下无法可靠传递请求级 principal
-- 多请求并发时，若依赖全局 `currentPrincipal`，可能串请求
-
-### 6.2 方案（v1.1 冻结）
+## 九、请求级 Identity 存储
 
 | 存储位置 | 说明 |
 |----------|------|
-| **HttpContext.attributes["principal"]** | 请求级存储，适配器在安全预处理后写入 |
-| **AuthenticationContext** | 实现从 `HttpContext`（通过某种方式获取当前请求的 context）读取 attributes["principal"] |
-| **SecurityContext** | 仅作为「在已设置 HttpContext 的前提下」的便捷封装，内部委托给当前 HttpContext；或标记为 deprecated，推荐直接用 `@AuthenticationPrincipal` 或 `context.getAttribute("principal")` |
-
-**传递方式**：handleRoute 内持有 `httpContext`，在调用 ParameterBinder 或 handler 前，将 `httpContext` 与当前协程/请求绑定（如通过 CoroutineContext 或显式传参），使 AuthenticationContext 能解析到「当前请求的 HttpContext」。
-
-### 6.3 SecurityContext 保留场景
-
-- 在**非请求上下文**（如定时任务、消息处理）中，若需要「当前用户」语义，可由调用方显式 `SecurityContext.setPrincipal`，用完 `clear()`。此场景为辅助用途，不作为主路径。
+| **HttpContext.attributes[SecurityAttributes.IDENTITY]** | 请求级存储，安全管道认证后写入 |
+| **@CurrentUser 注入** | KSP 生成代码从 `context.getAttribute(SecurityAttributes.IDENTITY)` 读取 |
+| **SecurityContext** | 辅助封装，内部委托给 HttpContext；主路径推荐直接用 `@CurrentUser` |
 
 ---
 
-## 七、内置认证器实现状态
+## 十、业务用法示例
 
-| 认证器 | 状态 | 说明 |
-|--------|------|------|
-| MockAuthenticator | ✅ 已实现 | 返回固定用户 |
-| AnonymousAuthenticator | ✅ 已实现 | 返回 null |
-| SessionAuthenticator | ⚠️ 占位 | 需与 HttpSession 集成，从 session 取 user_id 并加载 Principal |
-| JwtAuthenticator | ⚠️ 占位 | 需引入 JWT 库（如 kotlin-jwt），解析并校验 token |
-| BasicAuthenticator | ⚠️ 占位 | 需 Base64 解码 + 调用 userProvider |
+### 10.1 业务层 User 实现 Identity
 
----
+```kotlin
+data class User(
+    override val userId: UserId,
+    override val roles: Set<String>,
+    override val permissions: Set<String>,
+    val email: String,
+    val nickname: String
+) : Identity
 
-## 八、与 HTTP / 路由的关系
+@Get("/profile")
+fun profile(user: User): Profile = Profile(user.userId, user.nickname)
+```
 
-### 8.1 与 Neton-Http-Spec 的关系
+### 10.2 细粒度权限检查
 
-- 安全管道在 **handleRoute** 内、**handler.invoke 之前**执行
-- HttpContext 作为请求级数据总线，principal 存于 attributes
-- 认证/授权异常由适配器转换为 HttpException(UNAUTHORIZED/FORBIDDEN) 及 ErrorResponse
+```kotlin
+@Get("/users/{id}")
+@RequireAuth
+fun getUser(id: UserId, user: User): UserDetail {
+    if (!user.hasPermission("user:read")) throw ForbiddenException()
+    return userService.findById(id)
+}
+```
 
-### 8.2 与 ParameterBinding 的关系
+### 10.3 多种参数组合
 
-- `ParameterBinding.AuthenticationPrincipal` 由 KSP 根据 `@AuthenticationPrincipal` 生成
-- ParameterBinder 从 AuthenticationContext.currentUser() 解析，并检查 required
-- **依赖**：AuthenticationContext 必须先由安全管道填充，否则恒为 null
-
-### 8.3 路由组与多认证
-
-- SecurityRegistry 支持按 `routeGroup` 绑定不同 Authenticator/Guard
-- 控制器 `@Controller("/admin")` 可对应 routeGroup = "admin"，使用 AdminGuard 或 JWT
-- 当前路由组解析需在 ControllerScanner/KSP 或 RouteDefinition 中体现，与安全模块对接
-
----
-
-## 九、优化与改进清单
-
-### 9.0 契约测试（P0.5 已落地）
-
-`neton-http/src/commonTest/SecurityPipelineContractTest.kt` 锁住：
-
-- **Test 1**：Mode A 默认开放（无 Security，普通路由 → 通过）
-- **Test 2**：Mode A + @RequireAuth fail-fast（无 Security → 500，message 含 "SecurityComponent"）
-- **Test 3**：Mode B + MockAuthenticator（principal 写入 attributes）
-- **Test 4**：AllowAnonymous 永远放行（principal 为 null）
-- **Test 5**：已安装但无 Authenticator + @RequireAuth → 500（message 含 "Authenticator"）
-
-### 9.1 P0（必须）
-
-| 项 | 说明 |
-|----|------|
-| 集成认证管道 | 在 handleRoute 中，路由匹配后、handler 前调用 Authenticator，并将 principal 写入 HttpContext.attributes |
-| 集成授权管道 | 在认证之后、handler 前根据路由元数据调用 Guard，失败返回 403 |
-| 请求级 principal 存储 | AuthenticationContext 从当前 HttpContext 读取 principal，而非返回 null |
-| Guard 命名统一 | Core 与 neton-security 统一为 `authorize` 或 `checkPermission`，二选一并在文档中冻结 |
-
-### 9.2 P1（高优）
-
-| 项 | 说明 |
-|----|------|
-| HttpContext → RequestContext 适配 | 提供 RequestContext 或 HttpContextAdapter，供 Authenticator/Guard 使用 |
-| SessionAuthenticator 实现 | 与 HttpSession 集成，支持 session 存储 user_id |
-| JwtAuthenticator 实现 | 引入 JWT 库，完成 token 解析与校验 |
-| 异常类型 | 定义 AuthenticationException、AuthorizationException，并在适配器中映射 401/403 |
-| @AllowAnonymous / @RolesAllowed 生效 | 确保 KSP 生成的路由元数据被安全管道读取并正确选择 Guard |
-
-### 9.3 P2（中优）
-
-| 项 | 说明 |
-|----|------|
-| BasicAuthenticator 实现 | Base64 解码 + userProvider 回调 |
-| security.conf 支持 | 通过 ConfigLoader 加载 security 模块配置 |
-| Principal.hasPermission | 可选扩展，便于基于权限的细粒度控制 |
-| SecurityContext 明确用途 | 文档化：仅辅助场景使用，主路径用 @AuthenticationPrincipal 或 HttpContext.attributes |
-
-### 9.4 P3（后续）
-
-| 项 | 说明 |
-|----|------|
-| @PreAuthorize / @PostAuthorize | 表达式式授权注解 |
-| 多 Authenticator 链 | 按顺序尝试多个 Authenticator |
-| CSRF / CORS | 若需 Web 表单安全，可扩展 |
-| Rate Limiting | 与安全模块解耦，可由独立中间件实现 |
+```kotlin
+@Get("/{id}/profile")
+@RequireAuth
+fun getUserProfile(
+    @PathVariable("id") id: Int,
+    @QueryParam("format") format: String = "json",
+    @Header("Accept") accept: String?,
+    @CurrentUser currentUser: Identity
+): String {
+    if (id.toString() != currentUser.id && !currentUser.hasRole("admin")) {
+        throw HttpException(HttpStatus.FORBIDDEN, "无权访问他人资料")
+    }
+    return "用户 $id 的资料 (format=$format)"
+}
+```
 
 ---
 
-## 十、文档与规范引用
+## 十一、契约测试
 
-- **Neton-Core-Spec v1**：第八节（安全接口）、第九节（注解）
-- **Neton-Http-Spec v1**：第五节（请求处理流程）、第七节（与安全的关系）
-- **AuthenticationPrincipal注解设计**：用法与最佳实践
-- **Security模块设计**：设计目标与 Guard 注册方式
+### 11.1 安全管道契约测试（12 条）
+
+`neton-http/src/commonTest/SecurityPipelineContractTest.kt`：
+
+| # | 名称 | 验证 |
+|---|------|------|
+| 1 | modeA_plainRoute_noSecurity_returns200 | Mode A 默认开放 |
+| 2 | modeA_requireAuth_noSecurity_throws500 | Mode A + @RequireAuth → 500 |
+| 3 | modeB_requireAuth_withMockAuthenticator_setsIdentity | Mode B 认证 → identity 设置 |
+| 4 | allowAnonymous_alwaysPasses_identityNull | @AllowAnonymous → 放行 |
+| 5 | modeB_requireAuth_noAuthenticator_throws500 | 无 Authenticator → 500 |
+| 6 | permission_allowed_passes | @Permission 有权限 → 放行 |
+| 7 | permission_denied_throws403 | @Permission 无权限 → 403 |
+| 8 | permissionEvaluator_superadmin_bypasses | 自定义 evaluator 生效 |
+| 9 | routeGroupWhitelist_allowsAnonymous | 白名单放行 |
+| 10 | routeGroup_requireAuth_enforcesAuth | 组级强制认证 |
+| 11 | permission_noEvaluator_emptyPermissions_throws403 | 默认行为冻结 |
+| 12 | permission_noIdentity_throws401 | 未认证 → 401 |
+
+### 11.2 Identity 契约测试
+
+`neton-security/src/commonTest/SecurityIdentityContractTest.kt`：
+
+```kotlin
+class SecurityIdentityContractTest {
+
+    @Test
+    fun userIdParse_invalidString_throwsAuthenticationException() {
+        val ex = kotlin.runCatching { UserId.parse("abc") }.exceptionOrNull()
+            as? AuthenticationException ?: error("Expected AuthenticationException")
+        assertEquals("InvalidUserId", ex.code)
+        assertEquals("Invalid user id", ex.message)
+        assertEquals("sub", ex.path)
+    }
+
+    @Test
+    fun userIdParse_overflowULong_throwsAuthenticationException() { ... }
+
+    @Test
+    fun userIdParse_validString_returnsUserId() { ... }
+
+    @Test
+    fun identityUser_hasRole_isCaseSensitive() { ... }
+
+    @Test
+    fun identityUser_hasPermission_isCaseSensitive() { ... }
+}
+```
+
+### 11.3 JWT Authenticator 契约测试
+
+```kotlin
+// 无 Authorization → null
+// 非 Bearer → null
+// Bearer 后空 → MissingToken, path=Authorization
+// token 格式坏 / decode 失败 / JSON 失败 → MissingToken
+// alg != HS256 → InvalidAlgorithm, path=alg
+// sub 缺失/空/非法 → InvalidUserId, path=sub
+// exp 缺失/类型错/过期 → TokenExpired, path=exp
+// 签名错误 → InvalidSignature
+// 正常 → IdentityUser
+```
 
 ---
 
-## 十一、v1.1 API 冻结（命名与注入优化）
+## 十二、已删除项
 
-> 详见 **[Neton-Security-Spec-v1.1-API-Freeze](./security-v1.1-freeze.md)**
-
-| 变更 | v1.1 |
-|------|------|
-| ID 类型 | `UserId`（value class 包 ULong） |
-| 注解 | `@CurrentUser` |
-| 抽象 | `Identity`（id: UserId, roles: Set, permissions: Set） |
-| 默认实现 | `IdentityUser` 可选，供框架 Authenticator 使用 |
-| 注入 | 类型自动注入，注解可选 |
-
-旧命名（`Principal`、`UserPrincipal`、`@AuthenticationPrincipal`）已删除，无兼容层。
+| 已删除 | 替代 |
+|--------|------|
+| `Principal` 接口 | `Identity` |
+| `UserPrincipal` 类 | `IdentityUser` |
+| `AnonymousPrincipal` | 无（identity = null 即匿名） |
+| `@AuthenticationPrincipal` | `@CurrentUser`（或类型自动注入） |
+| `SecurityFactory` 接口 | 直接通过 SecurityBuilder API 注册 |
+| `Guard.authorize()` 方法名 | `Guard.checkPermission()` |
+| `attributes["principal"]` | `attributes[SecurityAttributes.IDENTITY]` |
 
 ---
 
-*文档版本：v1*
-*与实现差异：第四节、第六节、第七节、第九节描述了当前缺口与改进方向，实现需按 P0→P1→P2 顺序落地。*
+*文档版本：v1.2*

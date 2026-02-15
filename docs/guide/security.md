@@ -10,14 +10,20 @@ HTTP 请求
   v
 ┌──────────────────────┐
 │   Authenticator      │  ← 第一层：身份认证（你是谁？）
-│   解析请求凭证，       │     返回 Principal 或 null
-│   返回 Principal      │
+│   解析请求凭证，       │     返回 Identity 或 null
+│   返回 Identity       │
 └──────────┬───────────┘
            |
            v
 ┌──────────────────────┐
-│   Guard              │  ← 第二层：权限守卫（你能做什么？）
-│   根据 Principal +    │     返回 true/false
+│   @Permission +      │  ← 第二层：权限检查（你有这个权限吗？）
+│   PermissionEvaluator│     PermissionEvaluator 可自定义
+└──────────┬───────────┘
+           |
+           v
+┌──────────────────────┐
+│   Guard              │  ← 第三层：守卫（最终放行？）
+│   根据 Identity +     │     返回 true/false
 │   请求上下文判断权限   │
 └──────────┬───────────┘
            |
@@ -25,9 +31,10 @@ HTTP 请求
        Controller
 ```
 
-- **Authenticator**：负责从请求中提取凭证（Token、Session、Basic 等），验证通过后返回 `Principal`（用户主体），验证失败返回 `null`。
-- **Guard**：接收 `Principal` 和请求上下文，决定是否放行。内置的 `DefaultGuard` 要求 Principal 非空（即已认证），`AnonymousGuard` 放行所有请求，`RoleGuard` 检查角色。
-- **Principal**：代表已认证用户，包含 `id`、`roles`、`attributes` 三个核心属性。
+- **Authenticator**：负责从请求中提取凭证（Token、Session、Basic 等），验证通过后返回 `Identity`（用户身份），验证失败返回 `null`。
+- **@Permission + PermissionEvaluator**：当路由标注了 `@Permission("system:user:edit")` 时，检查 Identity 是否具有该权限。默认使用 `identity.hasPermission()`，业务可替换 `PermissionEvaluator` 实现 superadmin 等逻辑。
+- **Guard**：接收 `Identity` 和请求上下文，决定是否放行。内置的 `RequireIdentityGuard` 要求 Identity 非空（即已认证），`AllowAllGuard` 放行所有请求。
+- **Identity**：代表已认证用户，包含 `id`、`roles`、`permissions` 三个核心属性。
 
 ## 安装安全组件
 
@@ -70,22 +77,19 @@ class AppSecurityConfig : SecurityConfigurer {
         // 默认组：开放（匿名守卫 = 允许所有请求）
         security.setDefaultGuard(RealAnonymousGuard())
 
-        // admin 组：Mock 认证 + 默认守卫（requireAuth 时生效）
-        val factory = security.getSecurityFactory()
-        security.setGroupAuthenticator("admin", factory.createAuthenticator("mock", mapOf(
-            "userId" to "admin-user",
-            "roles" to listOf("admin"),
-            "attributes" to emptyMap<String, Any>()
-        )))
+        // admin 组：Mock 认证 + 默认守卫
+        security.registerMockAuthenticator(
+            name = "admin-mock",
+            userId = "admin-user",
+            roles = setOf("admin"),
+            permissions = setOf("system:user:edit", "system:user:delete")
+        )
         security.setGroupGuard("admin", RealDefaultGuard())
 
-        // app 组：Mock 认证 + 默认守卫
-        security.setGroupAuthenticator("app", factory.createAuthenticator("mock", mapOf(
-            "userId" to "app-user",
-            "roles" to listOf("user"),
-            "attributes" to emptyMap<String, Any>()
-        )))
-        security.setGroupGuard("app", RealDefaultGuard())
+        // 可选：自定义 PermissionEvaluator（superadmin 绕过）
+        security.setPermissionEvaluator { identity, permission, _ ->
+            identity.hasRole("superadmin") || identity.hasPermission(permission)
+        }
     }
 }
 ```
@@ -98,24 +102,17 @@ class AppSecurityConfig : SecurityConfigurer {
 | `setDefaultAuthenticator(auth)` | 设置默认路由组的认证器 |
 | `setGroupAuthenticator(group, auth)` | 设置指定路由组的认证器 |
 | `setGroupGuard(group, guard)` | 设置指定路由组的守卫 |
-| `getSecurityFactory()` | 获取安全工厂，用于创建内置认证器/守卫实例 |
-
-### SecurityFactory 支持的认证器类型
-
-通过 `factory.createAuthenticator(type, config)` 创建：
-
-- `"mock"` -- 模拟认证器，开发测试用，始终返回固定用户
-- `"jwt"` -- JWT 认证器，从 Authorization 头解析 Bearer Token
-- `"session"` -- 会话认证器，从 Session 读取用户信息
-- `"basic"` -- HTTP Basic 认证器
+| `setPermissionEvaluator(evaluator)` | 设置自定义权限评估器 |
+| `registerMockAuthenticator(...)` | 注册 Mock 认证器（开发测试用） |
+| `registerJwtAuthenticator(...)` | 注册 JWT 认证器 |
 
 ## 安全注解
 
-Neton 提供四个核心安全注解，标注在控制器方法上即可生效：
+Neton 提供以下核心安全注解，标注在控制器类或方法上即可生效：
 
 ### @AllowAnonymous
 
-允许匿名访问，跳过权限验证。适用于公开接口。
+允许匿名访问，跳过权限验证。优先级最高。
 
 ```kotlin
 @Controller("/api/security")
@@ -161,19 +158,50 @@ fun adminOrEditor(): String {
 }
 ```
 
-### @AuthenticationPrincipal
+### @Permission
 
-将当前认证用户的 `Principal` 注入到方法参数中。`Principal` 包含 `id`（用户标识）、`roles`（角色列表）和 `attributes`（扩展属性）。
+声明式权限检查。标注后，安全管道会自动检查当前 Identity 是否具备指定权限。
+
+```kotlin
+// 需要 system:user:edit 权限
+@Post("/users/{id}")
+@RequireAuth
+@Permission("system:user:edit")
+fun editUser(id: Long): String {
+    return "编辑用户 $id"
+}
+
+// 类级 @Permission：该控制器所有方法默认需要此权限
+@Controller("/admin/system")
+@RequireAuth
+@Permission("system:manage")
+class SystemController {
+
+    @Get("/info")
+    fun info(): String = "系统信息"
+
+    // 方法级覆盖类级
+    @Delete("/reset")
+    @Permission("system:reset")
+    fun reset(): String = "系统重置"
+}
+```
+
+**继承规则**：方法级 `@Permission` 覆盖类级；同一目标不允许多个 `@Permission`（编译期 fail-fast）。
+
+### @CurrentUser
+
+将当前认证用户的 `Identity` 注入到方法参数中。`Identity` 包含 `id`（用户标识）、`roles`（角色集合）和 `permissions`（权限集合）。
 
 ```kotlin
 @Get("/profile")
 @RequireAuth
-fun getCurrentUser(@AuthenticationPrincipal principal: Principal): String {
-    return "当前用户: ${principal.id} (角色: ${principal.roles.joinToString(", ")})"
+fun getCurrentUser(@CurrentUser identity: Identity): String {
+    return "当前用户: ${identity.id} (角色: ${identity.roles.joinToString(", ")})"
 }
 ```
 
-`@AuthenticationPrincipal` 支持 `required` 参数：
+`@CurrentUser` 支持 `required` 参数：
 
 - `required = true`（默认）：用户未认证时抛出异常
 - `required = false`：用户未认证时参数值为 `null`
@@ -181,95 +209,156 @@ fun getCurrentUser(@AuthenticationPrincipal principal: Principal): String {
 ```kotlin
 @Get("/visitor")
 @AllowAnonymous
-fun visitorInfo(@AuthenticationPrincipal(required = false) principal: Principal?): String {
-    return if (principal != null) {
-        "欢迎回来, ${principal.id}!"
+fun visitorInfo(@CurrentUser(required = false) identity: Identity?): String {
+    return if (identity != null) {
+        "欢迎回来, ${identity.id}!"
     } else {
         "欢迎访客!"
     }
 }
 ```
 
+**类型自动注入**：当参数类型为 `Identity` 时，即使不写 `@CurrentUser` 注解也会自动注入。注解主要用于控制 `required` 语义。
+
+## PermissionEvaluator
+
+`PermissionEvaluator` 是一个 `fun interface`，用于自定义权限判定逻辑。默认行为是 `identity.hasPermission(permission)`。
+
+典型场景：superadmin 绕过所有权限检查。
+
+```kotlin
+security {
+    setPermissionEvaluator { identity, permission, context ->
+        // superadmin 拥有所有权限
+        identity.hasRole("superadmin") || identity.hasPermission(permission)
+    }
+}
+```
+
+**默认行为（无自定义 evaluator 时）**：
+- `identity.permissions` 包含目标权限 → 放行
+- 不包含 → 403 Forbidden
+- identity 为 null → 401 Unauthorized
+
 ## 路由组安全策略
 
-Neton 支持多路由组（Route Group），每个组可以拥有独立的认证器和守卫配置。路由组通过 `routing.conf` 定义：
+Neton 支持多路由组（Route Group），每个组可以拥有独立的认证器和守卫配置。
+
+### routing.conf 配置
 
 ```toml
-# config/routing.conf
 [[groups]]
 name = "admin"
 mount = "/admin"
+requireAuth = true
+allowAnonymous = ["/login", "/register"]
 
 [[groups]]
 name = "app"
 mount = "/app"
+requireAuth = false
 ```
 
-不同路由组的安全策略彼此独立：
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | String | 路由组名称 |
+| `mount` | String | URL 前缀 |
+| `requireAuth` | Boolean | 该组是否默认要求认证（默认 false） |
+| `allowAnonymous` | List&lt;String&gt; | 白名单路径，即使 requireAuth=true 也允许匿名访问 |
 
-| 路由组 | 认证器 | 守卫 | 说明 |
-|--------|--------|------|------|
-| 默认组 | 无 | `AnonymousGuard` | 公开访问，除非方法标注 `@RequireAuth` |
-| `admin` | Mock/JWT 认证器 | `DefaultGuard` | 默认要求认证，`@AllowAnonymous` 可豁免 |
-| `app` | Mock/JWT 认证器 | `DefaultGuard` | 默认要求认证，`@AllowAnonymous` 可豁免 |
+### 优先级规则
 
-安全管道的处理逻辑：
+```
+@AllowAnonymous（注解） > allowAnonymous（白名单） > group.requireAuth
+```
 
-1. 根据请求路径确定所属路由组
-2. 使用该组的 Authenticator 进行身份认证
-3. 检查方法上的安全注解（`@AllowAnonymous` / `@RequireAuth` / `@RolesAllowed`）
-4. 使用该组的 Guard 进行权限检查
-5. 注解优先级高于组默认策略
+- `@AllowAnonymous` 标注的方法/类，无论路由组配置如何，都允许匿名访问
+- 白名单中的路径模式，在 `requireAuth = true` 的组内仍允许匿名
+- 组级 `requireAuth` 是兜底策略
+
+### 不同路由组的安全策略示例
+
+| 路由组 | requireAuth | 说明 |
+|--------|-------------|------|
+| 默认组 | false | 公开访问，除非方法标注 `@RequireAuth` |
+| `admin` | true | 默认要求认证，`@AllowAnonymous` 或白名单可豁免 |
+| `app` | false | 默认开放，`@RequireAuth` 可强制要求认证 |
 
 ## JWT 认证
 
-Neton 内置 JWT 认证器支持，可通过 `SecurityFactory` 创建或直接注册：
+Neton 内置 JWT 认证器支持：
 
 ```kotlin
-// 通过 SecurityBuilder 注册 JWT 认证器
-security.registerJwtAuthenticator(
-    secretKey = "your-secret-key",
-    headerName = "Authorization",    // 默认值
-    tokenPrefix = "Bearer "          // 默认值
-)
-```
-
-JWT 认证器会从请求的 `Authorization` 头中提取 Bearer Token，验证签名后返回包含用户信息的 `Principal`。
-
-## Principal 接口
-
-`Principal` 是已认证用户的抽象，提供以下能力：
-
-```kotlin
-interface Principal {
-    val id: String                          // 用户唯一标识
-    val roles: List<String>                 // 角色列表
-    val attributes: Map<String, Any>        // 扩展属性
-
-    fun hasRole(role: String): Boolean              // 是否具有指定角色
-    fun hasAnyRole(vararg roles: String): Boolean   // 是否具有任一角色
-    fun hasAllRoles(vararg roles: String): Boolean   // 是否具有所有角色
+security {
+    registerJwtAuthenticator(
+        secretKey = "your-secret-key",
+        headerName = "Authorization",    // 默认值
+        tokenPrefix = "Bearer "          // 默认值
+    )
 }
 ```
 
-在控制器中可以根据 Principal 的角色动态返回不同内容：
+JWT 认证器会从请求的 `Authorization` 头中提取 Bearer Token，验证签名后返回包含用户信息的 `Identity`。
+
+JWT Claims 约定：
+
+| Claim | 对应字段 | 说明 |
+|-------|---------|------|
+| `sub` | `identity.id` | 用户唯一标识 |
+| `roles` | `identity.roles` | 角色集合（JSON 数组） |
+| `perms` | `identity.permissions` | 权限集合（JSON 数组） |
+
+## Identity 接口
+
+`Identity` 是已认证用户的抽象，提供以下能力：
+
+```kotlin
+interface Identity {
+    val id: String                              // 用户唯一标识
+    val roles: Set<String>                      // 角色集合
+    val permissions: Set<String>                // 权限集合
+
+    fun hasRole(role: String): Boolean                  // 是否具有指定角色
+    fun hasAnyRole(vararg roles: String): Boolean       // 是否具有任一角色
+    fun hasAllRoles(vararg roles: String): Boolean      // 是否具有所有角色
+    fun hasPermission(p: String): Boolean               // 是否具有指定权限
+    fun hasAnyPermission(vararg ps: String): Boolean    // 是否具有任一权限
+    fun hasAllPermissions(vararg ps: String): Boolean   // 是否具有所有权限
+}
+```
+
+在控制器中可以根据 Identity 的角色和权限动态返回不同内容：
 
 ```kotlin
 @Get("/dashboard")
 @RequireAuth
-fun dashboard(@AuthenticationPrincipal principal: Principal): String {
+fun dashboard(@CurrentUser identity: Identity): String {
     return when {
-        "admin" in principal.roles -> "管理员仪表板 - 完整系统控制权限"
-        "editor" in principal.roles -> "编辑器仪表板 - 内容管理权限"
-        "user" in principal.roles -> "用户仪表板 - 个人账户管理"
+        identity.hasRole("admin") -> "管理员仪表板 - 完整系统控制权限"
+        identity.hasRole("editor") -> "编辑器仪表板 - 内容管理权限"
+        identity.hasPermission("dashboard:view") -> "用户仪表板 - 个人账户管理"
         else -> "基础仪表板 - 有限功能"
     }
 }
 ```
 
+### Identity 继承链
+
+```
+neton-core:     Identity { id: String, roles: Set, permissions: Set }
+                    ↑
+neton-security: Identity { userId: UserId }  （桥接 override val id = userId.value.toString()）
+                    ↑
+                IdentityUser(userId, roles, permissions)  — 默认实现
+```
+
+业务可以创建自定义 `User : Identity` 扩展更多字段。
+
 ## 相关文档
 
 - [安全规格说明](/spec/security) -- 安全模块完整设计规格
 - [安全 v1.1 冻结说明](/spec/security-v1.1-freeze) -- v1.1 版本冻结细节
+- [安全 v1.2 冻结说明](/spec/security-v1.2-freeze) -- v1.2 @Permission + PermissionEvaluator
 - [JWT 认证器规格](/spec/jwt-authenticator) -- JWT 认证器设计与实现
-- [路由指南](/guide/index) -- 路由组与 mount 配置
+- [@CurrentUser 设计文档](/spec/current-user-design) -- @CurrentUser 注入机制设计
+- [路由指南](/guide/routing) -- 路由组与 mount 配置

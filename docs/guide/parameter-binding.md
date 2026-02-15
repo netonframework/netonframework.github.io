@@ -239,7 +239,9 @@ curl http://localhost:8080/api/binding/cookies \
 | `HttpContext` | 完整的 HTTP 上下文，包含请求、响应、Session 等 |
 | `HttpRequest` | HTTP 请求对象，包含方法、路径、头部等 |
 | `HttpResponse` | HTTP 响应对象，用于设置状态码、头部等 |
+| `HttpSession` | HTTP 会话对象 |
 | `Ctx` | `HttpContext` 的类型别名，简写形式 |
+| `Identity` | 当前认证用户（自动注入，等价于 `@CurrentUser`） |
 
 ```kotlin
 @Put("/complex/{resourceId}")
@@ -306,10 +308,10 @@ fun search(keyword: String, page: Int = 1, size: Int = 10) =
 | `@FormParam("name")` | 表单字段 | 是 | `@FormParam("username") name: String` |
 | `@Header("name")` | HTTP 请求头 | 是 | `@Header("User-Agent") ua: String` |
 | `@Cookie("name")` | Cookie 值 | 是 | `@Cookie("sessionId") sid: String?` |
-| `@AuthenticationPrincipal` | 认证用户 | 是 | `@AuthenticationPrincipal user: Principal?` |
+| `@CurrentUser` | 认证用户 | 可选（Identity 类型自动注入） | `@CurrentUser identity: Identity?` |
 
 ## 进一步阅读
 
 - [路由与控制器](./routing.md) -- 控制器定义与路由组配置
-- [安全指南](./security.md) -- @AuthenticationPrincipal 与认证体系
+- [安全指南](./security.md) -- @CurrentUser 与 Identity 认证体系
 - [参数绑定规范 v1](/spec/parameter-binding) -- 参数绑定的设计规范与冻结定义

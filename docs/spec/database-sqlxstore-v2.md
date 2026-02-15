@@ -1,6 +1,6 @@
 # Neton Database - SqlxStore 内部接口参考
 
-> **业务层请以 Entity 为中心 API 为准**：`UserStore.get(id)`、`UserStore.destroy(id)`、`UserStore.update(id){ }`、`UserStore.where { }`、`user.save()`、`user.delete()`。详见 [neton-database-query-dsl-v2.md](./database-query-dsl.md)。  
+> **业务层请以 Entity 为中心 API 为准**：`UserTable.get(id)`、`UserTable.destroy(id)`、`UserTable.update(id){ }`、`UserTable.query { where { } }`、`user.save()`、`user.delete()`。详见 [database-query-dsl](./database-query-dsl.md)。  
 > **主路径**：KSP 生成 `object UserStore : Store&lt;User&gt; by SqlxStoreAdapter`，`database { storeRegistry = { ... } }` 传入，不依赖 DatabaseManager。  
 > 本文为 **Store 内部实现与设计原则** 参考，不暴露 Repository/Impl。
 
@@ -10,7 +10,7 @@
 
 | 原则 | 说明 |
 |------|------|
-| **业务层以 Entity API 为准** | 使用 `User.get` / `User.where` / `user.save` 等，不直接使用 Store |
+| **业务层以 Entity API 为准** | 使用 `UserTable.get` / `UserTable.query { where { } }` / `user.save` 等，不直接使用 Store |
 | **Store 为内部实现** | KSP 生成 Store，业务层不引用 Store/Repository |
 | **禁止直接使用 sqlx Database** | 业务层不得持有或调用 Database |
 | **禁止运行时反射** | 实体映射用 KSP 或手写 RowMapper |
@@ -83,7 +83,7 @@ suspend fun <T : Any> T.delete(store: Store<T>): Boolean = store.delete(this)
 User.get(id)
 User.destroy(id)
 User.update(id) { name = x; email = y }  // mutate 风格，KSP 生成 XxxUpdateScope，copy 在内部
-User.where { ... }.list()
+UserTable.query { where { } }.list()
 user.save()
 user.delete()
 ```
@@ -248,7 +248,7 @@ object UserStore : SqlxStore<User>(
 
 - 用户只需 `@Entity` + data class
 - KSP 生成 Statements、Store、RowMapper
-- 业务层：`UserStore.get(1)` 或 `UserStore.where { }.list()`（主路径，AutoStore 已 deprecated）
+- 业务层：`UserTable.get(1)` 或 `UserTable.query { where { } }.list()`（主路径）
 
 ---
 

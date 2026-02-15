@@ -87,6 +87,8 @@ debug = false
 [[groups]]
 name = "admin"
 mount = "/admin"
+requireAuth = true
+allowAnonymous = ["/login", "/health"]
 
 [[groups]]
 name = "app"
@@ -95,15 +97,20 @@ mount = "/app"
 [[groups]]
 name = "platform"
 mount = "/platform"
+requireAuth = true
 ```
 
-**语义（v1.1 冻结）**：
+**语义（v1.2 冻结）**：
 
-| 字段 | 说明 |
-|------|------|
-| `name` | 允许的 group 列表，用于过滤 `routeGroupCandidate` |
-| `mount` | 路径前缀挂载；adapter 按 group 包一层 `route(mount)`，pattern 保持原样 |
-| group 未配置 | `routeGroup = default`（null） |
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `name` | String | 必填 | 允许的 group 列表，用于过滤 `routeGroupCandidate` |
+| `mount` | String | 必填 | 路径前缀挂载；adapter 按 group 包一层 `route(mount)`，pattern 保持原样 |
+| `requireAuth` | Boolean | `false` | 该组是否默认要求认证 |
+| `allowAnonymous` | List&lt;String&gt; | `[]` | 白名单路径列表，即使 requireAuth=true 也允许匿名访问 |
+| group 未配置 | - | - | `routeGroup = default`（null） |
+
+**安全优先级**：`@AllowAnonymous`（注解） > `allowAnonymous`（白名单） > `group.requireAuth`
 
 **mount 实现**：不改写 pattern，adapter 在注册路由树时按 routeGroup 将路由分组，有 mount 的组包在 `route(mount) { ... }` 内。访问路径 = mount + pattern（如 `/admin` + `/index` → `/admin/index`）。
 
@@ -214,7 +221,7 @@ class IndexController {
 
 ---
 
-### 1.8 冻结规则（v1.1）
+### 1.8 冻结规则（v1.2）
 
 | # | 规则 | 说明 |
 |---|------|------|
@@ -222,8 +229,10 @@ class IndexController {
 | 2 | 只有 routing.conf 声明的 group 才生效 | 未在 groups 中的 candidate 视为 default（null） |
 | 3 | mount 只负责路径前缀 | 不改 pattern 字符串；adapter 在注册时按 group 包一层 route(mount) |
 | 4 | Controller base path 不含 mount 前缀 | 由 mount 提供；否则会导致 /admin/admin/... 重复 |
-| 5 | **极简 DSL 必须提供** | neton-routing 必须提供 get/post/put/delete/group 最小 DSL，无需 KSP 即可定义路由；Hello World 门槛、不强迫 KSP、Native-first 纯函数风格 |
-| 6 | **group 优先级** | DSL group > KSP routeGroup > runtime 包名推断；group 在注册阶段合并 prefix 进 pattern，routeGroup 供 Security 管道使用 |
+| 5 | **极简 DSL 必须提供** | neton-routing 必须提供 get/post/put/delete/group 最小 DSL，无需 KSP 即可定义路由 |
+| 6 | **group 优先级** | DSL group > KSP routeGroup > runtime 包名推断 |
+| 7 | **requireAuth / allowAnonymous** | 组级安全配置；优先级：`@AllowAnonymous` > 白名单 > `group.requireAuth` |
+| 8 | **RouteGroupSecurityConfigs** | 启动时从 routing.conf 解析并绑定到 ctx，安全管道通过 ctx 获取 |
 
 ---
 
