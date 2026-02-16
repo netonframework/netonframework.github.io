@@ -85,17 +85,17 @@ route = "http.access"
 debug = false
 
 [[groups]]
-name = "admin"
+group = "admin"
 mount = "/admin"
 requireAuth = true
 allowAnonymous = ["/login", "/health"]
 
 [[groups]]
-name = "app"
+group = "app"
 mount = "/app"
 
 [[groups]]
-name = "platform"
+group = "platform"
 mount = "/platform"
 requireAuth = true
 ```
@@ -104,7 +104,7 @@ requireAuth = true
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `name` | String | 必填 | 允许的 group 列表，用于过滤 `routeGroupCandidate` |
+| `group` | String | 必填 | 路由组标识，用于过滤 `routeGroupCandidate` |
 | `mount` | String | 必填 | 路径前缀挂载；adapter 按 group 包一层 `route(mount)`，pattern 保持原样 |
 | `requireAuth` | Boolean | `false` | 该组是否默认要求认证 |
 | `allowAnonymous` | List&lt;String&gt; | `[]` | 白名单路径列表，即使 requireAuth=true 也允许匿名访问 |

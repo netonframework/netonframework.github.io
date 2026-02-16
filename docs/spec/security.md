@@ -427,13 +427,13 @@ data class SecurityConfiguration(
 
 ```toml
 [[groups]]
-name = "admin"
+group = "admin"
 mount = "/admin"
 requireAuth = true
 allowAnonymous = ["/login", "/health"]
 
 [[groups]]
-name = "app"
+group = "app"
 mount = "/app"
 ```
 

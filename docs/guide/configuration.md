@@ -139,11 +139,11 @@ debug = true
 debug = false
 
 [[groups]]
-name = "admin"
+group = "admin"
 mount = "/admin"
 
 [[groups]]
-name = "app"
+group = "app"
 mount = "/app"
 ```
 

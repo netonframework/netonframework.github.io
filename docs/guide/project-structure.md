@@ -120,11 +120,11 @@ levels = "ERROR,WARN"
 
 ```toml
 [[groups]]
-name = "admin"
+group = "admin"
 mount = "/admin"
 
 [[groups]]
-name = "app"
+group = "app"
 mount = "/app"
 ```
 

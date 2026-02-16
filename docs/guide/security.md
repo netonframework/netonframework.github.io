@@ -248,20 +248,20 @@ Neton 支持多路由组（Route Group），每个组可以拥有独立的认证
 
 ```toml
 [[groups]]
-name = "admin"
+group = "admin"
 mount = "/admin"
 requireAuth = true
 allowAnonymous = ["/login", "/register"]
 
 [[groups]]
-name = "app"
+group = "app"
 mount = "/app"
 requireAuth = false
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `name` | String | 路由组名称 |
+| `group` | String | 路由组标识 |
 | `mount` | String | URL 前缀 |
 | `requireAuth` | Boolean | 该组是否默认要求认证（默认 false） |
 | `allowAnonymous` | List&lt;String&gt; | 白名单路径，即使 requireAuth=true 也允许匿名访问 |
