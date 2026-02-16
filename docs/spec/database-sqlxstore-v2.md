@@ -56,7 +56,7 @@ interface Store<T : Any> {
     fun query(): QueryBuilder<T>
     
     // ===== 事务 =====
-    suspend fun <R> withTransaction(block: suspend Store<T>.() -> R): R
+    suspend fun <R> transaction(block: suspend Store<T>.() -> R): R
 }
 ```
 
@@ -261,7 +261,7 @@ object UserStore : SqlxStore<User>(
 | `Store.save` | 保留，upsert 语义 |
 | `Store.insertBatch/updateBatch/saveAll` | 新增 |
 | `Store.query()` | 保留，后续演进为类型安全 DSL |
-| `Store.withTransaction` | 新增 |
+| `Store.transaction` | 新增 |
 | `EntityStatements` | 新增，KSP 生成 `XxxStatements` object |
 | `object UserStore : SqlxStore&lt;User&gt;` | 单例 Store |
 | `interface UserRepository : Store&lt;User&gt;` | 可选，业务层类型语义 |
@@ -277,7 +277,7 @@ object UserStore : SqlxStore<User>(
 2. **Store 单例化**：`object UserStore : SqlxStore&lt;User&gt;`
 3. **Batch API**：insertBatch、updateBatch、saveAll
 4. **ActiveRecord 扩展**：`save(store)`、`delete(store)` 扩展函数
-5. **withTransaction**：Store 级事务封装
+5. **transaction**：Store 级事务封装
 6. **Typed Query DSL**：`where(User::email eq ...)`，KProperty → column，最高 DX 价值
 7. **Stream/Flow 查询**：v3 可选，大表场景
 
@@ -305,7 +305,7 @@ interface Store<T : Any> {
     suspend fun updateBatch(entities: List<T>): Int
     suspend fun saveAll(entities: List<T>): List<T>
     fun query(): QueryBuilder<T>
-    suspend fun <R> withTransaction(block: suspend Store<T>.() -> R): R
+    suspend fun <R> transaction(block: suspend Store<T>.() -> R): R
 }
 
 // ========== Statements 静态持有（KSP 生成） ==========
@@ -335,7 +335,7 @@ abstract class SqlxStore<T : Any>(
     override suspend fun exists(id: Any): Boolean = findById(id) != null
     override suspend fun deleteById(id: Any): Boolean =
         db.execute(statements.deleteById.bind("id", id)).getOrThrow().rowsAffected > 0
-    // insert/update/save/delete/insertBatch/updateBatch/saveAll/withTransaction 按前述章节实现
+    // insert/update/save/delete/insertBatch/updateBatch/saveAll/transaction 按前述章节实现
 }
 
 // ========== 示例：User（KSP 或手写） ==========

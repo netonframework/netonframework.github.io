@@ -399,10 +399,10 @@ onStart {
 
 ## 事务支持
 
-使用 `withTransaction` 在事务中执行多个操作：
+使用 `transaction` 在事务中执行多个操作：
 
 ```kotlin
-UserTable.withTransaction {
+UserTable.transaction {
     val user = save(User(null, "Alice", "alice@example.com", 1, 25))
     // 如果后续操作失败，整个事务回滚
     destroy(user.id!!)

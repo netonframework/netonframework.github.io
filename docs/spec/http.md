@@ -153,7 +153,8 @@ interface HttpContext {
 ### 3.2 HttpRequest（neton-core）
 
 - **只读**：method、path、url、version、headers、queryParams、pathParams、cookies、remoteAddress、contentType、contentLength、isSecure 等。
-- **请求体**：`body()`、`text()`、`json()`、`form()`（suspend）；由适配器从底层 call 读取。
+- **请求体**：`body()`、`text()`、`json()`、`form()`、`uploadFiles()`（suspend）；由适配器从底层 call 读取。
+- **Multipart**：`uploadFiles()` 返回 `UploadFiles`（结构化视图）；`isMultipart()` 判断是否为 multipart 请求。
 - **便捷**：isGet/isPost、header(name)、queryParam(name)、pathParam(name)、accepts(contentType) 等。
 
 #### 完整的请求处理能力
@@ -162,7 +163,7 @@ interface HttpContext {
 - **路径参数**: `/user/{id}` 自动提取和类型转换
 - **查询参数**: `?name=value&page=1` 完整支持
 - **请求体**: JSON、表单、原始字节流
-- **文件上传**: 通过内容协商支持
+- **文件上传**: `uploadFiles()` 解析 multipart/form-data，返回 `UploadFiles` 结构化视图
 - **Cookie**: 完整的Cookie读取和设置
 
 ### 3.3 HttpResponse（neton-core）
@@ -305,12 +306,117 @@ data class ErrorResponse(
 class HttpConfig {
     var port: Int = 8080
     var converterRegistry: ParamConverterRegistry? = null
+    var corsConfig: CorsConfig? = null
 }
 fun HttpConfig.converters(block: ParamConverterRegistry.() -> Unit)
+fun HttpConfig.cors(block: CorsConfig.() -> Unit)
 ```
 - 上述 port 等为 **DSL 默认值**；最终生效值 = Config 优先级合并后的结果（见 6.2）。
 
-### 6.4 灵活的配置管理
+### 6.4 CORS 配置
+
+CORS 为纯 HTTP 层行为，通过 DSL 或 `application.conf` 配置。
+
+```kotlin
+class CorsConfig {
+    var allowedOrigins: List<String> = listOf("*")
+    var allowedMethods: List<String> = listOf("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
+    var allowedHeaders: List<String> = listOf("*")
+    var allowCredentials: Boolean = false
+    var maxAgeSeconds: Long = 3600
+}
+```
+
+**DSL 用法**：
+
+```kotlin
+http {
+    port = 8080
+    cors {
+        allowedOrigins = listOf("http://localhost:3000", "https://admin.example.com")
+        allowCredentials = true
+        maxAgeSeconds = 86400
+    }
+}
+```
+
+**application.conf 用法**：
+
+```toml
+[cors]
+allowedOrigins = ["http://localhost:3000", "https://admin.example.com"]
+allowCredentials = true
+maxAgeSeconds = 86400
+```
+
+**优先级**：`application.conf [cors]` > DSL `cors { }`。`corsConfig = null` 时不启用 CORS。
+
+### 6.5 UploadFile 与 UploadFiles（文件上传抽象）
+
+三层设计：`UploadFile`（协议真相）→ `UploadFiles`（结构化视图）→ KSP 参数级自动绑定（按 fieldName）。
+
+#### UploadFile 接口
+
+```kotlin
+interface UploadFile {
+    val fieldName: String       // 表单字段名
+    val filename: String        // 原始文件名
+    val contentType: String?    // MIME 类型
+    val size: Long              // 文件大小（字节）
+    suspend fun bytes(): ByteArray  // 读取内容
+}
+```
+
+#### UploadFiles 结构化视图
+
+```kotlin
+class UploadFiles(private val parts: List<UploadFile>) {
+    fun all(): List<UploadFile>                          // 所有文件（协议顺序）
+    fun get(name: String): List<UploadFile>              // 按 fieldName 过滤
+    fun first(name: String): UploadFile?                 // 按 fieldName 取第一个
+    fun require(name: String): UploadFile                // 按 fieldName 取第一个，缺失抛 BadRequestException
+    fun asMap(): Map<String, List<UploadFile>>           // 按 fieldName 分组
+    fun isEmpty(): Boolean
+    val size: Int
+}
+```
+
+- `HttpRequest.uploadFiles()` 返回 `UploadFiles`。
+- 定义在 neton-core，平台无关；neton-http 适配器从 Ktor Multipart API 构造实现。
+
+#### KSP 参数绑定规则（按 fieldName 匹配参数名）
+
+| 参数声明 | 生成代码 | 说明 |
+|----------|----------|------|
+| `avatar: UploadFile` | `context.request.uploadFiles().require("avatar")` | fieldName == "avatar"，缺失抛 400 |
+| `avatar: UploadFile?` | `context.request.uploadFiles().first("avatar")` | fieldName == "avatar"，缺失为 null |
+| `photos: List<UploadFile>` | `context.request.uploadFiles().get("photos")` | fieldName == "photos"，无匹配返回空列表 |
+| `files: UploadFiles` | `context.request.uploadFiles()` | 注入完整结构化视图 |
+
+#### 控制器用法
+
+```kotlin
+@Post("/avatar")
+suspend fun uploadAvatar(avatar: UploadFile): Map<String, Any> {
+    val bytes = avatar.bytes()
+    storage.write("avatars/${avatar.filename}", bytes)
+    return mapOf("filename" to avatar.filename, "size" to avatar.size)
+}
+
+@Post("/photos")
+suspend fun uploadPhotos(photos: List<UploadFile>): Map<String, Any> {
+    return mapOf("count" to photos.size, "names" to photos.map { it.filename })
+}
+
+@Post("/mixed")
+suspend fun mixedUpload(files: UploadFiles): Map<String, Any> {
+    val avatar = files.require("avatar")
+    val gallery = files.get("gallery")
+    return mapOf("avatar" to avatar.filename, "galleryCount" to gallery.size)
+}
+```
+
+### 6.6 灵活的配置管理
 
 - **配置管理**: 灵活的适配器配置系统
 - **环境支持**: 开发、测试、生产环境配置分离
@@ -484,6 +590,8 @@ class UserController {
 
 - **Session**：仅 in-memory，不承诺跨实例（见 3.4）。
 - **Request/Response 适配**：Simple* 为适配器简化实现；响应语义已按 v1.1 冻结为"response.write 优先"（见 3.3、5.2）。
+- **CORS**：已支持，通过 DSL `cors { }` 或 `application.conf [cors]` 配置。
+- **Multipart/文件上传**：已支持，`HttpRequest.uploadFiles()` 返回 `UploadFiles`；支持按 fieldName 查询、KSP 按参数名自动绑定。
 - **中间件**：无独立 Middleware 管道；日志、异常、access 在 handleRoute 内线性完成。
 - **多后端**：当前 HTTP 引擎 + Mock（Core 内 MockHttpAdapter）。
 - **固定端点**：/health、/api/routes、/api/info 若仍在适配器内，视为过渡，v1.1 迁移至由路由/组件注册（见 5.1）。

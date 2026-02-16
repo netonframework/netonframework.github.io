@@ -176,6 +176,79 @@ curl -X POST http://localhost:8080/api/binding/form \
 # 输出: 表单参数 - username: 'alice', email: 'alice@example.com', age: 28
 ```
 
+## 文件上传 (Multipart)
+
+控制器参数类型为 `UploadFile`、`List<UploadFile>` 或 `UploadFiles` 时自动绑定 multipart 文件。绑定基于 **fieldName 匹配参数名**。
+
+### 单文件上传
+
+参数名对应表单中的 field name：
+
+```kotlin
+@Controller("/api/files")
+class FileController {
+
+    @Post("/avatar")
+    suspend fun uploadAvatar(avatar: UploadFile): Map<String, Any> {
+        val bytes = avatar.bytes()
+        return mapOf(
+            "filename" to avatar.filename,
+            "contentType" to (avatar.contentType ?: "unknown"),
+            "size" to avatar.size
+        )
+    }
+}
+```
+
+```bash
+curl -X POST http://localhost:8080/api/files/avatar \
+  -F "avatar=@photo.jpg"
+# 输出: {"filename":"photo.jpg","contentType":"image/jpeg","size":12345}
+```
+
+### 多文件上传
+
+同一 fieldName 的多个文件绑定为 `List<UploadFile>`：
+
+```kotlin
+@Post("/photos")
+suspend fun uploadPhotos(photos: List<UploadFile>): Map<String, Any> {
+    return mapOf("count" to photos.size, "names" to photos.map { it.filename })
+}
+```
+
+```bash
+curl -X POST http://localhost:8080/api/files/photos \
+  -F "photos=@a.jpg" -F "photos=@b.jpg"
+```
+
+### UploadFiles 结构化视图
+
+当需要处理多个不同 fieldName 的文件时，使用 `UploadFiles`：
+
+```kotlin
+@Post("/mixed")
+suspend fun mixedUpload(files: UploadFiles): Map<String, Any> {
+    val avatar = files.require("avatar")       // 必需，缺失抛 400
+    val gallery = files.get("gallery")         // 按 fieldName 过滤
+    val all = files.all()                      // 所有文件
+    return mapOf(
+        "avatar" to avatar.filename,
+        "galleryCount" to gallery.size,
+        "totalCount" to all.size
+    )
+}
+```
+
+### 绑定规则
+
+| 参数类型 | 绑定行为 |
+|----------|----------|
+| `avatar: UploadFile` | 匹配 fieldName == "avatar"，缺失时抛 400 |
+| `avatar: UploadFile?` | 匹配 fieldName == "avatar"，缺失时为 null |
+| `photos: List<UploadFile>` | 匹配 fieldName == "photos" 的所有文件，无匹配时空列表 |
+| `files: UploadFiles` | 注入完整的结构化视图，包含所有文件 |
+
 ## 请求头 (Header)
 
 请求头参数需要使用 `@Header` 注解显式标注：
@@ -308,6 +381,9 @@ fun search(keyword: String, page: Int = 1, size: Int = 10) =
 | `@FormParam("name")` | 表单字段 | 是 | `@FormParam("username") name: String` |
 | `@Header("name")` | HTTP 请求头 | 是 | `@Header("User-Agent") ua: String` |
 | `@Cookie("name")` | Cookie 值 | 是 | `@Cookie("sessionId") sid: String?` |
+| `UploadFile` | Multipart 文件（按 fieldName 匹配） | 否（类型自动识别） | `avatar: UploadFile` |
+| `List<UploadFile>` | 同名 Multipart 文件列表 | 否（类型自动识别） | `photos: List<UploadFile>` |
+| `UploadFiles` | 全部 Multipart 文件结构化视图 | 否（类型自动识别） | `files: UploadFiles` |
 | `@CurrentUser` | 认证用户 | 可选（Identity 类型自动注入） | `@CurrentUser identity: Identity?` |
 
 ## 进一步阅读

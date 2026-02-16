@@ -117,7 +117,7 @@ fun create(@Body request: BindingUserRequest): String
 |--------------|----------|--------|
 | `application/json` | JSON 反序列化（kotlinx.serialization） | 400 |
 | `application/x-www-form-urlencoded` | Form map，支持 `@FormParam`；可选支持「复杂类型 form bind」 | 400 |
-| `multipart/form-data` | v1 明确不支持，留 v2；若需支持仅限文件/字段（明确范围） | 415 或 400 |
+| `multipart/form-data` | `HttpRequest.uploadFiles()` 解析文件部分，返回 `UploadFiles`；控制器参数类型为 `UploadFile`、`List<UploadFile>` 或 `UploadFiles` 时按 fieldName 自动绑定 | 400 |
 | 其他 | 不解析 Body，复杂类型参数缺失 → 400 | 415 Unsupported Media Type |
 
 - **415**：标准 HTTP「不支持的媒体类型」，便于客户端与网关正确识别。

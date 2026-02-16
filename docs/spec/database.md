@@ -158,7 +158,7 @@ interface Table<T : Any, ID : Any> {
     suspend fun destroy(id: ID): Boolean
     suspend fun delete(entity: T): Boolean
     suspend fun exists(id: ID): Boolean
-    suspend fun withTransaction(block: suspend Table<T, ID>.() -> R): R
+    suspend fun transaction(block: suspend Table<T, ID>.() -> R): R
 
     // ----- 查询：唯一入口 query { } -----
     fun query(block: QueryScope<T>.() -> Unit): EntityQuery<T>
@@ -616,7 +616,7 @@ class SqlxStore<T : Any>(
 #### 事务
 
 - 使用 sqlx4k 的 `db.transaction { }`
-- Store 层可提供 `suspend fun <T> withTransaction(block: suspend () -> T): T`
+- Store 层可提供 `suspend fun <T> transaction(block: suspend () -> T): T`
 
 ### 4.5 安全性
 
@@ -720,7 +720,7 @@ interface Store<T : Any> {
     fun query(): QueryBuilder<T>
     
     // ===== 事务 =====
-    suspend fun <R> withTransaction(block: suspend Store<T>.() -> R): R
+    suspend fun <R> transaction(block: suspend Store<T>.() -> R): R
 }
 ```
 
@@ -915,7 +915,7 @@ object UserStore : SqlxStore<User>(
 | `Store.save` | 保留，upsert 语义 |
 | `Store.insertBatch/updateBatch/saveAll` | 新增 |
 | `Store.query()` | 保留，后续演进为类型安全 DSL |
-| `Store.withTransaction` | 新增 |
+| `Store.transaction` | 新增 |
 | `EntityStatements` | 新增，KSP 生成 `XxxStatements` object |
 | `object UserStore : SqlxStore<User>` | 单例 Store |
 | `interface UserRepository : Store<User>` | 可选，业务层类型语义 |
@@ -929,7 +929,7 @@ object UserStore : SqlxStore<User>(
 2. **Store 单例化**：`object UserStore : SqlxStore<User>`
 3. **Batch API**：insertBatch、updateBatch、saveAll
 4. **ActiveRecord 扩展**：`save(store)`、`delete(store)` 扩展函数
-5. **withTransaction**：Store 级事务封装
+5. **transaction**：Store 级事务封装
 6. **Typed Query DSL**：`where(User::email eq ...)`，KProperty → column，最高 DX 价值
 7. **Stream/Flow 查询**：v3 可选，大表场景
 
@@ -977,7 +977,7 @@ object UserStore : SqlxStore<User>(
 | 软删 | `destroy(id)` | 行为由 `@SoftDelete` 决定：UPDATE 或 DELETE |
 | 审计 | `@AutoFill` | 自动填 createdAt/updatedAt/createdBy/updatedBy |
 
-**保留不动**：`get(id)`、`destroy(id)`、`save(entity)`、`update(entity)`、`exists(id)`、`withTransaction { }`。
+**保留不动**：`get(id)`、`destroy(id)`、`save(entity)`、`update(entity)`、`exists(id)`、`transaction { }`。
 
 #### 主键与批量类型
 

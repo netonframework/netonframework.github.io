@@ -170,6 +170,40 @@ class HttpMethodController {
 }
 ```
 
+## 文件上传路由
+
+控制器参数使用 `UploadFile`、`List<UploadFile>` 或 `UploadFiles` 类型即可接收上传文件。KSP 按**参数名匹配表单 fieldName** 自动绑定：
+
+```kotlin
+@Controller("/api/files")
+class FileController {
+
+    // 参数名 "avatar" 匹配表单 fieldName "avatar"
+    @Post("/avatar")
+    suspend fun upload(avatar: UploadFile): Map<String, Any> {
+        return mapOf("filename" to avatar.filename, "size" to avatar.size)
+    }
+
+    // 参数名 "photos" 匹配表单 fieldName "photos"
+    @Post("/batch")
+    suspend fun batchUpload(photos: List<UploadFile>): Map<String, Any> {
+        return mapOf("count" to photos.size)
+    }
+
+    // UploadFiles 注入完整结构化视图，可按 fieldName 查询
+    @Post("/mixed")
+    suspend fun mixedUpload(files: UploadFiles): Map<String, Any> {
+        val avatar = files.require("avatar")
+        val gallery = files.get("gallery")
+        return mapOf("avatar" to avatar.filename, "galleryCount" to gallery.size)
+    }
+}
+```
+
+KSP 会自动识别 `UploadFile` / `List<UploadFile>` / `UploadFiles` 参数类型，从 `multipart/form-data` 请求中解析文件。
+
+---
+
 ## 路由组与挂载
 
 路由组用于将控制器按照业务模块进行分组，并为每组分配 URL 前缀。
