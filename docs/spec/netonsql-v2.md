@@ -1313,6 +1313,117 @@ fun <A, B> select(c1: ColRef<*, A>, c2: ColRef<*, B>): TypedProjectedSelect2<A, 
 
 ---
 
+#### 3.6.7 拦截器执行顺序（冻结）
+
+**冻结规则**：拦截器按注册顺序执行，且 AST 改写采用链式传递（fold）。
+
+**A) beforeQuery / beforeSelect（AST rewrite）**
+
+- DbContext 在执行 SQL 之前，必须按 `interceptors` 的顺序依次调用拦截器的 `beforeQuery` / `beforeSelect`。
+- 每个拦截器的返回值，作为下一个拦截器的输入（链式传递）。
+- 最终得到的 `finalAst` 才允许进入 SqlBuilder 生成 SQL。
+
+**冻结伪代码**：
+
+```kotlin
+val finalAst = interceptors.fold(ast) { current, it ->
+    it.beforeSelect(current)
+}
+```
+
+`beforeQuery`（Phase 1 单表）同理。
+
+**B) onExecute / onError（执行观测）**
+
+- DbContext 在完成 SQL 构建并执行之后，必须按注册顺序调用：
+  - `onExecute(sql, args, elapsedMs)`（成功路径）
+  - `onError(sql, args, error)`（失败路径）
+- `onExecute/onError` 只允许观测，不允许改写 SQL、args、结果集或抛出异常影响主流程（可记录自身错误，但不得中断查询）。
+
+**冻结伪代码**：
+
+```kotlin
+for (it in interceptors) it.onExecute(sql, args, elapsedMs)
+// 或失败：for (it in interceptors) it.onError(sql, args, error)
+```
+
+**C) 幂等性要求（强约束）**
+
+每个拦截器的 AST 改写必须满足幂等：
+- `f(f(ast)) == f(ast)`
+
+用于避免多租户/数据权限/软删等注入条件在多次执行（或重试、分页 count+select）时重复叠加导致 SQL 膨胀或语义错误。
+
+**推荐策略**（非强制实现细节）：
+- 在 AST 上用固定结构表示注入条件（例如统一附加到 where 的 And(children) 中）
+- 或在注入前检测 AST 是否已包含相同条件（基于结构相等）
+
+---
+
+#### 3.6.8 AST 不可变性保证（冻结）
+
+**冻结规则**：QueryAst / SelectAst 永远保持不可变结构，禁止为了性能将其改成 mutable。
+
+**A) 不可变承诺**
+
+- QueryAst / SelectAst 必须使用不可变数据结构表达（推荐：`data class` + `val` 字段）。
+- 改写必须通过 `copy()` 返回新对象，禁止原地修改。
+
+**B) 防御性拷贝（冻结）**
+
+任何可能来自外部可变集合的字段，在 AST 构建完成时必须做防御性拷贝：
+- `List` / `Map` / `Set` 等统一 `toList()` / `toMap()` / `toSet()` 进入 AST。
+- AST 对外暴露后应视为只读快照。
+
+**C) 兼容性声明**
+
+- v2 保证：AST 结构与字段语义不会在 minor 版本中发生破坏性变更（新增字段允许，但不得改变现有字段含义）。
+- 未来如需扩展（CTE/subquery/window），只能以"新增 AST 节点/字段"的方式演进，不得推翻 v2 结构。
+
+---
+
+#### 3.6.9 DbContext 职责边界（冻结）
+
+**冻结规则**：DbContext 是"统一执行门面"（内部基础设施），只负责执行与观测调度，不承载业务策略。
+
+**A) DbContext 必须承担的职责（冻结）**
+
+DbContext 的职责边界固定为：
+
+1. **SQL 执行**
+   - `query(BuiltSql): List<Row>`
+   - `execute(BuiltSql): Long`
+
+2. **事务边界**
+   - `transaction { }`（在 driver 支持后落地；v2 可允许 TODO，但接口语义冻结）
+
+3. **拦截链调度**
+   - 调用 `QueryInterceptor.beforeQuery/beforeSelect`（AST rewrite）
+   - 调用 `QueryInterceptor.onExecute/onError`（观测）
+
+4. **JOIN 入口**
+   - `from(table)` 构建 SelectBuilder / TableRef（不要求对外暴露更多 TableOps API）
+
+**B) 禁止内置业务策略（冻结）**
+
+DbContext（含 SqlxDbContext 实现类）禁止直接实现以下能力：
+- ❌ SQL cache / query result cache
+- ❌ 多租户注入逻辑（tenant_id 条件）
+- ❌ 数据权限注入逻辑（org_id / dept scope）
+- ❌ 软删除注入逻辑（deleted / deleted_at 条件）
+- ❌ Metrics/Tracing/SlowSQL 的具体策略
+- ❌ 自定义重试、熔断等策略
+
+上述能力必须通过 `QueryInterceptor` 扩展实现，保证 DbContext 的长期可控性，避免演变为 God Object。
+
+**C) Phase 1 / Phase 4 执行统一（冻结）**
+
+- Phase 1（单表 QueryAst）与 Phase 4（JOIN SelectAst）在实际执行时，必须都通过 DbContext 的统一执行入口完成：
+  - AST rewrite → SqlBuilder → BuiltSql → DbContext.query/execute → onExecute/onError
+- 对外 API 保持稳定，不强推用户改写为 `DbContext.table()/TableOps` 等新 API。
+
+---
+
 **🔒 冻结声明**
 
 NetonSQL v2 执行链模型自本版本起冻结。
