@@ -165,11 +165,41 @@ fun main(args: Array<String>) {
 4. **组件 start**：对每个 component 调用 `component.start(ctx)`。
 5. **同步到 ServiceFactory**：`ctx.syncToServiceFactory()`，将 ctx 内所有绑定写入 `ServiceFactory`。
 6. **设置当前上下文**：`NetonContext.setCurrent(ctx)`，随后在 `try/finally` 中执行后续步骤并在结束时 `setCurrent(null)`。
-7. **基础设施**：`initializeInfrastructure(ctx, log)` → `GeneratedInitializer.initialize(ctx)`（KSP 注册路由等）。
+7. **基础设施**：`initializeInfrastructure(ctx, log)` → 模块初始化（按拓扑序）+ 统计日志输出（详见 §3.4）。
 8. **组件配置块**：若存在 `app.componentConfigBlock`，执行 `ComponentConfigurator` 的 security/routing/http 等（依赖 `ServiceFactory.getSecurityBuilder()` 等，即 install 已注册的实现）。
 9. **安全与路由**：`buildSecurityConfigurationFromCtx(ctx)` → `configureRequestEngineFromCtx(ctx, securityConfig)`（为 `RequestEngine` 设置 `AuthenticationContext`）。
 10. **用户 onStart**：`userBlock` 在 `startHttpServerSync` 内、`httpAdapter.start(ctx)` 之前执行，传入 `KotlinApplication(actualPort, ctx)`。
 11. **HTTP 服务器**：`httpAdapter.start(ctx)`，阻塞直至服务器停止。
+
+### 3.4 模块初始化与统计日志（beta1 新增）
+
+`initializeInfrastructure(ctx, log)` 的执行流程：
+
+1. **依赖验证 + 拓扑排序**：`topologicalSort(moduleInitializers, log)`
+2. **输出模块加载概览**：
+   ```
+   modules.loaded  version=1.0.0-beta1 count=2 modules=system, member
+   ```
+3. **逐模块初始化**（按拓扑序），每个模块完成后输出统计：
+   ```
+   module.initialized  moduleId=system routes=4 validators=1
+   module.initialized  moduleId=member routes=12 jobs=3 validators=2
+   ```
+4. **汇总所有模块统计**：
+   ```
+   modules.summary  version=1.0.0-beta1 totalModules=2 moduleIds=[system, member] totalRoutes=16 totalJobs=3 totalValidators=3
+   ```
+
+**日志字段说明**：
+
+| 事件 | 字段 | 说明 |
+|------|------|------|
+| `modules.loaded` | `version`, `count`, `modules` | 初始化前输出，modules 为逗号分隔的 ID 列表 |
+| `module.initialized` | `moduleId`, 各 stats key | 单模块完成后输出，stats 来自 `ModuleInitializer.stats` |
+| `modules.summary` | `version`, `totalModules`, `moduleIds`, `total*` | 全部完成后输出，stats key 加 `total` 前缀（如 `totalRoutes`） |
+| `module.init.failed` | `moduleId`, `error` | 模块初始化失败，fail-fast 抛异常 |
+
+**兼容模式**：若未声明 `modules()`，走旧路径 `GeneratedInitializer.initialize(ctx)`，不输出统计日志。
 
 ### 3.3 端口与配置
 
@@ -1156,4 +1186,4 @@ object GeneratedInitializer {
 
 ---
 
-*文档版本：v1 + v1.1 冻结约束*
+*文档版本：v1 + v1.1 冻结约束 + beta1 模块统计日志*

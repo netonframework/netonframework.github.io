@@ -356,9 +356,5 @@ neton-security: Identity { userId: UserId }  （桥接 override val id = userId.
 
 ## 相关文档
 
-- [安全规格说明](/spec/security) -- 安全模块完整设计规格
-- [安全 v1.1 冻结说明](/spec/security-v1.1-freeze) -- v1.1 版本冻结细节
-- [安全 v1.2 冻结说明](/spec/security-v1.2-freeze) -- v1.2 @Permission + PermissionEvaluator
-- [JWT 认证器规格](/spec/jwt-authenticator) -- JWT 认证器设计与实现
-- [@CurrentUser 设计文档](/spec/current-user-design) -- @CurrentUser 注入机制设计
+- [安全规范](/spec/security) -- 安全模块完整设计规范（含 JWT 认证器、@CurrentUser 设计）
 - [路由指南](/guide/routing) -- 路由组与 mount 配置

@@ -323,6 +323,69 @@ fun dashboard(@CurrentUser identity: Identity): String {
 | **可读性** | 隐含的用户依赖 | 方法签名明确表达依赖 |
 | **测试友好** | 需要模拟 HttpContext | 直接传入 Identity 对象 |
 
+### 4.5 @CurrentUser 实现原理
+
+**1. KSP 编译期处理**
+
+KSP ControllerProcessor 在扫描方法参数时：
+- 参数类型为 `Identity`（或其子类型） → 自动识别为用户注入
+- 参数带 `@CurrentUser` 或 `@AuthenticationPrincipal`（兼容） → 标记为用户注入
+
+**2. 生成代码**
+
+KSP 生成的路由处理代码统一使用 `SecurityAttributes.IDENTITY` 常量，不使用硬编码字符串：
+
+```kotlin
+// 非空 Identity
+context.getAttribute(SecurityAttributes.IDENTITY) as Identity
+
+// 可空 Identity
+context.getAttribute(SecurityAttributes.IDENTITY) as? Identity
+```
+
+**3. 安全管道写入**
+
+安全管道（`runSecurityPreHandle`）在认证成功后：
+
+```kotlin
+httpContext.setAttribute(SecurityAttributes.IDENTITY, identity)
+```
+
+### 4.6 @CurrentUser 最佳实践
+
+**优先使用类型自动注入**：
+
+```kotlin
+// 推荐：类型自动注入，零注解
+@Get("/profile")
+@RequireAuth
+fun getProfile(identity: Identity): String {
+    return "User: ${identity.id}"
+}
+
+// 仅在需要控制 required 语义时使用注解
+@Get("/welcome")
+@AllowAnonymous
+fun welcome(@CurrentUser(required = false) identity: Identity?): String {
+    return identity?.id ?: "guest"
+}
+```
+
+**测试友好的设计**：
+
+```kotlin
+class UserControllerTest {
+    @Test
+    fun testGetProfile() {
+        val identity = MockIdentity("123", setOf("user"), setOf("profile:view"))
+        val controller = UserController()
+        // 直接传入 Identity 对象，无需模拟复杂的认证流程
+        val response = controller.getProfile(identity)
+        assertEquals("User: 123", response)
+    }
+}
+```
+
 ---
 
 ## 五、安全管道与请求流程
@@ -342,8 +405,12 @@ runSecurityPreHandle(route, httpContext, requestContext, securityConfig, routeGr
   ├─ 1. 计算 isAnonymousAllowed：
   │     @AllowAnonymous → true
   │     OR route.pattern in groupConfig.allowAnonymous → true
-  │     OR (!groupConfig.requireAuth && !route.requireAuth) → true
+  │     OR (!groupConfig.requireAuth && !route.requireAuth && route.permission == null) → true
   │     → 如果 true：removeAttribute(IDENTITY)，return
+  │
+  │     **冻结规则：permission implies auth**
+  │     route.permission != null 时，即使路由组 requireAuth=false，
+  │     也不视为匿名允许，强制走认证流程。
   │
   ├─ 2. fail-fast（安全未配置 + requireAuth → 500）
   │
@@ -362,7 +429,7 @@ runSecurityPreHandle(route, httpContext, requestContext, securityConfig, routeGr
         guard.checkPermission(identity, requestContext) → false → 403
 ```
 
-**优先级**：`@AllowAnonymous` > 路由组白名单 > `group.requireAuth`
+**优先级**：`@AllowAnonymous` > 路由组白名单 > `@Permission`（隐含认证） > `group.requireAuth`
 
 ### 5.3 Guard 选择策略
 
@@ -382,6 +449,8 @@ runSecurityPreHandle(route, httpContext, requestContext, securityConfig, routeGr
 | @Permission 但 identity 为 null | 401 Unauthorized | 未认证 |
 | @RequireAuth 但未安装 Security | 500 | fail-fast，message 含 "SecurityComponent" |
 | @RequireAuth 但未注册 Authenticator | 500 | fail-fast，message 含 "Authenticator" |
+| @Permission 但未认证（开放组） | 401 | permission implies auth，即使组级 requireAuth=false |
+| @Permission 但未安装 Security | 500 | fail-fast，与 @RequireAuth 同理 |
 
 ---
 
@@ -566,6 +635,73 @@ fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {
 | InvalidAlgorithm | alg | Unsupported algorithm |
 | InvalidSignature | (空) | Invalid signature |
 
+### 8.8 Adapter 桥接层
+
+JWT 认证采用双层架构：
+
+| 层 | 类名 | 接口 | 职责 |
+|----|------|------|------|
+| 底层实现 | `JwtAuthenticatorV1` | `neton.security.Authenticator` | 核心 JWT 解析、验签、Claim 提取 |
+| 桥接适配 | `JwtAuthenticatorAdapter` | `neton.core.interfaces.Authenticator` | 将 neton-core 的 `RequestContext` 适配为 neton-security 的 `RequestContext`，委托 V1 执行 |
+
+```kotlin
+class JwtAuthenticatorAdapter(
+    secretKey: String,
+    headerName: String = "Authorization",
+    tokenPrefix: String = "Bearer "
+) : neton.core.interfaces.Authenticator {
+    override val name = "jwt"
+    private val delegate = JwtAuthenticatorV1(secretKey, headerName, tokenPrefix)
+
+    override suspend fun authenticate(context: neton.core.interfaces.RequestContext): Identity? {
+        val securityContext = // 适配 RequestContext 接口
+        return try {
+            delegate.authenticate(securityContext)
+        } catch (e: AuthenticationException) {
+            null  // Adapter 层吞掉异常，返回 null
+        }
+    }
+}
+```
+
+**关键语义**：
+- `JwtAuthenticatorV1` 在 token 异常时抛 `AuthenticationException`（code/path/message）
+- `JwtAuthenticatorAdapter` 捕获所有 `AuthenticationException` 并返回 `null`，符合 neton-core `Authenticator` 的契约（认证失败返回 null，由安全管道决定 401/403）
+- `SecurityPreHandle` 收到 null identity 时根据 requireAuth 决定是否 401
+
+### 8.9 命名规范（beta1 冻结）
+
+| 旧名 | 新名 | 模式 |
+|------|------|------|
+| ~~RealJwtAuthenticator~~ | `JwtAuthenticatorAdapter` | Adapter（桥接两个不同 RequestContext 接口） |
+| ~~RealMockAuthenticator~~ | `MockAuthenticatorAdapter` | Adapter |
+| ~~RealSessionAuthenticator~~ | `SessionAuthenticatorAdapter` | Adapter |
+| ~~RealBasicAuthenticator~~ | `BasicAuthenticatorAdapter` | Adapter |
+| ~~RealSecurityBuilder~~ | `SecurityBuilderImpl` | Impl（同一接口的实现） |
+| ~~RealAuthenticationContext~~ | `AuthenticationContextImpl` | Impl |
+| ~~RealDefaultGuard~~ | `DefaultGuardImpl` | Impl |
+| ~~RealAdminGuard~~ | `AdminGuardImpl` | Impl |
+| ~~RealRoleGuard~~ | `RoleGuardImpl` | Impl |
+| ~~RealAnonymousGuard~~ | `AnonymousGuardImpl` | Impl |
+
+**选择标准**：桥接两个不同接口 → `*Adapter`；同一接口的标准实现 → `*Impl`。
+
+### 8.10 实现清单
+
+| 项 | 说明 |
+|----|------|
+| 1 | 解析 Authorization header，提取 Bearer token |
+| 2 | Base64Url 解码 payload，析出 sub/roles/perms |
+| 3 | sub 缺失/空 → InvalidUserId；sub 非法 → UserId.parse 抛 InvalidUserId |
+| 4 | roles/perms 缺失或非 list → emptySet；list 中非 string 忽略 |
+| 5 | exp 缺失/类型错/过期 → TokenExpired；exp 单位秒 |
+| 6 | alg != "HS256" → InvalidAlgorithm |
+| 7 | HS256 验签 |
+| 8 | 构造 IdentityUser(id, roles.toSet(), perms.toSet()) |
+| 9 | 契约测试：各 code 对应 path/message 稳定 |
+
+**实现建议**：不要手写 HMAC-SHA256，使用 Native 可用 crypto 库（如 cryptography-kotlin：CommonCrypto/OpenSSL）封装极薄的 HS256 verifier。
+
 ---
 
 ## 九、请求级 Identity 存储
@@ -628,7 +764,7 @@ fun getUserProfile(
 
 ## 十一、契约测试
 
-### 11.1 安全管道契约测试（12 条）
+### 11.1 安全管道契约测试（15 条）
 
 `neton-http/src/commonTest/SecurityPipelineContractTest.kt`：
 
@@ -646,6 +782,9 @@ fun getUserProfile(
 | 10 | routeGroup_requireAuth_enforcesAuth | 组级强制认证 |
 | 11 | permission_noEvaluator_emptyPermissions_throws403 | 默认行为冻结 |
 | 12 | permission_noIdentity_throws401 | 未认证 → 401 |
+| 13 | permissionImpliesAuth_openGroup_noToken_throws401 | **permission implies auth**：开放组 + @Permission + 无 token → 401 |
+| 14 | permissionImpliesAuth_openGroup_withToken_passes | **permission implies auth**：开放组 + @Permission + 有效 token → 200 |
+| 15 | permissionImpliesAuth_noSecurity_throws500 | **permission implies auth**：@Permission + 无 Security → 500 |
 
 ### 11.2 Identity 契约测试
 
@@ -679,6 +818,8 @@ class SecurityIdentityContractTest {
 
 ### 11.3 JWT Authenticator 契约测试
 
+`neton-security/src/commonTest/JwtAuthenticatorContractTest.kt`（8 条，JwtAuthenticatorV1 底层实现）：
+
 ```kotlin
 // 无 Authorization → null
 // 非 Bearer → null
@@ -690,6 +831,35 @@ class SecurityIdentityContractTest {
 // 签名错误 → InvalidSignature
 // 正常 → IdentityUser
 ```
+
+### 11.4 JWT Adapter 契约测试（6 条）
+
+`neton-security/src/commonTest/JwtAuthenticatorAdapterContractTest.kt`：
+
+验证 `JwtAuthenticatorAdapter`（neton-core Authenticator 接口实现）通过委托 `JwtAuthenticatorV1` 正确工作。
+
+| # | 名称 | 验证 |
+|---|------|------|
+| 1 | roundTrip_createAndAuthenticate_returnsIdentity | 生成 token → authenticate → 返回正确 Identity |
+| 2 | noAuthHeader_returnsNull | 无 Authorization → null（不抛异常） |
+| 3 | invalidToken_returnsNull_doesNotThrow | 无效 token → null（异常被 adapter 吞掉） |
+| 4 | expiredToken_returnsNull | 过期 token → null |
+| 5 | identity_hasPermission_hasRole_work | 返回的 Identity 的 hasRole/hasPermission 正常 |
+| 6 | authenticatorName_isJwt | adapter.name == "jwt" |
+
+### 11.5 泛型序列化契约测试（5 条）
+
+`neton-http/src/commonTest/GenericSerializerContractTest.kt`：
+
+验证 KSP 生成的编译期泛型序列化（`JsonContent` 包装）正确工作。
+
+| # | 名称 | 验证 |
+|---|------|------|
+| 1 | pageResponse_serializes_correctly | `PageResponse<UserVO>` 正确序列化 |
+| 2 | pageResponse_emptyItems_serializes_correctly | 空列表序列化 |
+| 3 | nestedGeneric_apiResponse_pageResponse_serializes_correctly | 嵌套泛型 `ApiResponse<PageResponse<UserVO>>` |
+| 4 | nonGeneric_serializable_serializes_correctly | 非泛型 `@Serializable` 序列化 |
+| 5 | jsonContent_is_raw_json_string | `JsonContent` 是原始 JSON 字符串包装 |
 
 ---
 
@@ -707,4 +877,4 @@ class SecurityIdentityContractTest {
 
 ---
 
-*文档版本：v1.2*
+*文档版本：v1.4 — 合并 JWT Authenticator 规范（含 Adapter 桥接层）与 @CurrentUser 设计文档*

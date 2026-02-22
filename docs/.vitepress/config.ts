@@ -16,7 +16,6 @@ export default defineConfig({
         text: "更多",
         items: [
           { text: "路线图", link: "/spec/roadmap" },
-          { text: "项目状态", link: "/spec/project-status-report" },
         ],
       },
     ],
@@ -67,19 +66,16 @@ export default defineConfig({
           items: [
             { text: "规范概览", link: "/spec/" },
             { text: "路线图", link: "/spec/roadmap" },
-            { text: "项目状态报告", link: "/spec/project-status-report" },
           ],
         },
         {
           text: "Core",
           items: [
             { text: "Core 规范 v1", link: "/spec/core" },
-            { text: "Core 架构", link: "/spec/core-architecture" },
             {
               text: "Core SPI 最佳实践",
               link: "/spec/core-spi-best-practices",
             },
-            { text: "Core v2 重构设计", link: "/spec/core-v2-refactor" },
             { text: "Config SPI 规范", link: "/spec/config-spi" },
           ],
         },
@@ -87,7 +83,6 @@ export default defineConfig({
           text: "HTTP",
           items: [
             { text: "HTTP 规范 v1", link: "/spec/http" },
-            { text: "HTTP 适配器总结", link: "/spec/ktor-adapter-summary" },
           ],
         },
         {
@@ -100,20 +95,7 @@ export default defineConfig({
         {
           text: "安全",
           items: [
-            { text: "安全规范 v1.2", link: "/spec/security" },
-            {
-              text: "安全 v1.1 API Freeze",
-              link: "/spec/security-v1.1-freeze",
-            },
-            {
-              text: "安全 v1.2 API Freeze",
-              link: "/spec/security-v1.2-freeze",
-            },
-            { text: "JWT 认证器规范", link: "/spec/jwt-authenticator" },
-            {
-              text: "@CurrentUser 设计",
-              link: "/spec/authentication-principal-design",
-            },
+            { text: "安全规范 v1", link: "/spec/security" },
           ],
         },
         {
@@ -123,19 +105,26 @@ export default defineConfig({
         {
           text: "数据库",
           items: [
-            { text: "Database API Freeze v2", link: "/spec/database-api" },
-            { text: "Query DSL v2", link: "/spec/database-query-dsl" },
-            { text: "sqlx 适配设计", link: "/spec/database-sqlx-design" },
-            { text: "SqlxStore v2 API", link: "/spec/database-sqlxstore-v2" },
+            { text: "数据库规范 v1", link: "/spec/database" },
+            { text: "JOIN 查询规范", link: "/spec/database-join" },
+            {
+              text: "执行链与约束规范",
+              link: "/spec/database-execution",
+            },
           ],
         },
         {
           text: "缓存与 Redis",
           items: [
             { text: "缓存规范 v1", link: "/spec/cache" },
-            { text: "缓存注解规范 v1", link: "/spec/cache-annotation" },
-            { text: "Redis 设计", link: "/spec/redis-design" },
-            { text: "Redis 分布式锁规范", link: "/spec/redis-lock" },
+            { text: "Redis 规范 v1", link: "/spec/redis" },
+          ],
+        },
+        {
+          text: "定时任务与存储",
+          items: [
+            { text: "定时任务规范", link: "/spec/jobs" },
+            { text: "存储规范", link: "/spec/storage-spec" },
           ],
         },
       ],

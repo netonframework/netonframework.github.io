@@ -259,6 +259,5 @@ lockManager.withLock(
 
 ## 七、相关文档
 
-- [Redis 设计规范](../spec/redis-design.md) -- Redis 组件的完整架构设计与 API 定义
-- [分布式锁规范](../spec/redis-lock.md) -- 锁的技术规范（SET NX PX、Lua 释放、token 策略等）
+- [Redis 规范](../spec/redis.md) -- Redis 组件的完整架构设计、API 定义与分布式锁规范
 - [缓存指南](./cache.md) -- 缓存体系的使用指南

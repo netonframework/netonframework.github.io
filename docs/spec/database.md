@@ -13,7 +13,7 @@
 2. [API 设计](#二api-设计)
 3. [Query DSL](#三query-dsl)
 4. [架构实现（sqlx4k）](#四架构实现sqlx4k)
-5. [SqlxStore 内部接口](#五sqlxstore-内部接口)
+5. [SqlxTableAdapter 内部接口](#五sqlxtableadapter-内部接口)
 6. [Phase 1 执行规范](#六phase-1-执行规范)
 7. [Contract Tests](#七contract-tests)
 8. [冻结约束](#八冻结约束)
@@ -104,11 +104,29 @@ data class User(
 ```
 @Table("users") data class User
     ↓ KSP
-UserMeta          (internal, 元数据)
+UserMeta          (internal, 元数据 + 类型安全 ColumnRef 属性)
 UserRowMapper     (internal, 行映射)
 UserTable         (public, object : Table<User, Long> by SqlxTableAdapter<User, Long>(...))
 UserExtensions    (UserUpdateScope + UserTable.update + User.save/delete)
 ```
+
+KSP 自动检测：
+- **`@SoftDelete`** — 在生成的 `SqlxTableAdapter` 中传入 `softDeleteConfig` 参数，启用自动软删过滤
+- **`@Id`** — 推导主键列名与 ID 类型
+- **`@Column`** — 自定义列名映射
+
+生成的 `UserMeta` 仅包含元数据，不暴露 ColumnRef 属性（用户层统一使用 `Entity::property` 列引用）：
+
+```kotlin
+internal object UserMeta : EntityMeta<User> {
+    override val table = "users"
+    override val idColumn = "id"
+    override val columns = listOf("id", "name", "email", "status", "deleted")
+    override val columnTypes = mapOf(...)
+}
+```
+
+业务层使用 `User::status eq 1` 而非 `ColumnRef("status") eq 1`（见 §3.3.5 KProperty1 DSL 冻结规则）。
 
 **包与命名冻结**：
 - SQLx 实现：`neton.database.adapter.sqlx.SqlxTableAdapter`
@@ -123,7 +141,7 @@ object UserTable : Table<User, Long> by SqlxTableAdapter<User, Long>(...)
 UserTable.get(id)                              // 主键查询
 UserTable.destroy(id)                          // 按主键删除
 UserTable.update(id) { name = x; email = y }   // KSP 生成 mutate 风格
-UserTable.query { where { ColumnRef("status") eq 1 } }.list()
+UserTable.query { where { User::status eq 1 } }.list()
 UserTable.findAll()
 UserTable.count()
 UserTable.ensureTable()
@@ -173,49 +191,116 @@ interface Table<T : Any, ID : Any> {
 
 **不暴露** `updateById(id, block)`：更新统一由 KSP 生成的 `UserTable.update(id) { ... }`（强类型）提供。
 
-### 2.4 Table 与 Store 职责边界（定型）
+### 2.4 应用分层架构（v1 冻结）
 
-| 层级 | 职责 | 允许 |
+> Store 层废除。Table 已升级为完整数据访问层（单表 CRUD + JOIN DSL + typed projection），
+> Store 不再需要。详见 [JOIN 查询规范](./database-join.md)。
+
+#### 冻结分层
+
+| # | 层级 | 职责 | 依赖规则 |
+|---|------|------|---------|
+| 1 | **Controller** | HTTP 端点、DTO 绑定、鉴权注解、参数校验 | 只依赖 Logic，**禁止直接引用 Table** |
+| 2 | **Logic**（Service） | 业务用例：聚合/事务/缓存/事件/审计/权限策略 | 依赖 Table（单表 CRUD + JOIN DSL） |
+| 3 | **Table** | 数据访问（KSP 生成）：CRUD + query DSL + JOIN DSL + typed projection | 无业务规则 |
+| 4 | **Model** | 实体：纯 `@Table data class` | 无依赖 |
+
+#### 硬约束
+
+| 约束 | 规则 | 说明 |
 |------|------|------|
-| **Table** | 表级 CRUD | 单表 get/insert/update/destroy/where/list/count |
-| **Store** | 聚合/联查（业务仓库） | JOIN、CTE、复杂 SQL，返回 DTO（如 UserWithRoles） |
-| **SqlRunner** | 底层执行器 | fetchAll/execute，由 adapter 实现 |
+| C1 | **Controller 禁止引用 Table** | 防止"Controller 写 SQL"的失控。所有数据操作必须经过 Logic 层 |
+| C2 | **Logic 是唯一业务聚合层** | 事务、跨表用例、缓存/锁/审计/事件 全部在此层 |
+| C3 | **Table 是唯一数据访问入口** | 不允许 Logic 层直接拼 raw SQL。80% 用 DSL，20% 用 `DbContext`（逃生口） |
+| C4 | **Model 是纯 data class** | 不含业务方法、不含数据访问代码 |
+| C5 | **Logic 只依赖稳定面** | Logic 层只允许依赖 `DbContext`、`Table`、`SelectBuilder`（NetonSQL）。**禁止依赖 `adapter.sqlx.*`**（internal 包从模块边界阻断） |
+| C6 | **DbContext 是唯一 SQL 执行入口** | 所有 SQL 执行必须经过 `DbContext`（或 `TxContext`）。`SqlxDatabase.require()` 只存在于 adapter 内部（internal），Logic/Controller 禁止直接调用 |
+| C7 | **事务只有 `transaction { }` 一种写法** | `DbContext.transaction { }` 是唯一事务入口。禁止 `begin()` / `commit()` / `rollback()` 暴露给业务层 |
 
-**冻结三条**：
-1. **Table 不做 JOIN** — 单表 DSL 仅 `query { where { } }`，不出现 JOIN。
-2. **Store 允许 JOIN** — 多表联查、聚合对象、复杂 SQL 归属 Store。
-3. **Store 不直接依赖 sqlx4k Row** — 使用 `neton.database.api.Row` 抽象（long/string/int 等）。
+### 2.5 判定规则与反模式
 
-**推荐写法**：
+#### 判定规则
+
+| 场景 | 正确归属 | 说明 |
+|------|----------|------|
+| 单表筛选 + 分页 + DTO 映射 | Logic → Table | 典型读模型查询 |
+| 多对多联表查询（如 UserWithRoles） | Logic → Table（JOIN DSL） | 不再需要 Store |
+| 事务性写入（如创建用户 + 初始化角色） | Logic（transaction 块） | 事务边界在 Logic 层 |
+| 领域规则集中（如禁用用户 → 踢下线 + 撤销 token） | Logic | 复合业务操作 |
+
+#### 反模式
+
+- **Controller 直接调用 Table** — 禁止（约束 C1）。即使是简单 CRUD 也必须经过 Logic 层。
+- **Logic 直接拼 raw SQL** — 禁止（约束 C3）。SQL 操作通过 Table DSL 或 DbContext。
+- **为每个 Table 创建同名 Logic** — 退化成转发器，违反聚合语义。Logic 按业务用例组织，不按表组织。
+- **Logic 引用 `adapter.sqlx.*`** — 禁止（约束 C5）。Logic 只依赖 `DbContext`、`Table`、`SelectBuilder`。
+- **Logic/Controller 直接调用 `SqlxDatabase.require()`** — 禁止（约束 C6）。连接获取只在 adapter 内部。
+- **暴露 `begin()` / `commit()` / `rollback()` 给业务层** — 禁止（约束 C7）。事务只有 `transaction { }` 一种写法。
+
+#### Store 废除路径
+
+| 阶段 | 状态 |
+|------|------|
+| v1（当前） | Store 废除；Table 升级支持 JOIN DSL；所有聚合逻辑归属 Logic 层 |
+
+#### 推荐目录结构
+
+```
+app/src/commonMain/kotlin/
+├── controller/
+│   └── UserController.kt          # HTTP 端点
+├── logic/
+│   ├── UserLogic.kt                # 用户业务用例（分页/筛选/CRUD）
+│   ├── AuthLogic.kt                # 认证用例（登录/token/权限）
+│   └── RoleLogic.kt                # 角色业务用例（分配/撤销/联查）
+├── model/
+│   ├── SystemUser.kt               # @Table data class
+│   ├── Role.kt                     # @Table data class
+│   ├── UserRole.kt                 # @Table data class
+│   └── dto/
+│       ├── UserWithRoles.kt        # 聚合 DTO
+│       └── LoginRequest.kt         # 请求 DTO
+└── build/generated/ksp/.../
+    ├── SystemUserTable.kt          # KSP 生成
+    ├── RoleTable.kt                # KSP 生成
+    └── UserRoleTable.kt            # KSP 生成
+```
+
+#### v1 推荐写法
 
 ```kotlin
-// 表级（KSP 生成）
-object UserTable : Table<User, Long> by SqlxTableAdapter<User, Long>(...)
-object RoleTable : Table<Role, Long> by SqlxTableAdapter<Role, Long>(...)
-object UserRoleTable : Table<UserRole, Long> by SqlxTableAdapter<UserRole, Long>(...)
+// Logic 层（手写）— 业务用例
+class UserLogic(private val ctx: NetonContext) {
 
-// 聚合 Store（手写，构造注入 SqlRunner）
-class UserStore(private val db: SqlRunner) : SqlRunner by db {
-    suspend fun getWithRoles(userId: Long): UserWithRoles? {
-        val sql = """
-            SELECT u.id, u.name, u.email, r.id AS role_id, r.name AS role_name
-            FROM users u
-            LEFT JOIN user_roles ur ON ur.user_id = u.id
-            LEFT JOIN roles r ON r.id = ur.role_id
-            WHERE u.id = :uid
-        """.trimIndent()
-        val rows = fetchAll(sql, mapOf("uid" to userId))
-        if (rows.isEmpty()) return null
-        val first = rows.first()
-        val user = User(id = first.long("id"), name = first.string("name"), ...)
-        val roles = rows.mapNotNull { r ->
-            r.longOrNull("role_id")?.let { Role(id = it, name = r.string("role_name")) }
-        }.distinctBy { it.id }
-        return UserWithRoles(user, roles)
+    // 单表分页（直接调 Table）
+    suspend fun page(username: String?, status: Int?, page: Int, size: Int): Page<SystemUser> =
+        SystemUserTable.query {
+            where {
+                and(
+                    whenNotBlank(username) { SystemUser::username like "%$it%" },
+                    whenPresent(status) { SystemUser::status eq it }
+                )
+            }
+            orderBy(SystemUser::createdAt.desc())
+        }.page(page, size)
+
+    // 联表查询（v1 JOIN DSL，不再需要 Store）
+    suspend fun getWithRoles(userId: Long): Pair<SystemUser, List<Role>>? {
+        val (q, U) = from(SystemUserTable)
+        val UR = q.leftJoin(UserRoleTable).on { U.id eq it.userId }
+        val R  = q.leftJoin(RoleTable).on { UR.roleId eq it.id }
+
+        val rows = q.where(U.id eq userId)
+            .select(U.id, U.username, R.id, R.name)
+            .fetch()
+
+        return rows.firstOneToMany(
+            one = { it.into<SystemUser>() },
+            many = { it.intoOrNull<Role>("role_", Role::id) },
+            manyKey = { it.id }
+        )
     }
 }
-
-// 调用：val user = UserStore(sqlRunner()).getWithRoles(1)
 ```
 
 ---
@@ -227,12 +312,12 @@ class UserStore(private val db: SqlRunner) : SqlRunner by db {
 #### 1️⃣ 极简人体工程学
 
 ```kotlin
-UserTable.query { where { ColumnRef("status") eq 1 } }.list()
+UserTable.query { where { User::status eq 1 } }.list()
 ```
 
 #### 2️⃣ 强类型
 
-- `ColumnRef("age") gt 18`（where 块内使用 ColumnRef 与 PredicateScope）
+- `User::age gt 18`（where 块内使用 KProperty1 与 PredicateScope）
 
 #### 3️⃣ 不暴露 SQLx
 
@@ -261,29 +346,29 @@ UserTable.count()
 **where：**
 
 ```kotlin
-UserTable.query { where { ColumnRef("status") eq 1 } }.list()
+UserTable.query { where { User::status eq 1 } }.list()
 ```
 
 **多条件：**
 
 ```kotlin
 UserTable.query {
-    where { and(ColumnRef("status") eq 1, ColumnRef("age") gt 18) }
+    where { and(User::status eq 1, User::age gt 18) }
 }.list()
 ```
 
 **like：**
 
 ```kotlin
-UserTable.query { where { ColumnRef("name") like "%jack%" } }.list()
+UserTable.query { where { User::name like "%jack%" } }.list()
 ```
 
 **orderBy + limitOffset：**
 
 ```kotlin
 UserTable.query {
-    where { ColumnRef("status") eq 1 }
-    orderBy(ColumnRef("age").desc())
+    where { User::status eq 1 }
+    orderBy(User::age.desc())
     limitOffset(20, 0)
 }.list()
 ```
@@ -291,15 +376,15 @@ UserTable.query {
 **分页：**
 
 ```kotlin
-UserTable.query { where { ColumnRef("status") eq 1 } }.page(1, 20)
+UserTable.query { where { User::status eq 1 } }.page(1, 20)
 // 返回：Page<User>（items, total, page, size, totalPages）
 ```
 
 **单条 / exists：**
 
 ```kotlin
-UserTable.oneWhere { ColumnRef("email") eq email }
-UserTable.existsWhere { ColumnRef("email") eq email }
+UserTable.oneWhere { User::email eq email }
+UserTable.existsWhere { User::email eq email }
 ```
 
 #### 删除（按 id / 实例）
@@ -370,6 +455,62 @@ fun ColumnRef.asc(): Ordering
 fun ColumnRef.desc(): Ordering
 ```
 
+#### 5️⃣ KProperty1 DSL（v1 冻结 — 唯一合法列引用方式）
+
+v1 只允许使用 `Entity::property` 作为列引用。`ColumnRef` 操作符为 `internal`，用户不可见。
+
+```kotlin
+// 属性引用 → 自动 camelCase → snake_case → ColumnRef
+SystemUser::username like "%admin%"   // → ColumnRef("username") like "%admin%"
+SystemUser::status eq 1               // → ColumnRef("status") eq 1
+SystemUser::createdAt.desc()          // → ColumnRef("created_at").desc()
+```
+
+**支持的运算符**：
+
+```kotlin
+infix fun KProperty1<*, *>.eq(v: Any?): Predicate
+infix fun KProperty1<*, *>.like(v: String): Predicate
+infix fun KProperty1<*, *>.`in`(vs: Collection<Any?>): Predicate
+infix fun KProperty1<*, *>.gt(v: Any?): Predicate
+infix fun KProperty1<*, *>.ge(v: Any?): Predicate
+infix fun KProperty1<*, *>.lt(v: Any?): Predicate
+infix fun KProperty1<*, *>.le(v: Any?): Predicate
+fun KProperty1<*, *>.asc(): Ordering
+fun KProperty1<*, *>.desc(): Ordering
+```
+
+**实现原理**：`KProperty1.name`（Kotlin/Native stdlib，非反射）→ camelToSnake → `ColumnRef`。
+
+**禁止其他列引用方式（冻结）**：
+
+| 写法 | 状态 | 说明 |
+|------|------|------|
+| `SystemUser::username` | 唯一合法 | IDE 重构安全、零字符串、编译期类型检查 |
+| `SystemUserMeta.username` | 禁止 | Meta 不再生成 ColumnRef 属性 |
+| `ColumnRef("username")` | 禁止 | ColumnRef 操作符已设为 internal |
+| `SystemUser.username` (companion) | 禁止 | 不要求实体声明 companion object |
+
+**完整使用示例**：
+
+```kotlin
+class UserService(private val log: Logger) {
+    suspend fun page(page: Int, size: Int, username: String?, status: Int?): PageResponse<UserVO> {
+        val query = SystemUserTable.query {
+            where {
+                and(
+                    whenNotBlank(username) { SystemUser::username like "%$it%" },
+                    whenPresent(status) { SystemUser::status eq it }
+                )
+            }
+            orderBy(SystemUser::id.desc())
+        }
+        val result = query.page(page, size)
+        // ...
+    }
+}
+```
+
 ### 3.4 KSP 生成结构（关键）
 
 每个 Entity 生成 **UserTable**（委托 SqlxTableAdapter）与 **UserExtensions**（UserUpdateScope + 实例级扩展）：
@@ -432,7 +573,7 @@ interface EntityQuery<T : Any> {
     suspend fun count(): Long
     suspend fun page(page: Int, size: Int): Page<T>
 
-    /** 指定列后变为投影查询，返回 Row，不再返回 T。Phase 1 只支持 ColumnRef（如 UserMeta.id），不支持 KProperty 反射 */
+    /** 指定列后变为投影查询，返回 Row，不再返回 T */
     fun select(vararg cols: ColumnRef): ProjectionQuery
 }
 
@@ -444,14 +585,14 @@ interface ProjectionQuery {
 ```
 
 - `count()` 与当前 where 完全一致，只发 `SELECT COUNT(*) ... WHERE ...`。
-- **orderBy** 最小能力（冻结）：支持 `.orderBy(UserMeta.id.desc())`、`.orderBy(UserMeta.name.asc())`，以及 vararg 多列排序；Phase 1 只支持 ColumnRef（UserMeta），不要求 KProperty 反射、不要求复杂排序 DSL。
+- **orderBy** 最小能力（冻结）：支持 `.orderBy(User::id.desc())`、`.orderBy(User::name.asc())`，以及 vararg 多列排序。
 
 ### 3.7 条件可选（PredicateScope 内）
 
 在 **where { }** 内部使用，值为 null/空时**不**追加条件（不生成 `= null`）。
 
 ```kotlin
-// 语义：value 非 null 时才加 (UserMeta.status eq value)
+// 语义：value 非 null 时才加 (User::status eq value)
 inline fun <T : Any, V> PredicateScope<T>.whenPresent(value: V?, block: (V) -> Predicate): Predicate =
     if (value != null) block(value) else Predicate.True
 
@@ -469,11 +610,11 @@ inline fun <T : Any, V> PredicateScope<T>.whenNotEmpty(list: Collection<V>?, blo
 ```kotlin
 UserTable.query {
     where {
-        whenPresent(status) { UserMeta.status eq it }
-        whenNotBlank(keyword) { UserMeta.name like "%$it%" }
-        whenNotEmpty(ids) { UserMeta.id in it }
+        whenPresent(status) { User::status eq it }
+        whenNotBlank(keyword) { User::name like "%$it%" }
+        whenNotEmpty(ids) { User::id `in` it }
     }
-    orderBy(UserMeta.id.desc())
+    orderBy(User::id.desc())
 }.page(page = 1, size = 20)
 ```
 
@@ -499,13 +640,15 @@ UserTable.query {
 
 ```
 neton-database/
-├── api/Store.kt              # 统一 CRUD + QueryBuilder 接口
+├── api/
+│   ├── Table.kt              # 统一 CRUD + Query 接口
+│   └── DbContext.kt          # raw SQL 执行上下文（Logic 层逃生口）
 ├── annotations/              # @Table, @Id, @Column (SOURCE)
 ├── config/                   # TOML 解析、DatabaseConfig
 ├── core/
 │   └── AutoStore.kt          # legacy，委托 DatabaseManager
-├── adapter/sqlx/             # SqlxStoreAdapter + SqlxDatabase（主路径）
-└── DatabaseExtensions.kt     # database { storeRegistry } DSL
+├── adapter/sqlx/             # SqlxTableAdapter + SqlxDatabase（主路径）
+└── DatabaseExtensions.kt     # database { tableRegistry } DSL
 ```
 
 ### 4.2 设计目标
@@ -535,12 +678,13 @@ neton-database
 ```
 neton-database/
 ├── api/
-│   └── Store.kt              # 保留，高层 API
+│   ├── Table.kt              # 统一 CRUD + Query 接口
+│   └── DbContext.kt          # raw SQL 执行上下文（Logic 层逃生口）
 ├── annotations/              # SOURCE，供 KSP 用
 ├── config/                   # TOML → sqlx4k 连接参数
 ├── core/
 │   └── AutoStore.kt          # legacy，DatabaseManager 仅被 AutoStore 依赖
-├── adapter/sqlx/             # SqlxStoreAdapter + SqlxDatabase（主路径）
+├── adapter/sqlx/             # SqlxTableAdapter + SqlxDbContext + SqlxDatabase（主路径）
 ├── query/                    # Query DSL、QueryRuntime、EntityPersistence
 └── DatabaseExtensions.kt
 ```
@@ -548,13 +692,13 @@ neton-database/
 #### 数据流
 
 ```
-UserStore (object 单例，KSP 生成) — 主路径；AutoStore 已 deprecated
-    → SqlxStore<User>(sqlxDatabase, UserStatements, UserMapper)
+UserTable (object 单例，KSP 生成) — 主路径；AutoStore 已 deprecated
+    → SqlxTableAdapter<User, Long>(sqlxDatabase, UserMeta, UserRowMapper, ...)
     → sqlx4k: db.execute(stmt) / db.fetchAll(stmt, mapper)
 ```
 
-- Store 以 **object 单例**形式存在，不每次 `getStore()` 新建
-- Statement 由 KSP 生成 `XxxStatements` object，classloader 级共享
+- Table 以 **object 单例**形式存在，KSP 生成 `object UserTable : Table<User, Long> by SqlxTableAdapter(...)`
+- SQL 由 SqlxTableAdapter 内部根据 EntityMeta 动态构建（参数化）
 
 ### 4.4 核心设计
 
@@ -578,28 +722,26 @@ UserStore (object 单例，KSP 生成) — 主路径；AutoStore 已 deprecated
 
 **原则**：避免运行时反射，优先 KSP 生成。
 
-#### Store 实现：SqlxStore
+#### Table 实现：SqlxTableAdapter
 
 ```kotlin
-class SqlxStore<T : Any>(
-    private val db: Database,           // sqlx4k PostgreSQL/SQLite/MySQL
-    private val tableName: String,
-    private val idColumn: String,
+class SqlxTableAdapter<T : Any, ID : Any>(
+    private val dbProvider: () -> Database = { SqlxDatabase.require() },
+    private val meta: EntityMeta<T>,
     private val mapper: RowMapper<T>,
-    private val insertStmt: (T) -> Statement,
-    private val updateStmt: (T) -> Statement,
-    private val deleteStmt: (T) -> Statement
-) : Store<T> {
-    override suspend fun findById(id: Any): T? = 
-        db.fetchAll(Statement.create("SELECT * FROM $tableName WHERE $idColumn = :id").bind("id", id), mapper).getOrThrow().firstOrNull()
-    
-    override suspend fun insert(entity: T): Boolean = 
-        db.execute(insertStmt(entity)).getOrThrow() > 0
+    private val toParams: (T) -> Map<String, Any?>,
+    private val getId: (T) -> ID?,
+    private val softDeleteConfig: SoftDeleteConfig? = null,
+    private val autoFillConfig: AutoFillConfig? = null
+) : Table<T, ID> {
+    override suspend fun get(id: ID): T? = /* 参数化 SELECT WHERE id = ? */
+    override suspend fun save(entity: T): T = /* INSERT + 返回生成 id */
+    override suspend fun destroy(id: ID): Boolean = /* DELETE 或 UPDATE（软删） */
     // ...
 }
 ```
 
-- CRUD 全部走 `Statement` + 绑定参数，无字符串拼接
+- CRUD 全部走参数化 SQL，无字符串拼接
 - 连接、事务由 sqlx4k 管理
 
 #### QueryBuilder：生成 SQL + Statement
@@ -610,8 +752,8 @@ class SqlxStore<T : Any>(
 
 #### DatabaseManager 与生命周期（legacy）
 
-- **主路径**：`database { storeRegistry = { clazz -> UserStore } }`，直接传入 KSP 生成的 Store，不依赖 DatabaseManager。
-- **DatabaseManager**：仅被 AutoStore、RepositoryProcessor 等 legacy 路径使用；`ConnectionFactory` 已移除，仅保留 `storeRegistry` / `getStore` 桥接。
+- **主路径**：`database { tableRegistry = { clazz -> UserTable } }`，直接传入 KSP 生成的 Table，不依赖 DatabaseManager。
+- **DatabaseManager**：仅被 AutoStore 等 legacy 路径使用；`ConnectionFactory` 已移除，仅保留 `tableRegistry` 桥接。
 
 #### 事务
 
@@ -631,8 +773,8 @@ class SqlxStore<T : Any>(
 
 | 改进 | 说明 |
 |------|------|
-| **业务 API** | `UserTable.get`、`UserTable.query { where { } }.list()`、`user.save()` 等，Store 不暴露 |
-| **主路径** | KSP 生成 `object UserStore : Store<User> by SqlxStoreAdapter`，AutoStore 已 deprecated |
+| **业务 API** | `UserTable.get`、`UserTable.query { where { } }.list()`、`user.save()` 等 |
+| **主路径** | KSP 生成 `object UserTable : Table<User, Long> by SqlxTableAdapter(...)`，AutoStore 已 deprecated |
 | **@DatabaseConfig** | 通过 Config SPI 注册数据源，与 security/routing 一致 |
 | **URI 配置** | 继续支持 `database.conf` 中的 `uri`、`driver` |
 | **Memory 模式** | `uri: sqlite::memory:` 作为默认开发配置 |
@@ -651,9 +793,9 @@ class SqlxStore<T : Any>(
 
 | neton-database | sqlx4k |
 |----------------|--------|
-| User.get(id)（内部 Store.findById） | db.fetchAll(stmt, mapper).firstOrNull() |
-| Store.insert | db.execute(entity.insert()) |
-| Store.query().fetch() | db.fetchAll(buildSelectStmt(), mapper) |
+| UserTable.get(id) | db.fetchAll(stmt, mapper).firstOrNull() |
+| UserTable.save(entity) | db.execute(insertStmt) |
+| UserTable.query { }.list() | db.fetchAll(buildSelectStmt(), mapper) |
 | 事务 | db.transaction { } |
 | 连接池 | Driver.Pool.Options |
 | 迁移 | db.migrate(path) |
@@ -663,274 +805,162 @@ class SqlxStore<T : Any>(
 
 | 原则 | 说明 |
 |------|------|
-| **Store 是唯一数据访问抽象** | 业务层只通过 Store 访问数据 |
+| **Table 是唯一数据访问抽象** | 业务层通过 Table（单表 CRUD + DSL）和 DbContext（raw SQL 逃生口）访问数据 |
 | **禁止直接使用 sqlx Database** | 业务层不得持有或调用 Database |
 | **禁止运行时反射** | 实体映射用 KSP 或手写 RowMapper |
 | **禁止拼接 SQL** | 一律参数化 Statement |
-| **单一实现** | 只有 SqlxStore，无 memory/sqlite 多套 |
-| **Store 必须无状态（stateless）** | 不得在 Store 内缓存 entity 或持有 mutable 状态；Store = 纯函数式 + db 代理 |
-| **Store 单例化** | 使用 `object UserStore` 而非每次 `getStore()` 新建实例 |
+| **单一实现** | 只有 SqlxTableAdapter，无 memory/sqlite 多套 |
+| **Table 必须无状态（stateless）** | 不得在 Table 内缓存 entity 或持有 mutable 状态；Table = 纯函数式 + db 代理 |
+| **Table 单例化** | 使用 `object UserTable` 而非每次新建实例 |
 
 ### 4.10 不做的事情
 
 - 不自研数据库驱动
 - 不在运行时用反射解析实体
 - 不手拼 SQL 字符串
-- 不维护多套 Store 实现（memory/sqlite 等），统一为 SqlxStore + 不同 sqlx4k 后端
+- 不维护多套 Table 实现（memory/sqlite 等），统一为 SqlxTableAdapter + 不同 sqlx4k 后端
 
 ---
 
-## 五、SqlxStore 内部接口
+## 五、SqlxTableAdapter 内部接口
 
 > **业务层请以 Entity 为中心 API 为准**：`UserTable.get(id)`、`UserTable.destroy(id)`、`UserTable.update(id){ }`、`UserTable.query { where { } }`、`user.save()`、`user.delete()`。  
-> **主路径**：KSP 生成 `object UserStore : Store<User> by SqlxStoreAdapter`，`database { storeRegistry = { ... } }` 传入，不依赖 DatabaseManager。  
-> 本节为 **Store 内部实现与设计原则** 参考，不暴露 Repository/Impl。
+> **主路径**：KSP 生成 `object UserTable : Table<User, Long> by SqlxTableAdapter<User, Long>(...)`。  
+> 本节为 **SqlxTableAdapter 内部实现与设计原则** 参考。
 
 ### 5.1 长期规范（铁律）
 
 | 规则 | 表述 |
 |------|------|
-| **Store 无状态 + 线程安全** | `Store MUST be stateless and thread-safe.` `Store MUST NOT hold mutable state or cache entities.` |
+| **Table 无状态 + 线程安全** | `Table MUST be stateless and thread-safe.` `Table MUST NOT hold mutable state or cache entities.` |
 | **SQL 编译期生成** | `All SQL must be compile-time generated by KSP.` `Manual string concatenation SQL is forbidden.` |
-| **唯一 Store 实现** | `SqlxStore is the only official Store implementation.` `Custom Store implementations are not supported.` 缓存/多数据源应作为 Store 的包装层，而非替代实现。 |
+| **唯一 Table 实现** | `SqlxTableAdapter is the only official Table implementation.` 缓存/多数据源应作为 Table 的包装层，而非替代实现。 |
 
-### 5.2 核心 API 草图
+### 5.2 SqlxTableAdapter 核心职责
 
-#### Store 接口（保持 + 扩展）
-
-```kotlin
-interface Store<T : Any> {
-    // ===== 基础 CRUD =====
-    suspend fun findById(id: Any): T?
-    suspend fun findAll(): List<T>
-    suspend fun insert(entity: T): T
-    suspend fun update(entity: T): Boolean
-    suspend fun save(entity: T): T
-    suspend fun delete(entity: T): Boolean
-    suspend fun deleteById(id: Any): Boolean
-    suspend fun count(): Long
-    suspend fun exists(id: Any): Boolean
-    
-    // ===== Batch API（新增）======
-    suspend fun insertBatch(entities: List<T>): Int
-    suspend fun updateBatch(entities: List<T>): Int
-    suspend fun saveAll(entities: List<T>): List<T>
-    
-    // ===== Query DSL =====
-    fun query(): QueryBuilder<T>
-    
-    // ===== 事务 =====
-    suspend fun <R> transaction(block: suspend Store<T>.() -> R): R
-}
-```
-
-#### ActiveRecord 风格扩展（语法糖）
+`SqlxTableAdapter<T, ID>` 是 `Table<T, ID>` 接口的唯一官方实现，由 KSP 生成的 `object XxxTable` 通过 `by` 委托使用。
 
 ```kotlin
-// 实体基类（可选，给需要 Active Record 体验的实体用）
-abstract class Entity<T : Any> {
-    abstract val id: Any?
-    
-    suspend fun save(): T = store<T>().save(this as T)
-    suspend fun delete(): Boolean = store<T>().delete(this as T)
-    suspend fun refresh(): T? = id?.let { store<T>().findById(it) }
-    
-    protected fun store(): Store<T> = ...  // legacy：主路径使用 KSP UserStore，不继承 Entity
-    protected abstract fun entityClass(): KClass<T>
-}
-
-// 或通过扩展函数（不改实体继承）
-suspend fun <T : Any> T.save(store: Store<T>): T = store.save(this)
-suspend fun <T : Any> T.delete(store: Store<T>): Boolean = store.delete(this)
-
-// 定型 API（KSP 生成，业务层只写这些）
-UserTable.get(id)
-UserTable.destroy(id)
-UserTable.update(id) { name = x; email = y }  // mutate 风格，KSP 生成 XxxUpdateScope，copy 在内部
-UserTable.query { where { } }.list()
-user.save()
-user.delete()
-```
-
-**当前规范**：不暴露 Store/Repository，KSP 生成 Companion 与实例扩展。
-
-### 5.3 Statement 缓存（静态化）
-
-#### KSP 生成 Statements object（推荐）
-
-```kotlin
-// KSP 生成 - classloader 级共享，零实例分配
-object UserStatements {
-    val selectById = Statement.create("SELECT * FROM users WHERE id = :id")
-    val selectAll = Statement.create("SELECT * FROM users")
-    val countAll = Statement.create("SELECT COUNT(*) FROM users")
-    val insert = Statement.create("INSERT INTO users (id, name, age) VALUES (:id, :name, :age)")
-    val update = Statement.create("UPDATE users SET name = :name, age = :age WHERE id = :id")
-    val deleteById = Statement.create("DELETE FROM users WHERE id = :id")
-}
-```
-
-#### SqlxStore 引用静态 Statement
-
-```kotlin
-// EntityStatements 接口约束
-interface EntityStatements {
-    val selectById: Statement
-    val selectAll: Statement
-    val countAll: Statement
-    val insert: Statement
-    val update: Statement
-    val deleteById: Statement
-}
-
-// Store 单例化：object 而非每次 new（主路径用 SqlxStoreAdapter + SqlxDatabase.require()）
-object UserStore : SqlxStore<User>(
-    db = SqlxDatabase.require(),
-    statements = UserStatements,
-    mapper = UserRowMapper,
-    toParams = { mapOf("id" to it.id, "name" to it.name, "age" to it.age) },
-    getId = { it.id }
-)
-
-class SqlxStore<T : Any>(
-    private val db: Database,
-    private val statements: EntityStatements,
+class SqlxTableAdapter<T : Any, ID : Any>(
+    private val dbProvider: () -> Database = { SqlxDatabase.require() },
+    private val meta: EntityMeta<T>,
     private val mapper: RowMapper<T>,
     private val toParams: (T) -> Map<String, Any?>,
-    private val getId: (T) -> Any?
-) : Store<T> {
-    override suspend fun findById(id: Any): T? =
-        db.fetchAll(statements.selectById.bind("id", id), mapper).getOrThrow().firstOrNull()
-    // ...
+    private val getId: (T) -> ID?,
+    private val softDeleteConfig: SoftDeleteConfig? = null,
+    private val autoFillConfig: AutoFillConfig? = null
+) : Table<T, ID> {
+    // CRUD 操作内部构建参数化 SQL，交由 sqlx4k 执行
+    // Query DSL 通过 QueryAst → SqlBuilder → BuiltSql → sqlx4k 执行链路
 }
 ```
 
-#### 要点
+**关键特性**：
+- 无状态：不缓存 entity、不持有可变状态
+- 参数化 SQL：全部通过 `Statement.bind()` 绑定参数，禁止字符串拼接
+- 软删自动注入：根据 `softDeleteConfig` 在查询阶段自动追加 `AND deleted = ?`
+- 审计字段：根据 `autoFillConfig` 在 insert/update 时自动填充时间戳
 
-- Statement 在 **object** 中，classloader 级共享
-- Store 使用 **object 单例**，主路径不依赖 DatabaseManager，由 storeRegistry 注入
-- 由 KSP 按 `@Entity` 生成 `XxxStatements`
+### 5.3 DbContext（SQL 执行 + 事务唯一入口）
+
+DbContext 是 Logic 层的**唯一 SQL 执行上下文**，封装当前数据源、事务上下文、执行策略。
+当 Table DSL 无法覆盖复杂场景（如多表 JOIN、动态 SQL）时，Logic 层通过 DbContext 执行原生参数化 SQL。
+
+```kotlin
+interface DbContext {
+    /** 执行查询，返回行列表 */
+    suspend fun fetchAll(sql: String, params: Map<String, Any?> = emptyMap()): List<Row>
+
+    /** 执行写操作，返回影响行数 */
+    suspend fun execute(sql: String, params: Map<String, Any?> = emptyMap()): Long
+
+    /** 唯一事务入口（约束 C7） */
+    suspend fun <R> transaction(block: suspend DbContext.() -> R): R
+}
+```
+
+#### 职责边界（冻结）
+
+| 规则 | 说明 |
+|------|------|
+| **唯一执行入口** | 所有 SQL 执行必须经过 DbContext（或事务内的 TxContext），禁止绕过直接拿连接/adapter（约束 C6） |
+| **SqlxDatabase.require() 仅 adapter 内部** | `SqlxDatabase` 在 `adapter.sqlx` 包内、`internal` 可见性，业务层/Logic 层不可直接调用 |
+| **事务只有 `transaction { }`** | 禁止 `begin()` / `commit()` / `rollback()` 暴露给业务层（约束 C7）。与 jOOQ `dsl.transaction { }` 对齐 |
+| **未来可扩展** | DbContext 是 interceptor / slow SQL sampling / multi-tenant injection / query cache 的注入点 |
+
+#### 工厂函数收口
+
+```kotlin
+// 当前（v1）：全局工厂，internal 可见性
+internal fun dbContext(): DbContext = SqlxDbContext
+
+// 未来（v3 multi-source）：从 NetonContext 获取
+// val db = ctx.get(DbContext::class)           // 默认数据源
+// val db = ctx.get(DbContext::class, "analytics")  // 命名数据源
+```
+
+`dbContext()` 全局工厂标记为 **internal**。Logic 层通过构造函数注入 `DbContext`（默认值 `dbContext()`），
+为未来 multi-source / transaction-scoped context 预留替换点，不会被全局工厂卡住。
+
+#### 使用方式
+
+```kotlin
+class UserLogic(private val db: DbContext = dbContext()) : DbContext by db {
+
+    // raw SQL 逃生口
+    suspend fun getWithRoles(userId: Long): UserWithRoles? {
+        val rows = fetchAll("SELECT ... FROM users u LEFT JOIN ...", mapOf("uid" to userId))
+        // 手动映射
+    }
+
+    // 事务（唯一写法）
+    suspend fun createWithRoles(user: User, roleIds: List<Long>) {
+        db.transaction {
+            val saved = UserTable.save(user)
+            roleIds.forEach { roleId ->
+                UserRoleTable.save(UserRole(null, saved.id!!, roleId))
+            }
+        }
+    }
+}
+```
+
+**约束**：DbContext 仅在 Logic 层使用，Controller 禁止直接持有 DbContext（约束 C6）。
 
 ### 5.4 Batch API 实现
 
 ```kotlin
-override suspend fun insertBatch(entities: List<T>): Int {
-    if (entities.isEmpty()) return 0
-    return db.transaction {
-        var count = 0
-        for (e in entities) {
-            execute(statements.insert.bind(toParams(e))).getOrThrow()
-            count++
-        }
-        count
-    }.getOrThrow()
-}
-
-override suspend fun updateBatch(entities: List<T>): Int {
-    if (entities.isEmpty()) return 0
-    return db.transaction {
-        var count = 0
-        for (e in entities) {
-            execute(statements.update.bind(toParams(e))).getOrThrow()
-            count++
-        }
-        count
-    }.getOrThrow()
-}
-
-override suspend fun saveAll(entities: List<T>): List<T> {
-    return db.transaction {
-        entities.map { e ->
-            val id = getId(e)
-            if (id == null || isNew(id)) {
-                execute(statements.insert.bind(toParams(e))).getOrThrow()
-                e
-            } else {
-                execute(statements.update.bind(toParams(e))).getOrThrow()
-                e
-            }
-        }
-    }.getOrThrow()
-}
+// Table 接口提供批量操作
+suspend fun insertBatch(entities: List<T>): Int
+suspend fun updateBatch(entities: List<T>): Int
+suspend fun saveAll(entities: List<T>): List<T>
 ```
 
 - 批量操作在**单事务**内执行
 - 若 sqlx4k 提供 `executeBatch`，可再优化
 
-### 5.5 QueryBuilder 类型安全 DSL（目标形态）
-
-```kotlin
-// 用法
-val users = UserStore.query {
-    where(User::age gt 18)
-    and(User::status eq "active")
-    orderBy(User::createdAt.desc())
-    limit(20)
-}.fetch()
-
-// 实现：KProperty1 -> column name
-fun <T : Any, V> QueryContext<T>.field(prop: KProperty1<T, V>): TypedFieldRef<T, V>
-
-// 运算符
-infix fun <V> TypedFieldRef<T, V>.eq(value: V): QueryCondition
-infix fun <V : Comparable<V>> TypedFieldRef<T, V>.gt(value: V): QueryCondition
-// ...
-```
-
-- 由 KSP 或注解生成 `User::age` → `"age"` 的列名映射
-- 避免字符串、保证编译期类型检查
-
-### 5.6 KSP 自动生成 Store（可选）
-
-```kotlin
-@Entity("users")
-data class User(
-    @Id val id: Long = 0,
-    val name: String,
-    val age: Int
-)
-
-// KSP 生成：UserStatements + UserStore
-object UserStatements : EntityStatements { /* ... */ }
-
-object UserStore : SqlxStore<User>(
-    db = DatabaseManager.require(),
-    statements = UserStatements,
-    mapper = UserRowMapper,
-    toParams = { mapOf("id" to it.id, "name" to it.name, "age" to it.age) },
-    getId = { it.id }
-)
-```
-
-- 用户只需 `@Entity` + data class
-- KSP 生成 Statements、Store、RowMapper
-- 业务层：`UserTable.get(1)` 或 `UserTable.query { where { } }.list()`（主路径）
-
-### 5.7 接口定型清单
+### 5.5 接口定型清单
 
 | API | 说明 |
 |-----|------|
-| `Store.findById/findAll` | 保留 |
-| `Store.insert/update/delete` | 保留，insert 返回 T（含生成 id） |
-| `Store.save` | 保留，upsert 语义 |
-| `Store.insertBatch/updateBatch/saveAll` | 新增 |
-| `Store.query()` | 保留，后续演进为类型安全 DSL |
-| `Store.transaction` | 新增 |
-| `EntityStatements` | 新增，KSP 生成 `XxxStatements` object |
-| `object UserStore : SqlxStore<User>` | 单例 Store |
-| `interface UserRepository : Store<User>` | 可选，业务层类型语义 |
-| `AutoStore.of<T>()` | legacy，不推荐 |
-| `user.save(store)` | 新增，扩展函数 |
-| `User.findById(id)` | 新增，伴生对象风格，可选 |
+| `Table.get/findAll` | 主键查询 / 全量查询 |
+| `Table.insert/update/delete` | 基础 CRUD，insert 返回 T（含生成 id） |
+| `Table.save` | upsert 语义 |
+| `Table.destroy(id)` | 按主键删除（含软删语义） |
+| `Table.insertBatch/updateBatch/saveAll` | 批量操作 |
+| `Table.query { }` | Query DSL 入口 |
+| `Table.transaction` | 事务封装 |
+| `DbContext.fetchAll/execute` | Logic 层 raw SQL 逃生口 |
+| `user.save()` / `user.delete()` | KSP 生成的实例级扩展 |
 
-### 5.8 实施优先级
+### 5.6 实施优先级
 
-1. **Statement 静态化**：KSP 生成 `XxxStatements` object
-2. **Store 单例化**：`object UserStore : SqlxStore<User>`
+1. **SqlxTableAdapter 核心 CRUD**：get/save/update/destroy/findAll
+2. **Query DSL 打通**：query { where { } }.list() / .page() / .count()
 3. **Batch API**：insertBatch、updateBatch、saveAll
-4. **ActiveRecord 扩展**：`save(store)`、`delete(store)` 扩展函数
-5. **transaction**：Store 级事务封装
-6. **Typed Query DSL**：`where(User::email eq ...)`，KProperty → column，最高 DX 价值
+4. **ActiveRecord 扩展**：`user.save()`、`user.delete()` 扩展函数
+5. **transaction**：Table 级事务封装
+6. **DbContext**：Logic 层 raw SQL 逃生口
 7. **Stream/Flow 查询**：v3 可选，大表场景
 
 ---
@@ -938,7 +968,7 @@ object UserStore : SqlxStore<User>(
 ## 六、Phase 1 执行规范
 
 > **目标**：脚手架能落地的「底座」——缺一不可。  
-> **验收闭环**：用 Postgres/MySQL 跑通「后台列表页」：分页 + 可选筛选 + 软删 + AutoFill。  
+> **验收闭环**：用 Postgres/MySQL 跑通「后台列表页」：分页 + 可选筛选 + 软删 + @CreatedAt/@UpdatedAt。  
 > **命名**：统一用 Neton 风格。
 
 ### 6.1 前置结论（冻结）
@@ -975,7 +1005,7 @@ object UserStore : SqlxStore<User>(
 | 条件可选 | `whenNotEmpty(list) { field in it }` | 非空集合才 in |
 | 投影 | `select(prop1, prop2)` | 指定列，避免 `SELECT *` |
 | 软删 | `destroy(id)` | 行为由 `@SoftDelete` 决定：UPDATE 或 DELETE |
-| 审计 | `@AutoFill` | 自动填 createdAt/updatedAt/createdBy/updatedBy |
+| 审计 | `@CreatedAt` / `@UpdatedAt` | 自动填 createdAt/updatedAt（epoch millis） |
 
 **保留不动**：`get(id)`、`destroy(id)`、`save(entity)`、`update(entity)`、`exists(id)`、`transaction { }`。
 
@@ -993,7 +1023,7 @@ object UserStore : SqlxStore<User>(
 | **P0-1** | PostgreSQL + MySQL 支持 | 同一套 Table/Query 在 Postgres、MySQL 均可运行；Dialect + 占位符 + 分页 + 类型映射冻结 |
 | **P0-2** | where DSL 打通 | `query { [where { };] orderBy(...) }.list()/.page()/.count()` 全链路可用；where 可选；count 为真 `COUNT(*)` |
 | **P0-3** | @SoftDelete | destroy → UPDATE；所有 SELECT 默认加 `deleted = ?`（参数绑定 false）；可逃逸查询已删（如 `withDeleted { }`） |
-| **P0-4** | @AutoFill | insert/update 自动填 createdAt/updatedAt/createdBy/updatedBy；提供注入点取当前用户 |
+| **P0-4** | @CreatedAt / @UpdatedAt | insert 自动填 createdAt + updatedAt；update 自动填 updatedAt（epoch millis, UTC） |
 | **P0-5** | 条件可选 | whenPresent / whenNotBlank / whenNotEmpty 在 where 块内可用 |
 | **P0-6** | SELECT 指定列 | `select(prop1, prop2)` 得到 ProjectionQuery，用 `.rows()` / `.page()` 取 `List<Row>` / `Page<Row>` |
 | **P0-7** | count 真实现 | 与 where 完全一致，仅发 `SELECT COUNT(*)`，禁止 `findAll().size` |
@@ -1003,10 +1033,12 @@ object UserStore : SqlxStore<User>(
 #### 脚手架默认（冻结）
 
 - 注解名：`@SoftDelete`（字段级）。
-- **Phase 1 只支持一套「脚手架默认」**，不做多种类型混用：
-  - **deleted: Boolean**，`false` = 未删除。
+- **支持两种字段类型**：
+  - **deleted: Boolean**，`false` = 未删除，`notDeletedValue = false`。
+  - **deleted: Int**，`0` = 未删除，`notDeletedValue = 0`。
   - **deletedAt: Long?**（可选），软删时填 epoch millis。
-- 默认过滤语义：**WHERE ... AND deleted = ?**（参数绑定 false，Phase 1 全部走参数绑定，不拼 literal；MySQL tinyint(1) 由驱动正确映射）。其他软删字段类型留 v2.2 扩展。
+- KSP 根据 `@SoftDelete` 标注字段的类型自动推导 `notDeletedValue`：Int/Long → `0`，Boolean → `false`。
+- 默认过滤语义：**WHERE ... AND deleted = ?**（参数绑定 `notDeletedValue`，Phase 1 全部走参数绑定，不拼 literal）。
 
 #### 行为（冻结）
 
@@ -1020,34 +1052,55 @@ object UserStore : SqlxStore<User>(
 - **withDeleted**：为 **QueryBuilder 层级的开关**（非 Predicate 层），用于逃逸时跳过上述注入。
 - destroy 时由 Adapter 走 UPDATE 分支。
 
-### 6.4 @AutoFill
+### 6.4 @CreatedAt / @UpdatedAt（v1 冻结）
 
-#### 脚手架默认字段与类型（冻结）
+#### 注解定义
 
-- 注解：`@AutoFill(on = INSERT | INSERT_UPDATE, value = NOW | CURRENT_USER)`。
-- **字段名与类型（v1 只支持这一套）**：
-  - **createdAt: Long**（epoch millis）
-  - **updatedAt: Long**（epoch millis）
-  - **createdBy: Long?**
-  - **updatedBy: Long?**
-- 时间统一用 **epoch millis（Long）**，避免 PG/MySQL 时间类型与时区差异；Phase 1 求稳。
+```kotlin
+@Target(AnnotationTarget.PROPERTY)
+@Retention(AnnotationRetention.SOURCE)
+annotation class CreatedAt   // insert 时自动填充
+
+@Target(AnnotationTarget.PROPERTY)
+@Retention(AnnotationRetention.SOURCE)
+annotation class UpdatedAt   // insert/update 时自动填充
+```
+
+#### 字段类型（冻结）
+
+- 类型：**Long**（epoch millis, UTC）。
+- 时间统一用 epoch millis，避免 PG/MySQL 时间类型与时区差异；Phase 1 求稳。
 
 #### 行为（冻结）
 
-| 操作 | 填充 |
-|------|------|
-| insert | createdAt, updatedAt, createdBy, updatedBy |
-| update | updatedAt, updatedBy |
+| 操作 | 填充字段 |
+|------|----------|
+| insert | @CreatedAt + @UpdatedAt（均填当前时间） |
+| update | @UpdatedAt（填当前时间） |
 
-- 非 HTTP 场景：允许不注入当前用户（createdBy/updatedBy 可为空或由调用方显式传）。
+#### 实体示例
 
-#### 注入点
+```kotlin
+@Table("system_users")
+data class SystemUser(
+    @Id val id: Long?,
+    val username: String,
+    @CreatedAt val createdAt: Long = 0,
+    @UpdatedAt val updatedAt: Long = 0
+)
+```
 
-- 提供 `AutoFillProvider` 或等价接口，由应用绑定「当前用户 ID」（如从 NetonContext / Identity 取），类型与 createdBy/updatedBy 一致（Long）。
+KSP 自动生成 `AutoFillConfig(createdAtColumn = "created_at", updatedAtColumn = "updated_at")`，
+`SqlxTableAdapter` 在 insert/update 时自动覆盖对应列值为 `Clock.System.now().toEpochMilliseconds()`。
+
+#### v1 不内建用户审计
+
+- 不内建 `@CreatedBy` / `@UpdatedBy`，不提供默认 actor 语义。
+- 若业务需要 createdBy/updatedBy，在应用层自行实现（service 层手动赋值）。
 
 ### 6.5 SELECT 指定列
 
-- 在 **query { }** 内调用 `select(UserMeta.id, UserMeta.name)` 后，返回类型变为 **ProjectionQuery**。Phase 1 只支持 ColumnRef 版本（如 UserMeta.id），不支持 KProperty 反射版本（或标为 P2）。
+- 在 **query { }** 内调用 `select("id", "name")` 后，返回类型变为 **ProjectionQuery**。
 - 生成 SQL：`SELECT id, name FROM users WHERE ...`，禁止该路径下 `SELECT *`。
 - 取数据用 **`.rows(): List<Row>`**，分页用 **`.page(page, size): Page<Row>`**；不与 EntityQuery 的 `.list(): List<T>` 混用，类型自洽。
 
@@ -1057,15 +1110,15 @@ object UserStore : SqlxStore<User>(
 
 1. **后台列表页**
    - `GET /users?page=1&size=20&status=1&keyword=tom`
-   - 实体列表：`UserTable.query { where { ... }; orderBy(UserMeta.id.desc()) }.page(1, 20)` → `Page<User>`。
-   - 指定列列表：`UserTable.query { where { ... }; orderBy(UserMeta.id.desc()); select(UserMeta.id, UserMeta.name, UserMeta.status) }.page(1, 20)` → `Page<Row>`（ProjectionQuery）。
+   - 实体列表：`UserTable.query { where { ... }; orderBy(User::id.desc()) }.page(1, 20)` → `Page<User>`。
+   - 指定列列表：`UserTable.query { where { ... }; orderBy(User::id.desc()) }.select("id", "name", "status").page(1, 20)` → `Page<Row>`（ProjectionQuery）。
    - 返回：items、total（count）、page（从 1 开始）、size、totalPages。
 
 2. **删除**
    - `destroy(id: ID)` 对带 `@SoftDelete` 的表执行软删（UPDATE deleted = true）。
 
 3. **更新**
-   - `update(entity)` 时，`updatedAt` / `updatedBy` 由 @AutoFill 自动填充（类型 Long/Long?）。
+   - `update(entity)` 时，`updatedAt` 由 @UpdatedAt 自动填充（类型 Long）。
 
 4. **count**
    - 列表与 total 使用同一 where 条件，total 来自 `query { ... }.count()`，且为 `SELECT COUNT(*)`。
@@ -1193,39 +1246,22 @@ object MySqlDialect : Dialect {
 
 #### DSL 层：ColumnRef 与 KSP（推荐）
 
-- **Phase 1 冻结**：select / where / orderBy 仅支持 **ColumnRef**（如 UserMeta.id），不支持 KProperty 反射版本；KProperty 版本若保留则标为 P2。
-- **推荐**：由 KSP 生成 **ColumnRef** 与 **UserMeta**，where / select / orderBy 全部走 ColumnRef，无反射（Native 友好）。
-
-**ColumnRef**（泛型可选，Phase 1 至少 name: String）：
-
-```kotlin
-class ColumnRef<T : Any, V : Any>(val name: String)
-```
-
-**KSP 生成示例**：
-
-```kotlin
-object UserMeta {
-    val id = ColumnRef<User, Long>("id")
-    val name = ColumnRef<User, String>("name")
-    val status = ColumnRef<User, Int>("status")
-    // ...
-}
-```
+- **v1 冻结**：where / orderBy 统一使用 `Entity::property`（KProperty1）作为列引用。
+- `KProperty1.name` → camelToSnake → `ColumnRef`（框架内部转换），无反射（Native 友好）。
 
 **DSL 写法**：
 
 ```kotlin
 UserTable.query {
     where {
-        UserMeta.status eq 1
-        whenPresent(keyword) { UserMeta.name like "%$it%" }
+        User::status eq 1
+        whenPresent(keyword) { User::name like "%$it%" }
     }
-    orderBy(UserMeta.id.desc())
+    orderBy(User::id.desc())
 }.page(1, 20)
 ```
 
-- PredicateScope 内使用 `UserMeta.column` 与 `eq`/`like`/`in` 等组合，生成 Predicate；AST 中只存 ColumnRef.name（或 ColumnRef 本身），SqlBuilder 用 `quoteIdent(column.name)` 生成 SQL。
+- PredicateScope 内使用 `Entity::property` 与 `eq`/`like`/`in` 等组合，框架内部转为 Predicate AST，SqlBuilder 用 `quoteIdent(column.name)` 生成 SQL。
 
 #### 契约测试：COUNT 与 page().total 一致
 
@@ -1233,11 +1269,11 @@ UserTable.query {
 
 ```kotlin
 val page = UserTable.query {
-    where { UserMeta.status eq 1 }
+    where { User::status eq 1 }
 }.page(1, 10)
 
 val manualCount = UserTable.query {
-    where { UserMeta.status eq 1 }
+    where { User::status eq 1 }
 }.count()
 
 assert(page.total == manualCount)
@@ -1264,8 +1300,8 @@ assert(page.total == manualCount)
 | **软删** | [ ] destroy(id) → UPDATE deleted = true（及可选 deletedAt） |
 | | [ ] 所有 SELECT 自动过滤 deleted = ?（参数绑定 false，注入在 QueryBuilder 构建阶段，AND 追加） |
 | | [ ] withDeleted { } 可逃逸（QueryBuilder 层级开关） |
-| **AutoFill** | [ ] insert 自动填 createdAt、updatedAt、createdBy、updatedBy（Long / Long?） |
-| | [ ] update 自动填 updatedAt、updatedBy |
+| **@CreatedAt/@UpdatedAt** | [ ] insert 自动填 createdAt、updatedAt（Long，epoch millis UTC） |
+| | [ ] update 自动填 updatedAt |
 | **投影** | [ ] select(...) 返回 ProjectionQuery |
 | | [ ] ProjectionQuery.rows() 返回 List<Row> |
 | | [ ] EntityQuery.list() 仅返回 List<T>，不返回 Row |
@@ -1273,12 +1309,10 @@ assert(page.total == manualCount)
 | | [ ] 无 Table.updateById；更新仅 KSP UserTable.update(id){ } 与 update(entity) |
 | | [ ] 唯一条件查询入口为 query { } |
 
-### 6.9 Phase 2 / Phase 3 简述（不展开）
+### 6.9 后续 Phase 简述
 
-- **Phase 2（P1）**：聚合函数与 groupBy/having、Migration（schema 版本化）、@Version 乐观锁（可选）。
-- **Phase 3（P2）**：JOIN DSL 延后；raw SQL 封装（Repository runner）按需。
-
-JOIN 在 Phase 1/2 用「聚合 Store + raw SQL」即可满足脚手架需求。
+- **Phase 2~4（JOIN 查询）**：强类型列引用、Typed Projection、JOIN AST，详见 [JOIN 查询规范](./database-join.md)。
+- **执行链与约束**：DbContext 统一执行门面、QueryInterceptor 拦截链，详见 [执行链与约束规范](./database-execution.md)。
 
 ---
 
@@ -1289,10 +1323,17 @@ JOIN 在 Phase 1/2 用「聚合 Store + raw SQL」即可满足脚手架需求。
 | **生成物 Contract** | KSP 对 @Table 实体必须生成 `object UserTable : Table<User, Long>` | `mvc` 编译通过 + `TableUserContractTest` |
 | **禁止回潮** | Store 不实现 Table，无法作为 tableRegistry 返回值 | `Table` 为唯一单表接口；Store 不实现 Table 类型约束 |
 | **COUNT 一致性** | 同一 where 条件下 count 与分页 total 一致 | 契约测试：`page().total == query().count()` |
+| **[[sources]] 配置契约** | database/redis/storage 三模块配置解析一致 | 缺 sources / 空 sources / 无 default / duplicate name → fail-fast |
 
 - **Test 1**：`neton-database/commonTest` 中 `TableUserContractTest` 验证 Table 接口契约（get/where 等）。
-- **Test 2**：通过约束 A（Store 不实现 Table），编译期天然防止「Store 被当作 Table 使用」。
+- **Test 2**：通过约束 A（Store 废除），编译期天然防止「Store 被当作 Table 使用」。
 - **Test 3**：契约测试保证 count 与 list/page 同源，防止未来条件分叉。
+- **Test 4**：`[[sources]]` 配置契约测试（database / redis / storage 每个模块一份），验证：
+  - 缺少 `[[sources]]` → fail-fast with `<module>.conf: missing [[sources]]`
+  - 空 `[[sources]]` → fail-fast
+  - 无 `default` 数据源 → fail-fast with `<module>.conf: no default source`
+  - `name` 重复 → fail-fast with `<module>.conf: duplicate source name '<name>'`
+  - 错误消息必须含 `<module>.conf:` 前缀 + 缺失项，三模块保持一致格式
 
 ---
 
@@ -1334,20 +1375,19 @@ JOIN 在 Phase 1/2 用「聚合 Store + raw SQL」即可满足脚手架需求。
 - **SqlxTableAdapter 实现**：仅当实体存在 DDL 元数据时（如 UserMeta 含列定义）才执行建表
 - 用户不得假定 `ensureTable` 必然成功；无 DDL 元数据时可为 no-op 或抛异常
 
-### 8.7 约束 A：Store 的命名空间必须固定为「Aggregate Store」
+### 8.7 约束 A：Store 废除，Logic 层替代
 
-- **`Table<T, ID>` 是唯一单表 CRUD 入口**；Store 仅承载跨表/聚合语义。
-- **Store 不得实现 Table 接口** — Store 不是 CRUD 接口。
-- **Store 不应提供 get(id)、query { } 等 Table 通用方法** — 除非明确为聚合查询（如 getWithRoles(id)）。
-- **Store 允许且仅允许**：`getWithRoles`、`listUsersWithRoles`、`assignRole`/`removeRole` 等跨表/聚合语义。
-- **违反后果**：语义回潮，Table/Store 职责混淆，禁止。
+- **`Table<T, ID>` 是唯一数据访问入口**（单表 CRUD + Query DSL + JOIN DSL）。
+- **Store 作为框架层概念已废除**。Store 的唯一存在理由（手写 JOIN SQL）已被 NetonSQL v1 JOIN DSL 和 DbContext 取代。
+- **跨表/聚合逻辑归属 Logic 层**：`getWithRoles`、`listUsersWithRoles`、`assignRole`/`removeRole` 等用例在 Logic 层实现，通过 Table DSL 或 DbContext 访问数据。
+- **Controller 禁止直接引用 Table**（约束 C1），所有数据操作必须经过 Logic 层。
 
 ### 8.8 约束 B：KSP 生成物命名规则写死
 
 | 规则 | 值 | 禁止 |
 |------|-----|------|
 | 表级生成物 | `EntityNameTable`（单数） | `UsersTable`、`UserTables`、`Users` |
-| 聚合 Store | `EntityNameStore` 或 `DomainStore` | `UserRepositories`、`UserStoreImpl` |
+| Logic 层 | `EntityNameLogic` 或 `DomainLogic` | `UserStoreImpl`、`UserRepository` |
 
 - **KSP 对 @Table("users") data class User 必须生成**：`object UserTable : Table<User, Long>`
 - **禁止复数**：`Users`、`UserTables`。
@@ -1360,13 +1400,22 @@ JOIN 在 Phase 1/2 用「聚合 Store + raw SQL」即可满足脚手架需求。
 - **业务代码不得自行实现 `Table<T>`。**
 - 本约束为语义冻结约束，不通过 sealed/interface 机制强制。
 
-### 8.10 长期规范（铁律，3~5 年稳定性的保险）
+### 8.10 约束 C：列引用冻结规则（v1）
+
+- **v1 只允许使用 `Entity::property`（KProperty1）作为列引用。**
+- **ColumnRef 操作符（eq/like/gt/ge/lt/le/in/asc/desc）为 `internal`，用户层不可见。**
+- **KSP 生成的 Meta 不包含 ColumnRef 属性。**
+- **禁止 `ColumnRef("xxx")`、`XxxMeta.xxx`、`Entity.xxx`（companion）等其他列引用方式。**
+- **`KProperty1.name` → camelToSnake → `ColumnRef` 为唯一映射路径，由框架内部 `toColumnRef()` 实现。**
+- 违反后果：设计分裂，多种列引用风格共存，禁止。
+
+### 8.11 长期规范（铁律，3~5 年稳定性的保险）
 
 | 规则 | 表述 |
 |------|------|
-| **Store 无状态 + 线程安全** | `Store MUST be stateless and thread-safe.` `Store MUST NOT hold mutable state or cache entities.` |
+| **Table 无状态 + 线程安全** | `Table MUST be stateless and thread-safe.` `Table MUST NOT hold mutable state or cache entities.` |
 | **SQL 编译期生成** | `All SQL must be compile-time generated by KSP.` `Manual string concatenation SQL is forbidden.` |
-| **唯一 Store 实现** | `SqlxStore is the only official Store implementation.` `Custom Store implementations are not supported.` 缓存/多数据源应作为 Store 的包装层，而非替代实现。 |
+| **唯一 Table 实现** | `SqlxTableAdapter is the only official Table implementation.` 缓存/多数据源应作为 Table 的包装层，而非替代实现。 |
 
 ---
 
@@ -1382,8 +1431,8 @@ JOIN 在 Phase 1/2 用「聚合 Store + raw SQL」即可满足脚手架需求。
 
 ## 十、参考实现
 
-- `neton/examples/mvc` — 完整 MVC 示例（users/roles/user_roles + 聚合 Store）
-- `neton/neton-ksp/EntityStoreProcessor.kt` — KSP 生成逻辑
+- `neton/examples/mvc` — 完整 MVC 示例（Controller → Logic → Table → Model）
+- `neton/neton-ksp/EntityTableProcessor.kt` — KSP 生成逻辑
 
 ---
 
