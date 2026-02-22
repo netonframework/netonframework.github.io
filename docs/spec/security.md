@@ -95,7 +95,7 @@ interface Identity {
 
 **roles/permissions 大小写**：统一按原样（case-sensitive）比较，必须由 issuer（token/session/DB）自行规范化，Neton 不做自动 lowercase。
 
-**不引入 attributes**：Identity 不包含 `attributes: Map<String, Any?>`，避免类型不安全、序列化困难。
+**不引入 attributes**：Identity 不包含 `attributes: Map&lt;String, Any?&gt;`，避免类型不安全、序列化困难。
 
 ### 2.3 IdentityUser（默认实现）
 
@@ -855,9 +855,9 @@ class SecurityIdentityContractTest {
 
 | # | 名称 | 验证 |
 |---|------|------|
-| 1 | pageResponse_serializes_correctly | `PageResponse<UserVO>` 正确序列化 |
+| 1 | pageResponse_serializes_correctly | `PageResponse&lt;UserVO&gt;` 正确序列化 |
 | 2 | pageResponse_emptyItems_serializes_correctly | 空列表序列化 |
-| 3 | nestedGeneric_apiResponse_pageResponse_serializes_correctly | 嵌套泛型 `ApiResponse<PageResponse<UserVO>>` |
+| 3 | nestedGeneric_apiResponse_pageResponse_serializes_correctly | 嵌套泛型 `ApiResponse&lt;PageResponse&lt;UserVO&gt;&gt;` |
 | 4 | nonGeneric_serializable_serializes_correctly | 非泛型 `@Serializable` 序列化 |
 | 5 | jsonContent_is_raw_json_string | `JsonContent` 是原始 JSON 字符串包装 |
 

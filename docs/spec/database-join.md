@@ -15,7 +15,7 @@
 | 2 | **对外列引用只允许 `Entity::prop`** | 用户永远写 `SystemUser::username`，不写 `SystemUserColumns.username`；Columns 为 internal 实现 |
 | 3 | **JOIN 不做 ORM 关系映射** | 只做 Typed SQL Builder，不引入 `@HasMany` / `@BelongsTo` |
 | 4 | **Projection 强类型化** | 从 `Row` 升级为 `Record` / typed DTO |
-| 5 | **Phase 1 完全兼容** | `Table<T, ID>` + `query { where { } }` + KProperty1 运算符全部保留 |
+| 5 | **Phase 1 完全兼容** | `Table&lt;T, ID&gt;` + `query { where { } }` + KProperty1 运算符全部保留 |
 | 6 | **raw SQL 是逃生口，不是主路径** | 80% 查询走 DSL，20% 特殊查询走 `DbContext` |
 | 7 | **分页永远两条 SQL** | `count + select limit/offset`，JOIN 场景同样适用 |
 | 8 | **SQL 字符串只由 SqlBuilder + Dialect 产生** | 任何结构化类型（Column/TableRef）不提供拼 SQL 的方法 |
@@ -25,7 +25,7 @@
 | 12 | **不支持属性名混淆** | v1 假设 Kotlin 属性名在运行时可用（`KProperty1.name`），不支持混淆/重写属性名的构建链 |
 | 13 | **SELECT 投影列必须自动加别名** | `ProjectionExpr.Col` 输出 `{alias}."{column}" AS {alias}_{column}`（如 `t1."id" AS t1_id`），确保 `Row.get(ref, prop)` / `intoOrNull()` 的列名匹配 |
 | 14 | **COUNT + GROUP BY 使用子查询** | 无 `groupBy` → `SELECT COUNT(*)`；有 `groupBy` → `SELECT COUNT(*) FROM (原始 SELECT 去 LIMIT) tmp`，避免返回分组条数而非总行数 |
-| 15 | **TableDefRegistry 必须 O(1) 查找** | `Map<KClass<*>, TableDef<*>>`，`DatabaseComponent.init()` 一次性注册，禁止 resolve 时反射扫描 |
+| 15 | **TableDefRegistry 必须 O(1) 查找** | `Map&lt;KClass&lt;*&gt;, TableDef&lt;*&gt;&gt;`，`DatabaseComponent.init()` 一次性注册，禁止 resolve 时反射扫描 |
 | 16 | **SelectAst 保持 public（只读）** | `SelectAst` 是 `public data class`，`SqlBuilder` 是 `internal`；未来可做 `QueryInterceptor.beforeExecute(ast)` / query cache / 多租户 rewrite |
 | 17 | **Row.get 禁止 fallback 裸列名** | `Row.get(ref, prop)` 只能读 `{alias}_{column}`（如 `t1_id`），**不得 fallback 读裸列名**（如 `id`）。避免多表同名列隐式歧义。JOIN 投影列必须 `AS {alias}_{column}`（原则 13） |
 
@@ -33,8 +33,8 @@
 
 ## 二、Phase 2：强类型列（Column） — internal 实现
 
-> **核心冻结约束**：对外 API 只允许 `KProperty1<T, V>`（即 `SystemUser::username`）。
-> `Column<T, V>` / `TableDef<T>` 是 internal 实现载体，用户不直接接触。
+> **核心冻结约束**：对外 API 只允许 `KProperty1&lt;T, V&gt;`（即 `SystemUser::username`）。
+> `Column&lt;T, V&gt;` / `TableDef&lt;T&gt;` 是 internal 实现载体，用户不直接接触。
 
 ### 2.1 Column（internal）
 
@@ -80,7 +80,7 @@ internal interface TableDef<T : Any> {
 
 ### 2.3 KSP 生成物（internal）
 
-对每个 `@Table` 实体，KSP 额外生成一个 internal `<EntityName>TableDef` object：
+对每个 `@Table` 实体，KSP 额外生成一个 internal `&lt;EntityName&gt;TableDef` object：
 
 ```kotlin
 // AUTO-GENERATED — model/SystemUserTableDef.kt (internal)
@@ -410,7 +410,7 @@ internal fun <T : Any> KProperty1<T, *>.toColumnRef(): ColumnRef {
 **规则**：
 - 单表场景：`KProperty1` 运算符是主路径，不 deprecate
 - JOIN 场景：必须通过 `TableRef[Entity::prop]` 获得 `ColRef`，因为需要表归属
-- `<Entity>Columns` / `<Entity>TableDef` 始终 internal，不出现在用户代码中
+- `&lt;Entity&gt;Columns` / `&lt;Entity&gt;TableDef` 始终 internal，不出现在用户代码中
 
 ---
 
@@ -440,7 +440,7 @@ data class Rec7<A, B, C, D, E, F, G>(override val v1: A, override val v2: B, ove
 data class Rec8<A, B, C, D, E, F, G, H>(override val v1: A, override val v2: B, override val v3: C, override val v4: D, override val v5: E, override val v6: F, override val v7: G, override val v8: H) : Record8<A, B, C, D, E, F, G, H>
 ```
 
-超过 8 列的投影使用自定义 DTO（v1.1 可加 `selectInto<UserLite>(...)` KSP 生成）。
+超过 8 列的投影使用自定义 DTO（v1.1 可加 `selectInto&lt;UserLite&gt;(...)` KSP 生成）。
 
 ### 3.2 EntityMapper（Neton Row → Entity，独立于 sqlx4k RowMapper）
 
@@ -1106,12 +1106,12 @@ class UserLogic(private val db: DbContext = dbContext()) : DbContext by db {
 
 | 文件 | Phase | 可见性 | 内容 |
 |------|-------|--------|------|
-| `SystemUserMeta.kt` | 1 | internal | `EntityMeta<SystemUser>` — 表名、列名、类型 |
-| `SystemUserRowMapper.kt` | 1 | internal | sqlx4k `RowMapper<SystemUser>` — ResultSet.Row → Entity |
-| `SystemUserTable.kt` | 1 | **public** | `Table<SystemUser, Long> by SqlxTableAdapter` — CRUD 操作 |
+| `SystemUserMeta.kt` | 1 | internal | `EntityMeta&lt;SystemUser&gt;` — 表名、列名、类型 |
+| `SystemUserRowMapper.kt` | 1 | internal | sqlx4k `RowMapper&lt;SystemUser&gt;` — ResultSet.Row → Entity |
+| `SystemUserTable.kt` | 1 | **public** | `Table&lt;SystemUser, Long&gt; by SqlxTableAdapter` — CRUD 操作 |
 | `SystemUserExtensions.kt` | 1 | public | `update(id){ }` + `save()` + `delete()` 扩展 |
-| **`SystemUserTableDef.kt`** | **2** | **internal** | **`TableDef<SystemUser>` — KProperty → Column 精确映射** |
-| **`SystemUserEntityMapper.kt`** | **3** | **internal** | **`EntityMapper<SystemUser>` — Neton Row → Entity** |
+| **`SystemUserTableDef.kt`** | **2** | **internal** | **`TableDef&lt;SystemUser&gt;` — KProperty → Column 精确映射** |
+| **`SystemUserEntityMapper.kt`** | **3** | **internal** | **`EntityMapper&lt;SystemUser&gt;` — Neton Row → Entity** |
 
 ---
 
@@ -1169,15 +1169,15 @@ neton-database/src/commonMain/kotlin/neton/database/
 
 | 任务 | 产出 |
 |------|------|
-| 定义 `Column<T, V>` (internal) | `dsl/Column.kt` |
-| 定义 `TableDef<T>` (internal) | `dsl/TableDef.kt` |
-| 定义 `TableRef<T>` + `ColRef<T, V>` | `dsl/TableRef.kt` |
+| 定义 `Column&lt;T, V&gt;` (internal) | `dsl/Column.kt` |
+| 定义 `TableDef&lt;T&gt;` (internal) | `dsl/TableDef.kt` |
+| 定义 `TableRef&lt;T&gt;` + `ColRef&lt;T, V&gt;` | `dsl/TableRef.kt` |
 | 定义 `ColumnPredicate` | `dsl/ColumnPredicate.kt` |
 | 实现 ColRef 运算符 | `dsl/ColRefOperators.kt` |
 | 实现 `ColumnOrdering` | `dsl/ColumnOrdering.kt` |
 | 实现条件辅助函数 | `dsl/ConditionHelpers.kt` |
 | 实现 `TableDefRegistry` | `dsl/TableDefRegistry.kt` |
-| KSP 生成 `<Entity>TableDef` (internal) | `EntityTableProcessor` 扩展 |
+| KSP 生成 `&lt;Entity&gt;TableDef` (internal) | `EntityTableProcessor` 扩展 |
 | Phase 1 `toColumnRef()` 内部改为 KSP 映射 | `dsl/ColumnRef.kt` 修改 |
 | contract tests | 列映射精确、运算符类型安全 |
 
@@ -1190,17 +1190,17 @@ neton-database/src/commonMain/kotlin/neton/database/
 | 任务 | 产出 |
 |------|------|
 | 定义 Record1~8 | `dsl/Record.kt` |
-| 定义 `EntityMapper<T>` + Registry | `api/EntityMapper.kt` |
+| 定义 `EntityMapper&lt;T&gt;` + Registry | `api/EntityMapper.kt` |
 | 实现 `PrefixedRow` | `api/PrefixedRow.kt` |
-| KSP 生成 `<Entity>EntityMapper` (internal) | `EntityTableProcessor` 扩展 |
-| `Row.into<T>()` / `into<T>(prefix)` / `intoOrNull<T>(prefix)` | 扩展函数 |
+| KSP 生成 `&lt;Entity&gt;EntityMapper` (internal) | `EntityTableProcessor` 扩展 |
+| `Row.into&lt;T&gt;()` / `into&lt;T&gt;(prefix)` / `intoOrNull&lt;T&gt;(prefix)` | 扩展函数 |
 | `EntityQuery` 新增 typed select（KProperty1） | `api/EntityQuery.kt` 修改 |
 | contract tests | 映射正确、prefix 正确、intoOrNull null 检测 |
 
 **验收**：
-- `row.into<SystemUser>()` 正确映射
-- `row.intoOrNull<Role>("role_", Role::id)` LEFT JOIN 未命中返回 null
-- `select(SystemUser::id, SystemUser::username).fetch()` 返回 `List<Record2<Long?, String>>`
+- `row.into&lt;SystemUser&gt;()` 正确映射
+- `row.intoOrNull&lt;Role&gt;("role_", Role::id)` LEFT JOIN 未命中返回 null
+- `select(SystemUser::id, SystemUser::username).fetch()` 返回 `List&lt;Record2&lt;Long?, String&gt;&gt;`
 
 ### Phase 4 交付物
 
@@ -1221,7 +1221,7 @@ neton-database/src/commonMain/kotlin/neton/database/
 **验收**：
 - `db.from(SystemUserTable).leftJoin(RoleTable).on(...).where(...).select(...).fetch()` 生成正确 SQL
 - `db.from()` 绑定 db，执行不经过任何全局静态对象
-- `q.select(U.id, R.name).fetch()` 返回 `List<Record2<Long?, String>>`
+- `q.select(U.id, R.name).fetch()` 返回 `List&lt;Record2&lt;Long?, String&gt;&gt;`
 - `page().total == count()`（同源验证）
 - PG `$1/$2` / MySQL `?` 占位符正确
 
@@ -1234,10 +1234,10 @@ neton-database/src/commonMain/kotlin/neton/database/
 | # | 测试 | 验证点 |
 |---|------|--------|
 | 1 | `SystemUser::passwordHash` → `"password_hash"` | KSP 映射精确，非 runtime regex |
-| 2 | `ColRef<T, String>.like` 编译通过 | 类型约束 |
-| 3 | `ColRef<T, Int>.like` 编译失败 | 非 String 列不可 like |
+| 2 | `ColRef&lt;T, String&gt;.like` 编译通过 | 类型约束 |
+| 3 | `ColRef&lt;T, Int&gt;.like` 编译失败 | 非 String 列不可 like |
 | 4 | `ColRef eq value` 类型 V 必须匹配 | 强类型 |
-| 5 | `ColRef<T,V> eq ColRef<R,V>` JOIN 条件类型匹配 | 跨表类型安全 |
+| 5 | `ColRef&lt;T,V&gt; eq ColRef&lt;R,V&gt;` JOIN 条件类型匹配 | 跨表类型安全 |
 | 6 | allOf 过滤 True | `allOf(True, Eq(...))` = `Eq(...)` |
 | 7 | whenPresent null → True | 条件忽略 |
 | 8 | 两表同名列 `t1.id` vs `t3.id` 不冲突 | alias 区分 |
@@ -1246,11 +1246,11 @@ neton-database/src/commonMain/kotlin/neton/database/
 
 | # | 测试 | 验证点 |
 |---|------|--------|
-| 1 | `select(SystemUser::id, SystemUser::username)` 返回 `Record2<Long?, String>` | 类型正确 |
-| 2 | `Row.into<SystemUser>()` 全字段映射 | EntityMapper 正确 |
-| 3 | `Row.into<Role>("role_")` 前缀映射 | PrefixedRow 正确 |
-| 4 | `Row.intoOrNull<Role>("role_", Role::id)` role_id 为 null → 返回 null | 存在性检测（显式 pk） |
-| 5 | `Row.intoOrNull<Role>("role_", Role::id)` role_id 非 null → 返回 Role | 正常映射 |
+| 1 | `select(SystemUser::id, SystemUser::username)` 返回 `Record2&lt;Long?, String&gt;` | 类型正确 |
+| 2 | `Row.into&lt;SystemUser&gt;()` 全字段映射 | EntityMapper 正确 |
+| 3 | `Row.into&lt;Role&gt;("role_")` 前缀映射 | PrefixedRow 正确 |
+| 4 | `Row.intoOrNull&lt;Role&gt;("role_", Role::id)` role_id 为 null → 返回 null | 存在性检测（显式 pk） |
+| 5 | `Row.intoOrNull&lt;Role&gt;("role_", Role::id)` role_id 非 null → 返回 Role | 正常映射 |
 | 6 | Registry 未注册时抛明确异常 | 错误信息含类名 |
 
 ### Phase 4
@@ -1275,9 +1275,9 @@ neton-database/src/commonMain/kotlin/neton/database/
 | 16 | `Row.get(U, SystemUser::id)` 使用裸列名 `"id"` → 抛异常/编译失败 | 原则 17，禁止 fallback 裸列名 |
 | 17 | `TableDefRegistry.find(prop)` 标 @Deprecated | 原则 15 加固，正式路径走 resolve(klass, prop) |
 | 18 | `db.from(SystemUserTable)` 返回 `SelectBuilder` 持有 db 引用 | DbContext 绑定，不经全局静态对象 |
-| 19 | `q.select(U.id, R.name).fetch()` 返回 `List<Record2<Long?, String>>` | 路径 B typed projection |
-| 20 | `q.select(...).page(1, 20)` 返回 `Page<Record2<...>>` | 路径 B 分页 typed projection |
-| 21 | `q.selectRows(...).fetchRows()` 返回 `List<Row>` | 逃生口路径正常 |
+| 19 | `q.select(U.id, R.name).fetch()` 返回 `List&lt;Record2&lt;Long?, String&gt;&gt;` | 路径 B typed projection |
+| 20 | `q.select(...).page(1, 20)` 返回 `Page&lt;Record2&lt;...&gt;&gt;` | 路径 B 分页 typed projection |
+| 21 | `q.selectRows(...).fetchRows()` 返回 `List&lt;Row&gt;` | 逃生口路径正常 |
 | 22 | `readQualified` 按 ColumnType dispatch，不走 JVM 反射 | KMP Native 安全 |
 
 ---
@@ -1288,7 +1288,7 @@ neton-database/src/commonMain/kotlin/neton/database/
 - `having` 支持聚合函数谓词
 - 子查询（`subquery`）
 - `UNION` / `INTERSECT`
-- `selectInto<UserLite>(...)` KSP 生成 DTO projection
+- `selectInto&lt;UserLite&gt;(...)` KSP 生成 DTO projection
 - Schema migration 工具
 - `@Version` 乐观锁
 

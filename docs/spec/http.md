@@ -390,7 +390,7 @@ class UploadFiles(private val parts: List<UploadFile>) {
 |----------|----------|------|
 | `avatar: UploadFile` | `context.request.uploadFiles().require("avatar")` | fieldName == "avatar"，缺失抛 400 |
 | `avatar: UploadFile?` | `context.request.uploadFiles().first("avatar")` | fieldName == "avatar"，缺失为 null |
-| `photos: List<UploadFile>` | `context.request.uploadFiles().get("photos")` | fieldName == "photos"，无匹配返回空列表 |
+| `photos: List&lt;UploadFile&gt;` | `context.request.uploadFiles().get("photos")` | fieldName == "photos"，无匹配返回空列表 |
 | `files: UploadFiles` | `context.request.uploadFiles()` | 注入完整结构化视图 |
 
 #### 控制器用法

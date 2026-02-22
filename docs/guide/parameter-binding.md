@@ -178,7 +178,7 @@ curl -X POST http://localhost:8080/api/binding/form \
 
 ## 文件上传 (Multipart)
 
-控制器参数类型为 `UploadFile`、`List<UploadFile>` 或 `UploadFiles` 时自动绑定 multipart 文件。绑定基于 **fieldName 匹配参数名**。
+控制器参数类型为 `UploadFile`、`List&lt;UploadFile&gt;` 或 `UploadFiles` 时自动绑定 multipart 文件。绑定基于 **fieldName 匹配参数名**。
 
 ### 单文件上传
 
@@ -208,7 +208,7 @@ curl -X POST http://localhost:8080/api/files/avatar \
 
 ### 多文件上传
 
-同一 fieldName 的多个文件绑定为 `List<UploadFile>`：
+同一 fieldName 的多个文件绑定为 `List&lt;UploadFile&gt;`：
 
 ```kotlin
 @Post("/photos")
@@ -246,7 +246,7 @@ suspend fun mixedUpload(files: UploadFiles): Map<String, Any> {
 |----------|----------|
 | `avatar: UploadFile` | 匹配 fieldName == "avatar"，缺失时抛 400 |
 | `avatar: UploadFile?` | 匹配 fieldName == "avatar"，缺失时为 null |
-| `photos: List<UploadFile>` | 匹配 fieldName == "photos" 的所有文件，无匹配时空列表 |
+| `photos: List&lt;UploadFile&gt;` | 匹配 fieldName == "photos" 的所有文件，无匹配时空列表 |
 | `files: UploadFiles` | 注入完整的结构化视图，包含所有文件 |
 
 ## 请求头 (Header)
@@ -382,7 +382,7 @@ fun search(keyword: String, page: Int = 1, size: Int = 10) =
 | `@Header("name")` | HTTP 请求头 | 是 | `@Header("User-Agent") ua: String` |
 | `@Cookie("name")` | Cookie 值 | 是 | `@Cookie("sessionId") sid: String?` |
 | `UploadFile` | Multipart 文件（按 fieldName 匹配） | 否（类型自动识别） | `avatar: UploadFile` |
-| `List<UploadFile>` | 同名 Multipart 文件列表 | 否（类型自动识别） | `photos: List<UploadFile>` |
+| `List&lt;UploadFile&gt;` | 同名 Multipart 文件列表 | 否（类型自动识别） | `photos: List&lt;UploadFile&gt;` |
 | `UploadFiles` | 全部 Multipart 文件结构化视图 | 否（类型自动识别） | `files: UploadFiles` |
 | `@CurrentUser` | 认证用户 | 可选（Identity 类型自动注入） | `@CurrentUser identity: Identity?` |
 

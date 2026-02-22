@@ -415,7 +415,7 @@ logger.info("job.skipped", "jobId" to jobId, "fireTime" to fireTime)
 |------|------|
 | **不并发** | 同一任务的 coroutine 是串行的（上一次执行完才计算下一次延迟）。不会出现同一任务的两次执行重叠。 |
 | **异常不中断** | 单次执行失败不影响后续调度。`SupervisorJob` 保证子 coroutine 异常不传播。 |
-| **SINGLE_NODE 锁释放** | 必须在 `finally` 中调用 `lock.release()`。与 [Redis-Lock-Spec](./redis-lock.md) 约束一致。 |
+| **SINGLE_NODE 锁释放** | 必须在 `finally` 中调用 `lock.release()`。与 [Redis 规范](./redis.md) 约束一致。 |
 | **锁 key 前缀** | `LockManager` 传入 `"job:{id}"` 作为业务 key。最终 Redis key = `{keyPrefix}:lock:job:{id}`（如 `neton:lock:job:clean-expired-tokens`）。 |
 | **ALL_NODES 不调锁** | `mode = ALL_NODES` 时绝不调用 `LockManager`，每个节点独立执行。 |
 
@@ -735,7 +735,7 @@ Neton.run(args) {
 
 - 任务列表和状态从 **内存**（`JobScheduler.snapshot()`）读取，不查数据库。
 - 执行日志从 **数据库** 读取，由 `JobExecutionListener` 写入。
-- `update-status` 的运行时 toggle：v1 建议在 `CoroutineJobScheduler` 中维护一个 `runtimeOverrides: MutableMap<String, Boolean>`，API 修改此 map。重启后失效（回到 jobs.conf 的值）。如需持久化，写入 jobs.conf 或数据库（v2）。
+- `update-status` 的运行时 toggle：v1 建议在 `CoroutineJobScheduler` 中维护一个 `runtimeOverrides: MutableMap&lt;String, Boolean&gt;`，API 修改此 map。重启后失效（回到 jobs.conf 的值）。如需持久化，写入 jobs.conf 或数据库（v2）。
 
 ---
 

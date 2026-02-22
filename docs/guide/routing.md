@@ -172,7 +172,7 @@ class HttpMethodController {
 
 ## 文件上传路由
 
-控制器参数使用 `UploadFile`、`List<UploadFile>` 或 `UploadFiles` 类型即可接收上传文件。KSP 按**参数名匹配表单 fieldName** 自动绑定：
+控制器参数使用 `UploadFile`、`List&lt;UploadFile&gt;` 或 `UploadFiles` 类型即可接收上传文件。KSP 按**参数名匹配表单 fieldName** 自动绑定：
 
 ```kotlin
 @Controller("/api/files")
@@ -200,7 +200,7 @@ class FileController {
 }
 ```
 
-KSP 会自动识别 `UploadFile` / `List<UploadFile>` / `UploadFiles` 参数类型，从 `multipart/form-data` 请求中解析文件。
+KSP 会自动识别 `UploadFile` / `List&lt;UploadFile&gt;` / `UploadFiles` 参数类型，从 `multipart/form-data` 请求中解析文件。
 
 ---
 

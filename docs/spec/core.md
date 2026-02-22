@@ -13,7 +13,7 @@
 | 层级 | 职责 | 归属 |
 |------|------|------|
 | 应用入口 | `Neton.run(args) { }`、`LaunchBuilder`、启动顺序 | neton-core |
-| 组件模型 | `NetonComponent<C>`、install、init/start | neton-core |
+| 组件模型 | `NetonComponent&lt;C&gt;`、install、init/start | neton-core |
 | 运行时容器 | `NetonContext`（bind/get）、`ServiceFactory`（全局 lookup） | neton-core |
 | 配置 | `ConfigLoader`、`NetonConfigRegistry`、`NetonConfigurer` | neton-core |
 | HTTP 抽象 | `HttpAdapter`、`HttpContext`、`HttpRequest`、`HttpResponse`、参数与类型 | neton-core |
@@ -130,7 +130,7 @@ fun Neton.LaunchBuilder.redis(block: RedisConfig.() -> Unit = {}) {
 
 - 组件**无内部可变状态**；所有运行时状态通过 `ctx.bind` 暴露，由 Core 或其它组件通过 `ctx.get` / `ServiceFactory` 使用。
 - 先 install 的组件先 init；若某组件依赖另一组件，被依赖者需先 install。
-- ❌ 在 Component 内使用 `ctx.config<T>()`（config 由 install 时 merge，init 只接收 final config）
+- ❌ 在 Component 内使用 `ctx.config&lt;T&gt;()`（config 由 install 时 merge，init 只接收 final config）
 - ❌ 定义 `component.key`（用 `component::class` 标识）
 - ❌ 在 init 内做耗时 I/O（应放在 `start`）
 - ❌ 在 Component 内持有 mutable 全局状态（状态必须存 ctx）
@@ -254,11 +254,11 @@ class NetonContext(val args: Array<String>) {
 
 ### 4.3 Context 使用规范
 
-- ✅ `ctx.get<T>()`、`ctx.getOrNull<T>()`：安全获取
+- ✅ `ctx.get&lt;T&gt;()`、`ctx.getOrNull&lt;T&gt;()`：安全获取
 - ✅ `ctx.bindIfAbsent(type, impl)`：推荐，避免覆盖导致隐蔽 bug
 - ❌ 在 Core 定义 `ctx.port()`、`ctx.httpConfig()` 等业务语义
 - ❌ 使用 `mutableMapOf`（应 `ConcurrentHashMap`）
-- ❌ 在 ctx 外缓存 `ctx.get<T>()` 结果并跨请求复用（除单例服务外）
+- ❌ 在 ctx 外缓存 `ctx.get&lt;T&gt;()` 结果并跨请求复用（除单例服务外）
 
 ### 4.4 ServiceFactory
 
@@ -277,7 +277,7 @@ object ServiceFactory {
 ```
 
 - **Mock 回退**：未安装对应组件时，`getHttpAdapter` / `getRequestEngine` / `getSecurityBuilder` / `getSecurityFactory` 返回 Mock 实现并打 warn 日志。
-- **过渡期**：Controller 等可通过 `ServiceFactory.getService(X::class)` 或 NetonContext.current().get(X::class) 获取服务；推荐在 `Neton.run { }` / `onStart` 作用域内使用 `get<T>()` 或 `inject<T>()`。
+- **过渡期**：Controller 等可通过 `ServiceFactory.getService(X::class)` 或 NetonContext.current().get(X::class) 获取服务；推荐在 `Neton.run { }` / `onStart` 作用域内使用 `get&lt;T&gt;()` 或 `inject&lt;T&gt;()`。
 
 ### 4.5 注入扩展（InjectExtensions）
 
@@ -297,14 +297,14 @@ inline fun <reified T : Any> get(): T = NetonContext.current().get(T::class)
 | **唯一权威容器** | **NetonContext** 是实例的唯一权威来源。ServiceFactory 仅作为「桥接层」：在 install 路径中由 `ctx.syncToServiceFactory()` 单向同步后，供 KSP 生成代码等无法直接持有 ctx 的调用方只读使用。禁止在业务代码或组件中向 ServiceFactory 直接 register，导致与 ctx 分叉。 |
 | **ServiceFactory 定位** | 要么**只读桥接**（仅从 ctx 同步后的 view，不再接受独立 register），要么在**非测试环境**对 HttpAdapter / RequestEngine / SecurityBuilder / SecurityFactory 做 **fail-fast**：未安装则抛异常，不再 silent Mock 回退。Mock 仅允许在显式 test 或 dev mode 下使用。 |
 | **current() 语义** | **NetonContext.current()** 仅表示 **application-scope**（进程级、单例 ctx）。禁止在并发请求中通过 setCurrent 切换请求级上下文；否则多请求/协程下会出现 A 的 lazy inject 读到 B 的绑定。请求级数据**必须**通过 **HttpContext**（attributes、request/response）或 **CurrentLogContext**（logging）传递，不得用「切 current ctx」传递请求上下文。 |
-| **inject() / get() 使用范围** | 仅在「应用启动期」且 setCurrent(ctx) 已生效的**单线程/顺序**作用域内使用（如 onStart 块、LaunchBuilder 内部）。请求 handler 内若需访问应用级服务，应通过 **HttpContext.getApplicationContext()?.get<T>()** 或由适配器注入的 ctx 引用，不得依赖 NetonContext.current()。 |
+| **inject() / get() 使用范围** | 仅在「应用启动期」且 setCurrent(ctx) 已生效的**单线程/顺序**作用域内使用（如 onStart 块、LaunchBuilder 内部）。请求 handler 内若需访问应用级服务，应通过 **HttpContext.getApplicationContext()?.get&lt;T&gt;()** 或由适配器注入的 ctx 引用，不得依赖 NetonContext.current()。 |
 | **生命周期收口** | 组件的 **stop(ctx)** 必须在框架层收口：startSyncWithInstalls 的 **try** 块（含 startHttpServerSync）后的 **finally** 中，先 `setCurrent(null)`，再按 install **逆序**对所有 component 调用 `stop(ctx)`；单组件 stop 抛异常时打 warn 并继续其余组件，不中断收口。实现见下「stop 收口实现方案」。 |
 | **DI 路线** | 当前为 **Service Locator**（手动 install + ctx.get / ServiceFactory.getService），不是构造注入。若后续做「构造注入 Controller/Service」，**Native-first 路线**必须采用 **KSP 生成 Provider/Factory**，禁止依赖 kotlin-reflect 运行时构造 resolve。 |
 
 **stop 收口实现方案（最小侵入）**
 
 - **位置**：`startSyncWithInstalls` 内，现有 `try { ... startHttpServerSync(...) } finally { setCurrent(null) }` 的 **finally** 中。
-- **顺序**：先执行 `NetonContext.setCurrent(null)`（保持当前语义），再按 **installs 逆序** 对每个 component 调用 `(component as NetonComponent<Any>).stop(ctx)`。
+- **顺序**：先执行 `NetonContext.setCurrent(null)`（保持当前语义），再按 **installs 逆序** 对每个 component 调用 `(component as NetonComponent&lt;Any&gt;).stop(ctx)`。
 - **异常**：单个 component.stop(ctx) 若抛异常，用 log?.warn("neton.component.stop.failed", mapOf("component" to component::class.simpleName, "message" to (e.message ?: ""))) 记录后 **continue**，不中断后续组件的 stop，避免一个组件清理失败导致其他资源无法释放。
 - **HttpAdapter**：不在 Core 中单独调用 httpAdapter.stop()；由 **HttpComponent**（或各 HTTP 实现）在自身的 `stop(ctx)` 中从 ctx 取 HttpAdapter 并调用 stop()，保持「资源释放归组件」的边界。
 - **协程**：stop(ctx) 为 suspend，startSyncWithInstalls 已为 suspend，在 runBlocking 内执行，故无需额外 launch。
@@ -382,8 +382,8 @@ Neton.run { ... }
 | **唯一格式** | v1.1 只支持 **TOML**。ConfigLoader 只提供 TOML 解析器；不提供 YAML/JSON/HOCON。其它格式通过部署/CI 工具转成 TOML 后由框架读取。 |
 | **配置目录** | `--config-path` 指定（默认 `./config`）。框架只在该目录下查找约定文件名，不扫描其它文件。 |
 | **主配置** | **application.conf**（内容 TOML）：仅放 core/runtime/http/logging/trace/metrics 等全局配置。 |
-| **模块独立文件** | 每个模块一个文件：**<module>.conf**（TOML）。约定：`application.conf`、`database.conf`、`redis.conf`、`cache.conf`、`security.conf`、`routing.conf` 等。模块自治、边界清晰。 |
-| **环境覆盖** | 每个模块均支持环境覆盖：**<module>.<env>.conf**（如 `database.prod.conf`、`redis.dev.conf`）。 |
+| **模块独立文件** | 每个模块一个文件：**&lt;module&gt;.conf**（TOML）。约定：`application.conf`、`database.conf`、`redis.conf`、`cache.conf`、`security.conf`、`routing.conf` 等。模块自治、边界清晰。 |
+| **环境覆盖** | 每个模块均支持环境覆盖：**&lt;module&gt;.&lt;env&gt;.conf**（如 `database.prod.conf`、`redis.dev.conf`）。 |
 | **模块名来源** | 由各 Component/模块提供常量 **moduleName**（如 `HttpComponent.moduleName = "application"`、`DatabaseComponent.moduleName = "database"`）。ConfigLoader **只认 moduleName**，不做 className→fileName 的魔法推断，避免重构破坏配置文件名。 |
 | **v1 禁止** | 不支持 **include / import / ${var}** 等跨文件引用与变量插值。需复用则由外部工具（helm/kustomize/ansible/consul-template）生成最终 conf。 |
 
@@ -398,7 +398,7 @@ Neton.run { ... }
 
 ### 6.2 ConfigLoader 接口与发现规则
 
-- **loadModuleConfig(moduleName, configPath, env)**：加载 `<module>.conf` 与可选 `<module>.<env>.conf`，合并后返回 `Map<String, Any?>`。组件在 `init(ctx, config)` 时用模块名调用，再解析成自身强类型 Config。
+- **loadModuleConfig(moduleName, configPath, env)**：加载 `&lt;module&gt;.conf` 与可选 `&lt;module&gt;.&lt;env&gt;.conf`，合并后返回 `Map&lt;String, Any?&gt;`。组件在 `init(ctx, config)` 时用模块名调用，再解析成自身强类型 Config。
 - **readCliOverrides(args)** / **readEnvOverrides()**：建议提供，用于与文件合并时的优先级顶层（CLI/ENV 覆盖文件内值）。具体 key 命名约定（如 `--server.port`、`NETON_SERVER_PORT`）可单独冻结。
 - **getConfigValue(config, path, default)**：点分路径取值，path 仅走 table 层级；类型仅认 TOML 原生（string/int/float/bool/datetime/array/table）。
 - 实现必须做真实 I/O + TOML 解析，禁止 when 分支占位；文件不存在时可返回空 Map 或按约定 fallback，解析失败必须报错并包含文件路径与行号等字段。
@@ -422,26 +422,26 @@ object EmptyNetonConfigRegistry : NetonConfigRegistry { ... }
 ```
 
 - **LaunchBuilder.configRegistry(registry)**：传入 KSP 生成的 Registry；不传则使用 `EmptyNetonConfigRegistry`。
-- 业务层通过 `@NetonConfig("security")` + 实现 `NetonConfigurer<SecurityBuilder>` 参与安全配置；在组件 start 之后、应用 Configurer 时从 registry 取列表并按 order 执行。
+- 业务层通过 `@NetonConfig("security")` + 实现 `NetonConfigurer&lt;SecurityBuilder&gt;` 参与安全配置；在组件 start 之后、应用 Configurer 时从 registry 取列表并按 order 执行。
 
 ### 6.4 v1.1 配置优先级与合并规则冻结
 
 以下为 v1.1 必须落地的配置语义；实现可分期，但规则一旦写入代码即不可与下列约定冲突。
 
-**总优先级（高→低）**：**命令参数（CLI）** > **环境变量（.env + ENV）** > **env 配置（*.<env>.conf）** > **默认配置（*.conf）** > **代码默认值**。
+**总优先级（高→低）**：**命令参数（CLI）** > **环境变量（.env + ENV）** > **env 配置（*.&lt;env&gt;.conf）** > **默认配置（*.conf）** > **代码默认值**。
 
 | 规则 | 说明 |
 |------|------|
 | **1. 命令参数** | `--server.port=8081`、`--env=prod` 等，最高优先级。 |
 | **2. 环境变量** | `.env` 文件及进程 ENV（如 `NETON_SERVER__PORT=8081`，规则见 6.6）。 |
-| **3. env 配置** | `<module>.<env>.conf`（如 `application.prod.conf`），覆盖同模块 base。 |
-| **4. 默认配置** | `<module>.conf`（如 `application.conf`），基础层。 |
+| **3. env 配置** | `&lt;module&gt;.&lt;env&gt;.conf`（如 `application.prod.conf`），覆盖同模块 base。 |
+| **4. 默认配置** | `&lt;module&gt;.conf`（如 `application.conf`），基础层。 |
 | **5. 代码默认值** | 最低。 |
 | **合并规则** | **table**：深度合并（同 key 环境覆盖基础，未出现 key 保留）。**数组/列表**：整体覆盖，不逐项 merge。 |
 | **路径命名空间** | 点分路径**第一段固定为模块名**：`server.port` 属 application.conf、`database.url` 属 database.conf、`redis.endpoint` 属 redis.conf。禁止跨模块用裸 `"url"` 等弱路径；读配置 API 需体现模块作用域。 |
 | **读配置 API** | 建议：`ctx.config("database").getString("url")` 或 `registry.module("database").getString("url")`；类型化 getInt/getString/getBoolean 仅支持标量 + 嵌套 table，v1 不要求完整 Bean 绑定。 |
 | **真实加载** | 必须做真实 I/O + **TOML** 解析，禁止 when 占位。解析失败与 unknown/type 策略见 6.6。 |
-| **文件名** | 主配置：`application.conf` / `application.<env>.conf`。模块：`<module>.conf` / `<module>.<env>.conf`。仅在此两类文件名下查找，不扫其它文件。 |
+| **文件名** | 主配置：`application.conf` / `application.&lt;env&gt;.conf`。模块：`&lt;module&gt;.conf` / `&lt;module&gt;.&lt;env&gt;.conf`。仅在此两类文件名下查找，不扫其它文件。 |
 
 **application.conf 推荐骨架**（仅作示例，非强制结构）：
 
@@ -475,7 +475,7 @@ codec = "json"
 
 ### 6.5 Environment 解析规则（冻结）
 
-**env** 用于选择加载 `<module>.<env>.conf`（如 `application.dev.conf`、`database.prod.conf`）。由 `ConfigLoader.resolveEnvironment(args)` 统一解析。
+**env** 用于选择加载 `&lt;module&gt;.&lt;env&gt;.conf`（如 `application.dev.conf`、`database.prod.conf`）。由 `ConfigLoader.resolveEnvironment(args)` 统一解析。
 
 **优先级**：**命令参数 > 环境变量**。
 
@@ -520,11 +520,11 @@ codec = "json"
 ### 6.7 配置 Merge 优先级
 
 1. `component.defaultConfig()`（代码默认）
-2. `config/<module>.conf`（文件，TOML）
-3. `config/<module>.<env>.conf`（环境覆盖）
+2. `config/&lt;module&gt;.conf`（文件，TOML）
+3. `config/&lt;module&gt;.&lt;env&gt;.conf`（环境覆盖）
 4. `install(Component) { block }`（DSL 覆盖，最高优先级）
 
-组件 **只接收** final config，不在 init 内调用 `ctx.config<T>()`。Config 必须是 data class，支持 merge（可借助 kotlinx.serialization）。
+组件 **只接收** final config，不在 init 内调用 `ctx.config&lt;T&gt;()`。Config 必须是 data class，支持 merge（可借助 kotlinx.serialization）。
 
 ---
 
@@ -808,7 +808,7 @@ object SecurityContext {
 | 包 | 职责 |
 |----|------|
 | `Neton.kt` | 入口：`run(args) { }` / `LaunchBuilder`，启动流程、协程包装（runBlocking）、ServerTask 等 |
-| `component/` | `NetonComponent<C>` 接口、`NetonContext`（KClass→Any 容器）、`HttpConfig` |
+| `component/` | `NetonComponent&lt;C&gt;` 接口、`NetonContext`（KClass→Any 容器）、`HttpConfig` |
 | `config/` | `ConfigLoader`（约定式 TOML 加载）、`NetonConfig` / `NetonConfigurer`（KSP 配置器 SPI） |
 | `factory/` | `ServiceFactory`（全局服务 lookup，含 Mock 回退）、`ComponentRegistry` |
 | `http/` | `HttpContext` / `HttpRequest` / `HttpResponse` / `ParameterResolver`，`HttpAdapter` 接口 |
@@ -834,7 +834,7 @@ object SecurityContext {
 
 | 方面 | 现状 | 说明 |
 |------|------|------|
-| 服务注册 | `NetonContext` + `ServiceFactory` 均为 `MutableMap<KClass<*>, Any>` | O(1) lookup，无反射 |
+| 服务注册 | `NetonContext` + `ServiceFactory` 均为 `MutableMap&lt;KClass&lt;*&gt;, Any&gt;` | O(1) lookup，无反射 |
 | 路由注册 | KSP 生成 `GeneratedInitializer`，编译期注册 | 无运行时扫描，启动快 |
 | 协程 | `runBlocking` 启动 HTTP 服务器 | 主线程阻塞 |
 | ConfigLoader | 按约定路径加载 TOML | 真实 I/O + 解析 |
@@ -846,8 +846,8 @@ object SecurityContext {
 | 方面 | 现状 | 说明 |
 |------|------|------|
 | 接口与实现分离 | `HttpAdapter`、`RequestEngine`、`SecurityBuilder` 等均在 core 定义 | 可替换实现，Mock 回退 |
-| 组件化 | `NetonComponent<C>` 统一生命周期 | 新组件仅需实现接口 + install DSL |
-| 配置器 SPI | `NetonConfigurer<T>` + `@NetonConfig(component)`，KSP 生成 registry | 业务层可参与配置，无侵入 core |
+| 组件化 | `NetonComponent&lt;C&gt;` 统一生命周期 | 新组件仅需实现接口 + install DSL |
+| 配置器 SPI | `NetonConfigurer&lt;T&gt;` + `@NetonConfig(component)`，KSP 生成 registry | 业务层可参与配置，无侵入 core |
 | Mock 支持 | `MockHttpAdapter`、`MockRequestEngine` 等 | 无 HTTP 模块时仍可运行，便于测试 |
 
 **不足**：Mock 与真实实现切换依赖 ServiceFactory 注册顺序，无显式「测试模式」开关。
@@ -868,7 +868,7 @@ object SecurityContext {
 
 ### 11.2 Component 禁止事项
 
-- ❌ 在 Component 内使用 `ctx.config<T>()`（config 由 install 时 merge，init 只接收 final config）
+- ❌ 在 Component 内使用 `ctx.config&lt;T&gt;()`（config 由 install 时 merge，init 只接收 final config）
 - ❌ 定义 `component.key`（用 `component::class` 标识）
 - ❌ 在 init 内做耗时 I/O（应放在 `start`）
 - ❌ 在 Component 内持有 mutable 全局状态（状态必须存 ctx）
@@ -1156,8 +1156,8 @@ object GeneratedInitializer {
 | **唯一格式** | TOML only |
 | **配置目录** | `--config-path` 指定（默认 `./config`） |
 | **主配置** | application.conf |
-| **模块独立文件** | <module>.conf |
-| **环境覆盖** | <module>.<env>.conf |
+| **模块独立文件** | &lt;module&gt;.conf |
+| **环境覆盖** | &lt;module&gt;.&lt;env&gt;.conf |
 | **优先级** | CLI > ENV > env 配置 > 默认配置 > 代码默认值 |
 | **路径命名空间** | 点分路径第一段固定为模块名 |
 | **真实加载** | 真实 I/O + TOML 解析，禁止 when 占位 |
@@ -1181,7 +1181,7 @@ object GeneratedInitializer {
 | 接口在 Core | HttpAdapter、RequestEngine、SecurityBuilder、SecurityFactory 等均在 core 定义，实现由各模块提供 |
 | **v1.1 容器** | ctx 为唯一权威；ServiceFactory 仅作桥接或 fail-fast |
 | **v1.1 上下文** | NetonContext.current() 仅表示 app-scope；请求级只用 HttpContext |
-| **v1.1 配置** | TOML only；application.conf + 模块独立 <module>.conf；优先级与合并见配置章节 |
+| **v1.1 配置** | TOML only；application.conf + 模块独立 &lt;module&gt;.conf；优先级与合并见配置章节 |
 | 配置扩展 | 业务配置通过 NetonConfigurer + @NetonConfig 扩展 |
 
 ---
