@@ -27,7 +27,7 @@
 | 层级 | 形态 | 示例 |
 |------|------|------|
 | **实体** | 纯 data class，无 companion | `data class User(...)` |
-| **表级入口** | `object <Entity>Table : Table<Entity, ID>` | `object UserTable : Table<User, Long>` |
+| **表级入口** | `object &lt;Entity&gt;Table : Table&lt;Entity, ID&gt;` | `object UserTable : Table&lt;User, Long&gt;` |
 | **表级调用** | `UserTable.get` / `destroy` / `update` / `query` | `UserTable.get(id)` |
 | **实例级** | `user.save()` / `user.delete()` | `user.save()` |
 
@@ -59,7 +59,7 @@ neton-database 的「灵魂层」设计：
 | SQLDelight | `userQueries` |
 | Prisma | `prisma.user` |
 | Room | `UserDao` |
-| **neton-database** | `object UserTable : Table<User, Long>` |
+| **neton-database** | `object UserTable : Table&lt;User, Long&gt;` |
 
 ---
 
@@ -89,13 +89,13 @@ data class User(
 
 | 规则 | 值 |
 |------|-----|
-| 对象命名 | `<EntityName>Table` |
-| 对象类型 | `Table<Entity, ID>`（不暴露底层实现） |
-| 示例 | `object UserTable : Table<User, Long> by SqlxTableAdapter<User, Long>(...)` |
-| 实现层 | `neton.database.adapter.sqlx.SqlxTableAdapter<T, ID>`（adapter 包） |
+| 对象命名 | `&lt;EntityName&gt;Table` |
+| 对象类型 | `Table&lt;Entity, ID&gt;`（不暴露底层实现） |
+| 示例 | `object UserTable : Table&lt;User, Long&gt; by SqlxTableAdapter&lt;User, Long&gt;(...)` |
+| 实现层 | `neton.database.adapter.sqlx.SqlxTableAdapter&lt;T, ID&gt;`（adapter 包） |
 
 **原则**：
-- 对外只暴露 `Table<T, ID>` 接口，组合/委托而非继承
+- 对外只暴露 `Table&lt;T, ID&gt;` 接口，组合/委托而非继承
 - 无 UserTableImpl 等多余实体，直接 `by SqlxTableAdapter(...)` 实例
 - 实现归属 `neton.database.adapter.sqlx`，便于未来换引擎
 
@@ -130,7 +130,7 @@ internal object UserMeta : EntityMeta<User> {
 
 **包与命名冻结**：
 - SQLx 实现：`neton.database.adapter.sqlx.SqlxTableAdapter`
-- 生成物：`object <Entity>Table : Table<Entity, ID>`（public，ID 由主键类型推导）
+- 生成物：`object &lt;Entity&gt;Table : Table&lt;Entity, ID&gt;`（public，ID 由主键类型推导）
 
 #### 2.2.3 表级 API
 
@@ -152,7 +152,7 @@ UserTable.destroyMany(ids) // 批量删除（含软删语义）
 
 #### 2.2.4 AutoStore（legacy，不推荐新项目）
 
-- **主路径**：KSP 生成 `object UserTable : Table<User> by SqlxTableAdapter(...)`，无 AutoStore。
+- **主路径**：KSP 生成 `object UserTable : Table&lt;User&gt; by SqlxTableAdapter(...)`，无 AutoStore。
 - **AutoStore**：legacy，仅提供最小 CRUD + transaction；不提供 query（均 throw UnsupportedOperationException）。
 - **更新 / Query DSL**：由 KSP Table（UserTable.update / UserTable.query）统一提供。
 
@@ -548,7 +548,7 @@ suspend fun User.delete(): Boolean = UserTable.delete(this)
 
 ### 3.6 查询类型与 Page
 
-**query { }** 返回 **EntityQuery<T>**；调用 **select(...)** 后变为 **ProjectionQuery**，返回行数据，避免同一链上 `list()` 既返回 `T` 又返回 `Row` 的类型分叉。
+**query { }** 返回 **EntityQuery&lt;T&gt;**；调用 **select(...)** 后变为 **ProjectionQuery**，返回行数据，避免同一链上 `list()` 既返回 `T` 又返回 `Row` 的类型分叉。
 
 #### Page 类型（冻结）
 
@@ -697,7 +697,7 @@ UserTable (object 单例，KSP 生成) — 主路径；AutoStore 已 deprecated
     → sqlx4k: db.execute(stmt) / db.fetchAll(stmt, mapper)
 ```
 
-- Table 以 **object 单例**形式存在，KSP 生成 `object UserTable : Table<User, Long> by SqlxTableAdapter(...)`
+- Table 以 **object 单例**形式存在，KSP 生成 `object UserTable : Table&lt;User, Long&gt; by SqlxTableAdapter(...)`
 - SQL 由 SqlxTableAdapter 内部根据 EntityMeta 动态构建（参数化）
 
 ### 4.4 核心设计
@@ -717,7 +717,7 @@ UserTable (object 单例，KSP 生成) — 主路径；AutoStore 已 deprecated
 
 **方案 B**：手写 RowMapper
 
-- 每个实体实现 `RowMapper<T>`
+- 每个实体实现 `RowMapper&lt;T&gt;`
 - 适合实体少、结构稳定的场景
 
 **原则**：避免运行时反射，优先 KSP 生成。
@@ -758,7 +758,7 @@ class SqlxTableAdapter<T : Any, ID : Any>(
 #### 事务
 
 - 使用 sqlx4k 的 `db.transaction { }`
-- Store 层可提供 `suspend fun <T> transaction(block: suspend () -> T): T`
+- Store 层可提供 `suspend fun &lt;T&gt; transaction(block: suspend () -> T): T`
 
 ### 4.5 安全性
 
@@ -774,7 +774,7 @@ class SqlxTableAdapter<T : Any, ID : Any>(
 | 改进 | 说明 |
 |------|------|
 | **业务 API** | `UserTable.get`、`UserTable.query { where { } }.list()`、`user.save()` 等 |
-| **主路径** | KSP 生成 `object UserTable : Table<User, Long> by SqlxTableAdapter(...)`，AutoStore 已 deprecated |
+| **主路径** | KSP 生成 `object UserTable : Table&lt;User, Long&gt; by SqlxTableAdapter(...)`，AutoStore 已 deprecated |
 | **@DatabaseConfig** | 通过 Config SPI 注册数据源，与 security/routing 一致 |
 | **URI 配置** | 继续支持 `database.conf` 中的 `uri`、`driver` |
 | **Memory 模式** | `uri: sqlite::memory:` 作为默认开发配置 |
@@ -825,7 +825,7 @@ class SqlxTableAdapter<T : Any, ID : Any>(
 ## 五、SqlxTableAdapter 内部接口
 
 > **业务层请以 Entity 为中心 API 为准**：`UserTable.get(id)`、`UserTable.destroy(id)`、`UserTable.update(id){ }`、`UserTable.query { where { } }`、`user.save()`、`user.delete()`。  
-> **主路径**：KSP 生成 `object UserTable : Table<User, Long> by SqlxTableAdapter<User, Long>(...)`。  
+> **主路径**：KSP 生成 `object UserTable : Table&lt;User, Long&gt; by SqlxTableAdapter&lt;User, Long&gt;(...)`。
 > 本节为 **SqlxTableAdapter 内部实现与设计原则** 参考。
 
 ### 5.1 长期规范（铁律）
@@ -838,7 +838,7 @@ class SqlxTableAdapter<T : Any, ID : Any>(
 
 ### 5.2 SqlxTableAdapter 核心职责
 
-`SqlxTableAdapter<T, ID>` 是 `Table<T, ID>` 接口的唯一官方实现，由 KSP 生成的 `object XxxTable` 通过 `by` 委托使用。
+`SqlxTableAdapter&lt;T, ID&gt;` 是 `Table&lt;T, ID&gt;` 接口的唯一官方实现，由 KSP 生成的 `object XxxTable` 通过 `by` 委托使用。
 
 ```kotlin
 class SqlxTableAdapter<T : Any, ID : Any>(
@@ -994,7 +994,7 @@ suspend fun saveAll(entities: List<T>): List<T>
 |------|------|------|
 | 查询入口 | `query { }` | 构造查询，内含 where / orderBy / select |
 | 列表 | `.list()` | 取列表 |
-| 分页 | `.page(page, size)` | 返回 `Page<T>` |
+| 分页 | `.page(page, size)` | 返回 `Page&lt;T&gt;` |
 | 计数 | `.count()` | 与 where 一致，走 `SELECT COUNT(*)` |
 | 单条 | `oneWhere { }` | 单条件/多条件返回一条 |
 | 存在 | `existsWhere { }` | 条件是否存在 |
@@ -1011,9 +1011,9 @@ suspend fun saveAll(entities: List<T>): List<T>
 
 #### 主键与批量类型
 
-- **`Table<T, ID : Any>` 泛型主键**。ID 类型由实体主键字段决定（如 `Long`、`String`、`UUID`）。
+- **`Table&lt;T, ID : Any&gt;` 泛型主键**。ID 类型由实体主键字段决定（如 `Long`、`String`、`UUID`）。
 - `get(id: ID)`, `destroy(id: ID)`, `exists(id: ID)` — id 类型为泛型 ID
-- `many(ids: Collection<ID>)`, `destroyMany(ids: Collection<ID>)` — 批量 API 与主键类型一致
+- `many(ids: Collection&lt;ID&gt;)`, `destroyMany(ids: Collection&lt;ID&gt;)` — 批量 API 与主键类型一致
 - **Phase 1 脚手架默认主键类型：`Long`**。KSP 从实体的 `@Id` 字段推导 ID 类型，常见为 Long。
 
 ### 6.2 Phase 1（P0）能力清单
@@ -1025,7 +1025,7 @@ suspend fun saveAll(entities: List<T>): List<T>
 | **P0-3** | @SoftDelete | destroy → UPDATE；所有 SELECT 默认加 `deleted = ?`（参数绑定 false）；可逃逸查询已删（如 `withDeleted { }`） |
 | **P0-4** | @CreatedAt / @UpdatedAt | insert 自动填 createdAt + updatedAt；update 自动填 updatedAt（epoch millis, UTC） |
 | **P0-5** | 条件可选 | whenPresent / whenNotBlank / whenNotEmpty 在 where 块内可用 |
-| **P0-6** | SELECT 指定列 | `select(prop1, prop2)` 得到 ProjectionQuery，用 `.rows()` / `.page()` 取 `List<Row>` / `Page<Row>` |
+| **P0-6** | SELECT 指定列 | `select(prop1, prop2)` 得到 ProjectionQuery，用 `.rows()` / `.page()` 取 `List&lt;Row&gt;` / `Page&lt;Row&gt;` |
 | **P0-7** | count 真实现 | 与 where 完全一致，仅发 `SELECT COUNT(*)`，禁止 `findAll().size` |
 
 ### 6.3 @SoftDelete
@@ -1102,7 +1102,7 @@ KSP 自动生成 `AutoFillConfig(createdAtColumn = "created_at", updatedAtColumn
 
 - 在 **query { }** 内调用 `select("id", "name")` 后，返回类型变为 **ProjectionQuery**。
 - 生成 SQL：`SELECT id, name FROM users WHERE ...`，禁止该路径下 `SELECT *`。
-- 取数据用 **`.rows(): List<Row>`**，分页用 **`.page(page, size): Page<Row>`**；不与 EntityQuery 的 `.list(): List<T>` 混用，类型自洽。
+- 取数据用 **`.rows(): List&lt;Row&gt;`**，分页用 **`.page(page, size): Page&lt;Row&gt;`**；不与 EntityQuery 的 `.list(): List&lt;T&gt;` 混用，类型自洽。
 
 ### 6.6 最终验收闭环（Phase 1 完成标准）
 
@@ -1110,8 +1110,8 @@ KSP 自动生成 `AutoFillConfig(createdAtColumn = "created_at", updatedAtColumn
 
 1. **后台列表页**
    - `GET /users?page=1&size=20&status=1&keyword=tom`
-   - 实体列表：`UserTable.query { where { ... }; orderBy(User::id.desc()) }.page(1, 20)` → `Page<User>`。
-   - 指定列列表：`UserTable.query { where { ... }; orderBy(User::id.desc()) }.select("id", "name", "status").page(1, 20)` → `Page<Row>`（ProjectionQuery）。
+   - 实体列表：`UserTable.query { where { ... }; orderBy(User::id.desc()) }.page(1, 20)` → `Page&lt;User&gt;`。
+   - 指定列列表：`UserTable.query { where { ... }; orderBy(User::id.desc()) }.select("id", "name", "status").page(1, 20)` → `Page&lt;Row&gt;`（ProjectionQuery）。
    - 返回：items、total（count）、page（从 1 开始）、size、totalPages。
 
 2. **删除**
@@ -1165,7 +1165,7 @@ data class ColumnRef(val name: String)  // 实际 SQL 列名，由 KSP TableMeta
 
 - 注入**不**写在 PredicateScope，写在 **SqlBuilder 使用 AST 之前**。
 - 对 QueryAst 做一次 **normalize**：若实体带 @SoftDelete 且 `includeDeleted == false`，则将 `where` 置为 `And(原 where, Eq(deletedColumn, false))`；若无原 where，则 `where = Eq(deletedColumn, false)`。SqlBuilder 将 `Eq(col, false)` 输出为 `column = ?`，args 含 `false`（参数绑定，不拼 literal）。
-- 接口建议：`fun QueryAst<T>.normalizeForSoftDelete(meta: EntityMeta): QueryAst<T>`，在 `buildSelect` / `buildCount` 前调用。
+- 接口建议：`fun QueryAst&lt;T&gt;.normalizeForSoftDelete(meta: EntityMeta): QueryAst&lt;T&gt;`，在 `buildSelect` / `buildCount` 前调用。
 
 #### Dialect 抽象（冻结）
 
@@ -1227,7 +1227,7 @@ object MySqlDialect : Dialect {
 
 #### SqlBuilder 输出
 
-- 输出类型冻结：`data class BuiltSql(val sql: String, val args: List<Any?>)`。
+- 输出类型冻结：`data class BuiltSql(val sql: String, val args: List&lt;Any?&gt;)`。
 - WHERE 子句生成时参数按递增编号；`In(list)` 展开为 `IN ($1,$2,...)` 或 `IN (?,?,...)`。
 - Phase 1 主键为泛型 ID（Long/String/UUID 等），条件值与参数类型由 Dialect 统一处理。
 - LIKE 需做 escape 处理（规范层可注明：Phase 1 至少对 `%`/`_` 做转义，避免注入与误匹配）。
@@ -1236,8 +1236,8 @@ object MySqlDialect : Dialect {
 
 - 接收 **QueryAst**（或已包装的 EntityQuery/ProjectionQuery 持有 AST）。
 - 调用 **SqlBuilder** 得到 `BuiltSql`，再交 sqlx4k 执行。
-- **EntityQuery**：`list()` = buildSelect(select *) + 执行 + RowMapper → List<T>；`count()` = buildCount + 执行取 Long；`page()` = 先 count 再 buildSelect(limit/offset)。
-- **ProjectionQuery**：`rows()` = buildSelect(projection 列) + 执行 → List<Row>；`page()` 同理。Row 使用 neton 自有轻量接口，不泄漏 sqlx4k Row。
+- **EntityQuery**：`list()` = buildSelect(select *) + 执行 + RowMapper → List&lt;T&gt;；`count()` = buildCount + 执行取 Long；`page()` = 先 count 再 buildSelect(limit/offset)。
+- **ProjectionQuery**：`rows()` = buildSelect(projection 列) + 执行 → List&lt;Row&gt;；`page()` 同理。Row 使用 neton 自有轻量接口，不泄漏 sqlx4k Row。
 
 #### page() 执行策略（冻结）
 
@@ -1303,9 +1303,9 @@ assert(page.total == manualCount)
 | **@CreatedAt/@UpdatedAt** | [ ] insert 自动填 createdAt、updatedAt（Long，epoch millis UTC） |
 | | [ ] update 自动填 updatedAt |
 | **投影** | [ ] select(...) 返回 ProjectionQuery |
-| | [ ] ProjectionQuery.rows() 返回 List<Row> |
-| | [ ] EntityQuery.list() 仅返回 List<T>，不返回 Row |
-| **类型与入口** | [ ] 主键与批量 API 均为泛型 ID / Collection<ID> |
+| | [ ] ProjectionQuery.rows() 返回 List&lt;Row&gt; |
+| | [ ] EntityQuery.list() 仅返回 List&lt;T&gt;，不返回 Row |
+| **类型与入口** | [ ] 主键与批量 API 均为泛型 ID / Collection&lt;ID&gt; |
 | | [ ] 无 Table.updateById；更新仅 KSP UserTable.update(id){ } 与 update(entity) |
 | | [ ] 唯一条件查询入口为 query { } |
 
@@ -1320,7 +1320,7 @@ assert(page.total == manualCount)
 
 | 测试 | 目的 | 验证方式 |
 |------|------|----------|
-| **生成物 Contract** | KSP 对 @Table 实体必须生成 `object UserTable : Table<User, Long>` | `mvc` 编译通过 + `TableUserContractTest` |
+| **生成物 Contract** | KSP 对 @Table 实体必须生成 `object UserTable : Table&lt;User, Long&gt;` | `mvc` 编译通过 + `TableUserContractTest` |
 | **禁止回潮** | Store 不实现 Table，无法作为 tableRegistry 返回值 | `Table` 为唯一单表接口；Store 不实现 Table 类型约束 |
 | **COUNT 一致性** | 同一 where 条件下 count 与分页 total 一致 | 契约测试：`page().total == query().count()` |
 | **[[sources]] 配置契约** | database/redis/storage 三模块配置解析一致 | 缺 sources / 空 sources / 无 default / duplicate name → fail-fast |
@@ -1329,11 +1329,11 @@ assert(page.total == manualCount)
 - **Test 2**：通过约束 A（Store 废除），编译期天然防止「Store 被当作 Table 使用」。
 - **Test 3**：契约测试保证 count 与 list/page 同源，防止未来条件分叉。
 - **Test 4**：`[[sources]]` 配置契约测试（database / redis / storage 每个模块一份），验证：
-  - 缺少 `[[sources]]` → fail-fast with `<module>.conf: missing [[sources]]`
+  - 缺少 `[[sources]]` → fail-fast with `&lt;module&gt;.conf: missing [[sources]]`
   - 空 `[[sources]]` → fail-fast
-  - 无 `default` 数据源 → fail-fast with `<module>.conf: no default source`
-  - `name` 重复 → fail-fast with `<module>.conf: duplicate source name '<name>'`
-  - 错误消息必须含 `<module>.conf:` 前缀 + 缺失项，三模块保持一致格式
+  - 无 `default` 数据源 → fail-fast with `&lt;module&gt;.conf: no default source`
+  - `name` 重复 → fail-fast with `&lt;module&gt;.conf: duplicate source name '&lt;name&gt;'`
+  - 错误消息必须含 `&lt;module&gt;.conf:` 前缀 + 缺失项，三模块保持一致格式
 
 ---
 
@@ -1355,8 +1355,8 @@ assert(page.total == manualCount)
 
 ### 8.3 id 类型与强类型
 
-- **Table<T, ID : Any>**：主键为泛型 ID，`get(id: ID)`、`destroy(id: ID)`、`exists(id: ID)`、`many(ids: Collection<ID>)`、`destroyMany(ids: Collection<ID>)` 均为强类型
-- **KSP 生成的 Table**：从实体主键字段推导 ID 类型（如 Long、String、UUID），生成 `Table<User, Long>` 等
+- **Table&lt;T, ID : Any&gt;**：主键为泛型 ID，`get(id: ID)`、`destroy(id: ID)`、`exists(id: ID)`、`many(ids: Collection&lt;ID&gt;)`、`destroyMany(ids: Collection&lt;ID&gt;)` 均为强类型
+- **KSP 生成的 Table**：从实体主键字段推导 ID 类型（如 Long、String、UUID），生成 `Table&lt;User, Long&gt;` 等
 - **getOrThrow**：`getOrThrow(id: ID)` 泛型扩展，调用处类型推导安全；异常 message 含 id 便于排查
 
 ### 8.4 NotFoundException 与 HTTP 404
@@ -1366,7 +1366,7 @@ assert(page.total == manualCount)
 
 ### 8.5 AutoStore 异常文案（便于日志聚合）
 
-- **格式**：`AutoStoreFeatureNotSupported: <method>. Use KSP Table (UserTable.xxx)`
+- **格式**：`AutoStoreFeatureNotSupported: &lt;method&gt;. Use KSP Table (UserTable.xxx)`
 - **示例**：`query` 等均使用此格式，便于日志聚合「哪些项目误用 AutoStore」
 
 ### 8.6 ensureTable 行为
@@ -1377,7 +1377,7 @@ assert(page.total == manualCount)
 
 ### 8.7 约束 A：Store 废除，Logic 层替代
 
-- **`Table<T, ID>` 是唯一数据访问入口**（单表 CRUD + Query DSL + JOIN DSL）。
+- **`Table&lt;T, ID&gt;` 是唯一数据访问入口**（单表 CRUD + Query DSL + JOIN DSL）。
 - **Store 作为框架层概念已废除**。Store 的唯一存在理由（手写 JOIN SQL）已被 NetonSQL v1 JOIN DSL 和 DbContext 取代。
 - **跨表/聚合逻辑归属 Logic 层**：`getWithRoles`、`listUsersWithRoles`、`assignRole`/`removeRole` 等用例在 Logic 层实现，通过 Table DSL 或 DbContext 访问数据。
 - **Controller 禁止直接引用 Table**（约束 C1），所有数据操作必须经过 Logic 层。
@@ -1389,15 +1389,15 @@ assert(page.total == manualCount)
 | 表级生成物 | `EntityNameTable`（单数） | `UsersTable`、`UserTables`、`Users` |
 | Logic 层 | `EntityNameLogic` 或 `DomainLogic` | `UserStoreImpl`、`UserRepository` |
 
-- **KSP 对 @Table("users") data class User 必须生成**：`object UserTable : Table<User, Long>`
+- **KSP 对 @Table("users") data class User 必须生成**：`object UserTable : Table&lt;User, Long&gt;`
 - **禁止复数**：`Users`、`UserTables`。
 - **禁止歧义**：`UserTables` 易与「多个 UserTable」混淆。
 - **违反后果**：命名漂移、双轨回潮，禁止。
 
 ### 8.9 实现来源约束（语义约束）
 
-- **`Table<T>` 仅由 KSP 生成物或框架内部 Adapter 实现。**
-- **业务代码不得自行实现 `Table<T>`。**
+- **`Table&lt;T&gt;` 仅由 KSP 生成物或框架内部 Adapter 实现。**
+- **业务代码不得自行实现 `Table&lt;T&gt;`。**
 - 本约束为语义冻结约束，不通过 sealed/interface 机制强制。
 
 ### 8.10 约束 C：列引用冻结规则（v1）

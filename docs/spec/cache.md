@@ -247,7 +247,7 @@ suspend fun reloadAllUsers()
 
 ### 5.4 编程式 API
 
-- `cacheManager.getCache<User, User>("user").getOrPut(id) { userRepo.findById(id) }`
+- `cacheManager.getCache&lt;User, User&gt;("user").getOrPut(id) { userRepo.findById(id) }`
 - 或由 KSP/字节码在 `@Cacheable` 方法外围生成等价 getOrPut + 调用。
 
 ### 5.5 Key 表达式（v1 冻结）
@@ -291,7 +291,7 @@ val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpExcepti
 
 - v1 **只支持** 返回类型为 **@Serializable** 且能稳定拿到 **serializer()** 的类型。
 - 返回类型**允许 T?**（Cacheable 常见）。
-- **不支持**：Result\<T\>、Flow\<T\>、List\<T\> 等复杂泛型（除非实现验证过 serializer 可稳定获取）。
+- **不支持**：Result&lt;T&gt;、Flow&lt;T&gt;、List&lt;T&gt; 等复杂泛型（除非实现验证过 serializer 可稳定获取）。
 - **Unit / Nothing**：**不允许**标注 @Cacheable / @CachePut（KSP 编译期报错）。
 - 上述写进规范后，KSP 实现不再纠结边界情况。
 

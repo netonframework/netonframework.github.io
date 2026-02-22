@@ -148,7 +148,7 @@ interface QueryInterceptor {
 **3️⃣ 明确排除（冻结）**
 
 以下能力 **不属于** v1 设计范围：
-- ❌ 不允许 `afterFetch(List<T>)` 这种结果改写钩子
+- ❌ 不允许 `afterFetch(List&lt;T&gt;)` 这种结果改写钩子
 - ❌ 不允许在拦截器中修改返回数据
 - ❌ 不允许在拦截器中执行额外 SQL
 
@@ -342,7 +342,7 @@ internal suspend fun DbContext.selectRows(ast: SelectAst): List<Row>
 internal suspend fun DbContext.countRows(ast: SelectAst): Long
 ```
 
-> **迁移**：原顶层 `fun <T : Any> from(table: Table<T, *>)` 标 `@Deprecated`，迁移为 `db.from(table)`，迁移完成后删除。
+> **迁移**：原顶层 `fun &lt;T : Any&gt; from(table: Table&lt;T, *&gt;)` 标 `@Deprecated`，迁移为 `db.from(table)`，迁移完成后删除。
 
 ### 6.2 SelectBuilder 改造（绑定 DbContext）
 
@@ -431,9 +431,9 @@ fun <A, B> select(c1: ColRef<*, A>, c2: ColRef<*, B>): TypedProjectedSelect2<A, 
 
 | 路径 | 场景 | DSL | 返回类型 |
 |------|------|-----|----------|
-| **路径 A**（Phase 3） | 单表 typed projection | `EntityQuery.select(T::a, T::b)` | `List<Record2<A, B>>` |
-| **路径 B**（Phase 4） | JOIN typed projection | `q.select(U.id, R.name)` | `List<Record2<A, B>>` |
-| **逃生口** | JOIN + 自定义映射 | `q.selectRows(...).fetchRows()` | `List<Row>` |
+| **路径 A**（Phase 3） | 单表 typed projection | `EntityQuery.select(T::a, T::b)` | `List&lt;Record2&lt;A, B&gt;&gt;` |
+| **路径 B**（Phase 4） | JOIN typed projection | `q.select(U.id, R.name)` | `List&lt;Record2&lt;A, B&gt;&gt;` |
+| **逃生口** | JOIN + 自定义映射 | `q.selectRows(...).fetchRows()` | `List&lt;Row&gt;` |
 
 **说明**：Phase 4 JOIN 投影不退化为 `Row`。路径 B 是正式路径；`fetchRows()` / `pageRows()` 是逃生口，适合 `groupOneToMany` 等手动映射场景。
 
@@ -517,7 +517,7 @@ for (it in interceptors) it.onExecute(sql, args, elapsedMs)
 DbContext 的职责边界固定为：
 
 1. **SQL 执行**
-   - `query(BuiltSql): List<Row>`
+   - `query(BuiltSql): List&lt;Row&gt;`
    - `execute(BuiltSql): Long`
 
 2. **事务边界**

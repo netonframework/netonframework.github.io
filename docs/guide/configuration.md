@@ -297,5 +297,5 @@ val hasRedis = ConfigLoader.hasConfig(config, "redis.host")
 ## 相关文档
 
 - [Config SPI 设计规范](/spec/config-spi) -- 配置扩展点的完整设计
-- [核心架构规格](/spec/core-architecture) -- 框架核心架构说明
+- [核心架构规格](/spec/core) -- 框架核心架构说明
 - [核心规格](/spec/core) -- Core 模块完整规格

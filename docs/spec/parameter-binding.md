@@ -117,7 +117,7 @@ fun create(@Body request: BindingUserRequest): String
 |--------------|----------|--------|
 | `application/json` | JSON 反序列化（kotlinx.serialization） | 400 |
 | `application/x-www-form-urlencoded` | Form map，支持 `@FormParam`；可选支持「复杂类型 form bind」 | 400 |
-| `multipart/form-data` | `HttpRequest.uploadFiles()` 解析文件部分，返回 `UploadFiles`；控制器参数类型为 `UploadFile`、`List<UploadFile>` 或 `UploadFiles` 时按 fieldName 自动绑定 | 400 |
+| `multipart/form-data` | `HttpRequest.uploadFiles()` 解析文件部分，返回 `UploadFiles`；控制器参数类型为 `UploadFile`、`List&lt;UploadFile&gt;` 或 `UploadFiles` 时按 fieldName 自动绑定 | 400 |
 | 其他 | 不解析 Body，复杂类型参数缺失 → 400 | 415 Unsupported Media Type |
 
 - **415**：标准 HTTP「不支持的媒体类型」，便于客户端与网关正确识别。
@@ -256,7 +256,7 @@ interface ParamConverter<T> {
 ## 七、List / Array 支持（必做）
 
 - **Query 多值**：`?tags=kotlin&tags=web&tags=framework` → `tags: List&lt;String&gt;`。
-- **实现要点**：底层解析为 `Map<String, List&lt;String&gt;>`（或等价），对 `List&lt;T&gt;` / `Array&lt;T&gt;` 做元素级类型转换。
+- **实现要点**：底层解析为 `Map&lt;String, List&lt;String&gt;&gt;`（或等价），对 `List&lt;T&gt;` / `Array&lt;T&gt;` 做元素级类型转换。
 - **约定**：无注解时，若参数类型为 `List<简单类型>` 或 `Array<简单类型>` 且为 GET（或无 body），则从 Query 解析，参数名即 key；同一 key 多次出现聚合成 List。
 - **显式**：与 key 名不一致时可用 `@Query("tags") tags: List&lt;String&gt;`。
 
@@ -300,7 +300,7 @@ fun filters(tags: List<String>, ids: List<Int>?): String
 |------|------|
 | **编译期优先** | Kotlin/Native 反射代价高；运行期参数名/类型判断增加每次请求开销。KSP 可直接生成 `val id = ctx.pathLong("id")` 等零分支代码。 |
 | **热路径优化** | 生成代码在 hot path 上**避免 Map 查两次**（query map、path map 只取一次并复用）。 |
-| **List 解析前置** | 多值 Query 在 request parse 阶段即结构化为 `Map<String, List&lt;String&gt;>`，避免重复解析。 |
+| **List 解析前置** | 多值 Query 在 request parse 阶段即结构化为 `Map&lt;String, List&lt;String&gt;&gt;`，避免重复解析。 |
 
 ---
 

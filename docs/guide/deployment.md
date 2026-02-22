@@ -472,7 +472,7 @@ suspend fun health(ctx: HttpContext): String {
 
 ## 九、相关文档
 
-- [核心架构](../spec/core-architecture.md) -- Neton 的整体架构设计与启动流程
+- [核心架构](../spec/core.md) -- Neton 的整体架构设计与启动流程
 - [HTTP 规范](../spec/http.md) -- HTTP 适配器、请求处理流程
 - [日志规范](../spec/logging.md) -- 结构化日志、Multi-Sink、异步写入
 - [项目路线图](../spec/roadmap.md) -- 跨平台支持等未来计划
