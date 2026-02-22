@@ -1,13 +1,13 @@
-# NetonSQL v2 Spec（Phase 2~4 统一模型）
+# Neton JOIN 查询规范
 
-> **状态**：冻结草案 v2  
-> **范围**：强类型列引用 + Typed Projection + JOIN AST  
-> **策略**：一体设计、分步实现（Phase 2 → 3 → 4 逐步交付）  
+> **状态**：冻结草案 v1
+> **范围**：强类型列引用 + Typed Projection + JOIN AST
+> **策略**：一体设计、分步实现（Phase 2 → 3 → 4 逐步交付）
 > **前提**：Phase 1（MyBatis-Plus 平替底座）已冻结并交付
 
 ---
 
-## 〇、设计原则（冻结）
+## 一、设计原则（冻结）
 
 | # | 原则 | 说明 |
 |---|------|------|
@@ -22,7 +22,7 @@
 | 9 | **alias 自动生成** | 用户不写 `"u"` / `"ur"` 等字符串别名，框架内部按 JOIN 顺序分配 `t1` / `t2` / `t3` |
 | 10 | **列名映射 KSP 化** | `Entity::prop → column_name` 的映射由 KSP 编译期生成，禁止 runtime regex 猜测 |
 | 11 | **AST 禁止业务直接构造** | `ColumnPredicate` / `JoinCondition` / `ColumnOrdering` 只能通过 DSL 运算符创建，禁止业务代码手动 new（类型安全由运算符层保证） |
-| 12 | **不支持属性名混淆** | v2 假设 Kotlin 属性名在运行时可用（`KProperty1.name`），不支持混淆/重写属性名的构建链 |
+| 12 | **不支持属性名混淆** | v1 假设 Kotlin 属性名在运行时可用（`KProperty1.name`），不支持混淆/重写属性名的构建链 |
 | 13 | **SELECT 投影列必须自动加别名** | `ProjectionExpr.Col` 输出 `{alias}."{column}" AS {alias}_{column}`（如 `t1."id" AS t1_id`），确保 `Row.get(ref, prop)` / `intoOrNull()` 的列名匹配 |
 | 14 | **COUNT + GROUP BY 使用子查询** | 无 `groupBy` → `SELECT COUNT(*)`；有 `groupBy` → `SELECT COUNT(*) FROM (原始 SELECT 去 LIMIT) tmp`，避免返回分组条数而非总行数 |
 | 15 | **TableDefRegistry 必须 O(1) 查找** | `Map<KClass<*>, TableDef<*>>`，`DatabaseComponent.init()` 一次性注册，禁止 resolve 时反射扫描 |
@@ -31,12 +31,12 @@
 
 ---
 
-## 一、Phase 2：强类型列（Column） — internal 实现
+## 二、Phase 2：强类型列（Column） — internal 实现
 
 > **核心冻结约束**：对外 API 只允许 `KProperty1<T, V>`（即 `SystemUser::username`）。
 > `Column<T, V>` / `TableDef<T>` 是 internal 实现载体，用户不直接接触。
 
-### 1.1 Column（internal）
+### 2.1 Column（internal）
 
 ```kotlin
 package neton.database.dsl
@@ -56,7 +56,7 @@ internal class Column<T : Any, V>(
 )
 ```
 
-### 1.2 TableDef（internal）
+### 2.2 TableDef（internal）
 
 ```kotlin
 package neton.database.dsl
@@ -78,7 +78,7 @@ internal interface TableDef<T : Any> {
 }
 ```
 
-### 1.3 KSP 生成物（internal）
+### 2.3 KSP 生成物（internal）
 
 对每个 `@Table` 实体，KSP 额外生成一个 internal `<EntityName>TableDef` object：
 
@@ -122,7 +122,7 @@ internal object SystemUserTableDef : TableDef<SystemUser> {
 - `propMap` 由 KSP 编译期生成，O(1) 查找，不做 runtime camelToSnake regex
 - 整个 object 是 `internal`，用户代码不 import、不引用
 
-### 1.4 TableRef：JOIN 时的表引用（auto alias）
+### 2.4 TableRef：JOIN 时的表引用（auto alias）
 
 ```kotlin
 package neton.database.dsl
@@ -138,13 +138,13 @@ class TableRef<T : Any> internal constructor(
     internal val def: TableDef<T>,
     internal val alias: String        // 自动分配：t1, t2, t3...
 ) {
-    /** 列引用：tableRef[SystemUser::username] → ColRef<T, V> */
+    /** 列引用：tableRef.username（KSP 扩展属性）或 tableRef[SystemUser::username] → ColRef<T, V> */
     operator fun <V> get(prop: KProperty1<T, V>): ColRef<T, V> =
         ColRef(this, def.resolve(prop))
 }
 ```
 
-### 1.5 ColRef：带表归属的列引用（用户通过 `tableRef[prop]` 获得）
+### 2.5 ColRef：带表归属的列引用（用户通过 `tableRef[prop]` 获得）
 
 ```kotlin
 package neton.database.dsl
@@ -165,7 +165,7 @@ class ColRef<T : Any, V> internal constructor(
 }
 ```
 
-### 1.6 ColRef 运算符（对外 API — 用户通过 `tableRef[prop] eq value` 使用）
+### 2.6 ColRef 运算符（对外 API — 用户通过 `tableRef[prop] eq value` 使用）
 
 ```kotlin
 package neton.database.dsl
@@ -219,13 +219,13 @@ infix fun <T : Any, R : Any, V> ColRef<T, V>.eq(other: ColRef<R, V>): JoinCondit
     )
 ```
 
-### 1.7 ColumnPredicate（v2 谓词 AST — 纯结构化数据，不含 Column 对象引用）
+### 2.7 ColumnPredicate（v1 谓词 AST — 纯结构化数据，不含 Column 对象引用）
 
 ```kotlin
 package neton.database.dsl
 
 /**
- * v2 谓词 AST。
+ * v1 谓词 AST。
  * 存储 (tableAlias, columnName, value) 三元组，不持有 Column 对象引用。
  * SQL 生成完全由 SqlBuilder + Dialect 负责。
  *
@@ -256,7 +256,7 @@ infix fun ColumnPredicate.or(other: ColumnPredicate): ColumnPredicate =
     ColumnPredicate.Or(listOf(this, other))
 ```
 
-### 1.8 ColumnOrdering
+### 2.8 ColumnOrdering
 
 ```kotlin
 package neton.database.dsl
@@ -264,7 +264,7 @@ package neton.database.dsl
 data class ColumnOrdering(val tableAlias: String, val column: String, val dir: Dir)
 ```
 
-### 1.9 JoinCondition
+### 2.9 JoinCondition
 
 ```kotlin
 package neton.database.dsl
@@ -278,7 +278,7 @@ data class JoinCondition(
 )
 ```
 
-### 1.10 条件筛选辅助函数
+### 2.10 条件筛选辅助函数
 
 ```kotlin
 package neton.database.dsl
@@ -311,7 +311,7 @@ fun anyOf(vararg predicates: ColumnPredicate): ColumnPredicate {
 }
 ```
 
-### 1.11 TableDefRegistry（internal，O(1) 查找 — 原则 15）
+### 2.11 TableDefRegistry（internal，O(1) 查找 — 原则 15）
 
 ```kotlin
 package neton.database.dsl
@@ -363,7 +363,7 @@ internal object TableDefRegistry {
 }
 ```
 
-### 1.12 单表场景：Table.query 中使用 KProperty1（Phase 1 兼容 + Phase 2 增强）
+### 2.12 单表场景：Table.query 中使用 KProperty1（Phase 1 兼容 + Phase 2 增强）
 
 Phase 1 的 `KProperty1` 运算符保留不变。Phase 2 在 `Table.query` 内部也做 KSP resolve：
 
@@ -398,14 +398,14 @@ internal fun <T : Any> KProperty1<T, *>.toColumnRef(): ColumnRef {
 }
 ```
 
-### 1.13 与 Phase 1 的兼容策略（冻结）
+### 2.13 与 Phase 1 的兼容策略（冻结）
 
 | 场景 | 用户写法 | Phase 2 内部行为 |
 |------|---------|----------------|
 | 单表 query where | `SystemUser::username like "%x%"` | KProperty1 → TableDef.resolve() → ColumnRef（KSP 映射） |
 | 单表 orderBy | `SystemUser::createdAt.desc()` | 同上 |
-| JOIN where | `U[SystemUser::username] like "%x%"` | ColRef → ColumnPredicate（带 alias） |
-| JOIN on | `U[SystemUser::id] eq UR[UserRole::userId]` | ColRef eq ColRef → JoinCondition |
+| JOIN where | `U.username like "%x%"` | ColRef → ColumnPredicate（带 alias） |
+| JOIN on | `U.id eq UR.userId` | ColRef eq ColRef → JoinCondition |
 
 **规则**：
 - 单表场景：`KProperty1` 运算符是主路径，不 deprecate
@@ -414,9 +414,9 @@ internal fun <T : Any> KProperty1<T, *>.toColumnRef(): ColumnRef {
 
 ---
 
-## 二、Phase 3：Typed Projection
+## 三、Phase 3：Typed Projection
 
-### 2.1 Record 类型族
+### 3.1 Record 类型族
 
 ```kotlin
 package neton.database.dsl
@@ -440,9 +440,9 @@ data class Rec7<A, B, C, D, E, F, G>(override val v1: A, override val v2: B, ove
 data class Rec8<A, B, C, D, E, F, G, H>(override val v1: A, override val v2: B, override val v3: C, override val v4: D, override val v5: E, override val v6: F, override val v7: G, override val v8: H) : Record8<A, B, C, D, E, F, G, H>
 ```
 
-超过 8 列的投影使用自定义 DTO（v2.1 可加 `selectInto<UserLite>(...)` KSP 生成）。
+超过 8 列的投影使用自定义 DTO（v1.1 可加 `selectInto<UserLite>(...)` KSP 生成）。
 
-### 2.2 EntityMapper（Neton Row → Entity，独立于 sqlx4k RowMapper）
+### 3.2 EntityMapper（Neton Row → Entity，独立于 sqlx4k RowMapper）
 
 ```kotlin
 package neton.database.api
@@ -480,7 +480,7 @@ internal object SystemUserEntityMapper : EntityMapper<SystemUser> {
 }
 ```
 
-### 2.3 EntityMapperRegistry（统一注册，收口到 Component 初始化）
+### 3.3 EntityMapperRegistry（统一注册，收口到 Component 初始化）
 
 ```kotlin
 package neton.database.api
@@ -507,7 +507,7 @@ object EntityMapperRegistry {
 
 KSP 生成注册代码，在 `DatabaseComponent.init()` 内统一调用（不生成散落的顶层注册函数）。
 
-### 2.4 PrefixedRow（JOIN 结果映射）
+### 3.4 PrefixedRow（JOIN 结果映射）
 
 ```kotlin
 package neton.database.api
@@ -531,7 +531,7 @@ class PrefixedRow(private val delegate: Row, private val prefix: String) : Row {
 }
 ```
 
-### 2.5 Row.into() 扩展
+### 3.5 Row.into() 扩展
 
 ```kotlin
 package neton.database.api
@@ -543,7 +543,7 @@ inline fun <reified T : Any> Row.into(prefix: String): T =
     EntityMapperRegistry.get(T::class).map(PrefixedRow(this, prefix))
 ```
 
-### 2.6 Row.intoOrNull()（不用 try/catch，用存在性检测 + 显式 pk）
+### 3.6 Row.intoOrNull()（不用 try/catch，用存在性检测 + 显式 pk）
 
 ```kotlin
 package neton.database.api
@@ -569,7 +569,7 @@ inline fun <reified T : Any, ID> Row.intoOrNull(prefix: String, pk: KProperty1<T
 
 > **冻结规则**：`intoOrNull` 必须传入 `pk` 参数（KProperty1），不做默认值猜测。
 
-### 2.7 Row.get(ref, prop)：JOIN 结果的强类型取值
+### 3.7 Row.get(ref, prop)：JOIN 结果的强类型取值
 
 ```kotlin
 package neton.database.api
@@ -600,7 +600,7 @@ fun <T : Any, V> Row.getOrNull(ref: TableRef<T>, prop: KProperty1<T, V>): V? {
 > 调用对应的 `Row.long()` / `Row.int()` / `Row.string()` 等方法。
 > SELECT 投影时，框架自动给列加 `{alias}_{columnName}` 别名以避免冲突。
 
-### 2.8 Typed select() API
+### 3.8 Typed select() API
 
 ```kotlin
 // EntityQuery 新增 typed select（Phase 1 接口扩展）
@@ -639,9 +639,9 @@ records.forEach { println("id=${it.v1}, name=${it.v2}") }
 
 ---
 
-## 三、Phase 4：JOIN AST
+## 四、Phase 4：JOIN AST
 
-### 3.1 JoinClause
+### 4.1 JoinClause
 
 ```kotlin
 package neton.database.dsl
@@ -654,13 +654,13 @@ data class JoinClause(
 )
 ```
 
-### 3.2 SelectAst（v2 查询 AST）
+### 4.2 SelectAst（v1 查询 AST）
 
 ```kotlin
 package neton.database.dsl
 
 /**
- * v2 查询 AST：支持多表 JOIN（public，原则 16）。
+ * v1 查询 AST：支持多表 JOIN（public，原则 16）。
  * 所有字段都是纯结构化数据（字符串 + 枚举），不持有 Column/TableRef 对象引用。
  * SQL 生成完全由 SqlBuilder + Dialect 负责（SqlBuilder 为 internal）。
  *
@@ -700,7 +700,7 @@ sealed interface ProjectionExpr {
 }
 ```
 
-### 3.3 SelectBuilder（流式构建器 — auto alias）
+### 4.3 SelectBuilder（流式构建器 — auto alias）
 
 ```kotlin
 package neton.database.dsl
@@ -710,11 +710,11 @@ package neton.database.dsl
  *
  * 用法：
  *   val (q, U) = from(SystemUserTable)                                         // t1
- *   val UR = q.leftJoin(UserRoleTable).on { U[SystemUser::id] eq it[UserRole::userId] }  // t2
- *   val R  = q.leftJoin(RoleTable).on { UR[UserRole::roleId] eq it[Role::id] }           // t3
+ *   val UR = q.leftJoin(UserRoleTable).on { U.id eq it.userId }  // t2
+ *   val R  = q.leftJoin(RoleTable).on { UR.roleId eq it.id }           // t3
  *
- *   q.where(U[SystemUser::status] eq 1)
- *    .select(U[SystemUser::id], U[SystemUser::username], R[Role::name])
+ *   q.where(U.status eq 1)
+ *    .select(U.id, U.username, R.name)
  *    .fetch()
  */
 class SelectBuilder internal constructor() {
@@ -806,8 +806,8 @@ class JoinStep<T : Any> internal constructor(
      * 返回 TableRef<T>（被 JOIN 表），用户赋值给变量后续使用。
      *
      * 示例：
-     *   val UR = q.leftJoin(UserRoleTable).on { U[SystemUser::id] eq it[UserRole::userId] }
-     *   val R  = q.leftJoin(RoleTable).on { UR[UserRole::roleId] eq it[Role::id] }
+     *   val UR = q.leftJoin(UserRoleTable).on { U.id eq it.userId }
+     *   val R  = q.leftJoin(RoleTable).on { UR.roleId eq it.id }
      */
     fun on(block: (TableRef<T>) -> JoinCondition): TableRef<T> {
         val condition = block(ref)
@@ -836,7 +836,7 @@ fun <T : Any> from(table: Table<T, *>): Pair<SelectBuilder, TableRef<T>> {
 }
 ```
 
-### 3.4 SqlBuilder 扩展（SelectAst → SQL）
+### 4.4 SqlBuilder 扩展（SelectAst → SQL）
 
 ```kotlin
 // SqlBuilder 新增方法
@@ -966,7 +966,7 @@ class SqlBuilder(private val dialect: Dialect) {
 }
 ```
 
-### 3.5 一对多聚合 Helper
+### 4.5 一对多聚合 Helper
 
 ```kotlin
 package neton.database.api
@@ -998,450 +998,11 @@ inline fun <K, T, R, RK> List<Row>.groupOneToMany(
 }
 ```
 
-### 3.6 执行链冻结（C+ 统一执行门面）
-
-本节冻结 NetonSQL v2 的执行链模型。
-目标：在不破坏 Phase 1 API 的前提下，实现 Phase 1 / Phase 4 的统一执行入口，
-为多租户、数据权限、慢 SQL 统计、监控埋点等能力预留稳定扩展点。
-
 ---
 
-#### 3.6.1 DbContext —— 唯一执行门面（冻结）
+## 五、完整使用示例
 
-**1️⃣ 定位**
-
-DbContext 是 NetonSQL 的统一执行门面（execution gateway）。
-- Phase 1（单表 CRUD / QueryAst）
-- Phase 4（JOIN / SelectAst）
-
-所有 SQL 执行必须通过 DbContext 进行。
-
-**禁止**：
-- SqlBuilder 直接触发数据库执行
-- Table / Adapter 直接调用底层 driver
-- 全局单例执行器（如 SelectExecutor）
-
-SelectExecutor 在 v2 中彻底移除。
-统一执行路径由 DbContext 承担。
-
----
-
-**2️⃣ 冻结接口定义**
-
-```kotlin
-interface DbContext {
-
-    /** 执行查询（Phase 1 + Phase 4 统一入口） */
-    suspend fun query(built: BuiltSql): List<Row>
-
-    /** 执行更新（INSERT / UPDATE / DELETE） */
-    suspend fun execute(built: BuiltSql): Long
-
-    /** 事务边界 */
-    suspend fun <R> transaction(block: suspend DbContext.() -> R): R
-
-    /** Interceptor 链（只读） */
-    val interceptors: List<QueryInterceptor>
-
-    /** Phase 4 JOIN 入口 */
-    fun <T : Any> from(table: Table<T, *>): Pair<SelectBuilder, TableRef<T>>
-}
-```
-
----
-
-**3️⃣ 冻结职责**
-
-DbContext 必须承担以下职责：
-
-| 职责 | 说明 |
-|------|------|
-| SQL 执行 | 统一调用底层 driver（如 sqlx4k） |
-| 事务控制 | transaction 作为唯一事务边界 |
-| 拦截链调度 | 在执行前后调用 QueryInterceptor |
-| 错误传播 | 统一错误模型 |
-| 未来扩展点 | 多租户、数据权限、慢 SQL、Metrics |
-
----
-
-**4️⃣ 执行流程（冻结四步链路）**
-
-任何查询执行必须遵循以下链路：
-
-1. 构建 AST（QueryAst / SelectAst）
-2. 进入 DbContext
-3. 触发 Interceptor.beforeXxx(ast)（可改写 AST）
-4. SqlBuilder.build(ast) → BuiltSql(sql, args)
-5. 调用底层 driver 执行
-6. 记录耗时
-7. 触发 Interceptor.onExecute / onError
-8. 返回 Row 或映射结果
-
----
-
-**5️⃣ Phase 1 与 Phase 4 的统一要求（冻结）**
-
-| 场景 | 必须行为 |
-|------|----------|
-| Table.query() | 内部执行必须调用 DbContext.query() |
-| SqlxTableAdapter | 不得直接触发 driver |
-| ProjectedSelect | 内部必须调用 DbContext.query() |
-| TypedProjection | 内部必须调用 DbContext.query() |
-
-**冻结原则**：执行统一，API 稳定。
-
-外部 API（如 `SystemUserTable.query {}`）保持不变，
-但内部必须走 DbContext 执行链。
-
----
-
-#### 3.6.2 QueryInterceptor —— 冻结扩展点
-
-**1️⃣ 定位**
-
-QueryInterceptor 是 NetonSQL 的唯一 AST 改写与执行观测扩展点。
-
-它用于：
-- 多租户注入
-- 数据权限注入
-- 软删除自动注入
-- SQL 执行日志
-- 慢 SQL 统计
-- Metrics 埋点
-
----
-
-**2️⃣ 冻结接口定义**
-
-```kotlin
-interface QueryInterceptor {
-
-    /** Phase 1 单表查询改写入口 */
-    fun beforeQuery(ast: QueryAst<*>): QueryAst<*> = ast
-
-    /** Phase 4 JOIN 查询改写入口 */
-    fun beforeSelect(ast: SelectAst): SelectAst = ast
-
-    /** 执行成功后观测（只读，不可修改结果） */
-    fun onExecute(sql: String, args: List<Any?>, elapsedMs: Long) {}
-
-    /** 执行异常观测 */
-    fun onError(sql: String, args: List<Any?>, error: Throwable) {}
-}
-```
-
----
-
-**3️⃣ 明确排除（冻结）**
-
-以下能力 **不属于** v2 设计范围：
-- ❌ 不允许 `afterFetch(List<T>)` 这种结果改写钩子
-- ❌ 不允许在拦截器中修改返回数据
-- ❌ 不允许在拦截器中执行额外 SQL
-
-**设计原则**：
-Interceptor 只负责 AST 改写和执行观测，不参与业务逻辑。
-
----
-
-**4️⃣ 冻结拦截顺序**
-
-执行顺序固定为：
-
-```
-beforeQuery / beforeSelect
-→ SqlBuilder.build()
-→ driver.execute()
-→ onExecute / onError
-```
-
-拦截器按注册顺序执行。
-
----
-
-#### 3.6.3 SelectExecutor 移除声明（冻结）
-
-v2 中不再存在 SelectExecutor 全局对象。
-
-**原因**：
-1. ❌ 不符合 KMP Native 架构（无全局连接上下文）
-2. ❌ 无法正确管理事务边界
-3. ❌ 无法提供统一拦截链
-4. ❌ 阻断未来多租户 / 观测扩展
-
-所有执行必须经由 DbContext。
-
----
-
-#### 3.6.4 架构稳定性声明
-
-此执行模型保证：
-- Phase 1 与 Phase 4 执行路径统一
-- 事务边界统一
-- 扩展点统一
-- 未来能力（多租户 / 数据权限 / SQL cache）可在 AST 层扩展
-- 不需要推翻现有 API
-
----
-
-#### 3.6.5 C+ 冻结结论
-
-| 项目 | 状态 |
-|------|------|
-| Table API | 保持稳定 |
-| DbContext | 统一执行门面 |
-| QueryInterceptor | 冻结扩展接口 |
-| SelectExecutor | 删除 |
-| 未来扩展 | 可持续 |
-
----
-
-#### 3.6.6 实现细节（保留原 spec 内容）
-
-##### DbContext 新增方法
-
-```kotlin
-interface DbContext {
-    // Phase 1 保留（raw SQL 逃生口，不变）
-    suspend fun fetchAll(sql: String, params: Map<String, Any?> = emptyMap()): List<Row>
-    suspend fun fetchOne(sql: String, params: Map<String, Any?> = emptyMap()): Row?
-    suspend fun execute(sql: String, params: Map<String, Any?> = emptyMap()): Long
-
-    // Phase 4 新增：JOIN 查询入口（替代原顶层 from 函数，绑定执行上下文）
-    fun <T : Any> from(table: Table<T, *>): Pair<SelectBuilder, TableRef<T>>
-}
-
-// module-internal：仅供 ProjectedSelect / TypedProjectedSelectN 调用，不对外暴露
-internal suspend fun DbContext.selectRows(ast: SelectAst): List<Row>
-internal suspend fun DbContext.countRows(ast: SelectAst): Long
-```
-
-> **迁移**：原顶层 `fun <T : Any> from(table: Table<T, *>)` 标 `@Deprecated`，迁移为 `db.from(table)`，迁移完成后删除。
-
-##### SelectBuilder 改造（绑定 DbContext）
-
-```kotlin
-class SelectBuilder internal constructor(
-    internal val db: DbContext    // ★ 改造：绑定执行上下文，由 DbContext.from() 注入
-) {
-    // ...（alias 分配、join/where/orderBy/groupBy/limit 等不变）...
-
-    // Row 逃生口（适合 into / intoOrNull / groupOneToMany 自定义映射）
-    fun selectRows(vararg cols: ColRef<*, *>): ProjectedSelect =
-        ProjectedSelect(db, buildAst(cols.map { ProjectionExpr.Col(it.alias, it.columnName) }))
-
-    fun selectAllRows(): ProjectedSelect = ProjectedSelect(db, buildAst(emptyList()))
-
-    // Phase 4 typed projection（基于 ColRef，与 Phase 3 路径 A 风格对齐）
-    fun <A> select(c1: ColRef<*, A>): TypedProjectedSelect1<A>
-    fun <A, B> select(c1: ColRef<*, A>, c2: ColRef<*, B>): TypedProjectedSelect2<A, B>
-    fun <A, B, C> select(
-        c1: ColRef<*, A>, c2: ColRef<*, B>, c3: ColRef<*, C>
-    ): TypedProjectedSelect3<A, B, C>
-    // ... 到 8 列
-}
-```
-
-##### ProjectedSelect（Row 逃生口，绑定 DbContext）
-
-```kotlin
-class ProjectedSelect internal constructor(
-    private val db: DbContext,
-    private val ast: SelectAst
-) {
-    /** Row 逃生口：适合 intoOrNull / into / groupOneToMany 手动映射 */
-    suspend fun fetchRows(): List<Row> = db.selectRows(ast)
-    suspend fun count(): Long = db.countRows(ast)
-    suspend fun pageRows(page: Int, size: Int): Page<Row> {
-        val total = count()
-        val items = db.selectRows(ast.copy(limit = size, offset = (page - 1) * size))
-        return Page(items, total, page, size)
-    }
-}
-```
-
-##### TypedProjectedSelect（Phase 4 JOIN 强类型投影，以 Rec2 为例，其余 N 形态一致）
-
-```kotlin
-class TypedProjectedSelect2<A, B> internal constructor(
-    private val db: DbContext,
-    private val ast: SelectAst,
-    private val read1: (Row) -> A,   // 编译期由 ColRef 类型确定，不依赖运行时反射
-    private val read2: (Row) -> B
-) {
-    suspend fun fetch(): List<Record2<A, B>> =
-        db.selectRows(ast).map { Record2(read1(it), read2(it)) }
-    suspend fun count(): Long = db.countRows(ast)
-    suspend fun page(page: Int, size: Int): Page<Record2<A, B>> {
-        val total = count()
-        val items = db.selectRows(ast.copy(limit = size, offset = (page - 1) * size))
-                      .map { Record2(read1(it), read2(it)) }
-        return Page(items, total, page, size)
-    }
-}
-```
-
-`SelectBuilder.select()` 在构建期绑定读取器（以 2 列为例）：
-
-```kotlin
-fun <A, B> select(c1: ColRef<*, A>, c2: ColRef<*, B>): TypedProjectedSelect2<A, B> {
-    val key1 = "${c1.alias}_${c1.columnName}"
-    val key2 = "${c2.alias}_${c2.columnName}"
-    return TypedProjectedSelect2(
-        db  = db,
-        ast = buildAst(listOf(
-            ProjectionExpr.Col(c1.alias, c1.columnName),
-            ProjectionExpr.Col(c2.alias, c2.columnName)
-        )),
-        read1 = { row -> row.readQualified(key1, c1.column) },
-        read2 = { row -> row.readQualified(key2, c2.column) }
-    )
-}
-```
-
-`readQualified` 见附录 A §A.5。
-
-##### 两条投影路径（冻结）
-
-| 路径 | 场景 | DSL | 返回类型 |
-|------|------|-----|----------|
-| **路径 A**（Phase 3） | 单表 typed projection | `EntityQuery.select(T::a, T::b)` | `List<Record2<A, B>>` |
-| **路径 B**（Phase 4） | JOIN typed projection | `q.select(U[SystemUser::id], R[Role::name])` | `List<Record2<A, B>>` |
-| **逃生口** | JOIN + 自定义映射 | `q.selectRows(...).fetchRows()` | `List<Row>` |
-
-**说明**：Phase 4 JOIN 投影不退化为 `Row`。路径 B 是正式路径；`fetchRows()` / `pageRows()` 是逃生口，适合 `groupOneToMany` 等手动映射场景。
-
----
-
-#### 3.6.7 拦截器执行顺序（冻结）
-
-**冻结规则**：拦截器按注册顺序执行，且 AST 改写采用链式传递（fold）。
-
-**A) beforeQuery / beforeSelect（AST rewrite）**
-
-- DbContext 在执行 SQL 之前，必须按 `interceptors` 的顺序依次调用拦截器的 `beforeQuery` / `beforeSelect`。
-- 每个拦截器的返回值，作为下一个拦截器的输入（链式传递）。
-- 最终得到的 `finalAst` 才允许进入 SqlBuilder 生成 SQL。
-
-**冻结伪代码**：
-
-```kotlin
-val finalAst = interceptors.fold(ast) { current, it ->
-    it.beforeSelect(current)
-}
-```
-
-`beforeQuery`（Phase 1 单表）同理。
-
-**B) onExecute / onError（执行观测）**
-
-- DbContext 在完成 SQL 构建并执行之后，必须按注册顺序调用：
-  - `onExecute(sql, args, elapsedMs)`（成功路径）
-  - `onError(sql, args, error)`（失败路径）
-- `onExecute/onError` 只允许观测，不允许改写 SQL、args、结果集或抛出异常影响主流程（可记录自身错误，但不得中断查询）。
-
-**冻结伪代码**：
-
-```kotlin
-for (it in interceptors) it.onExecute(sql, args, elapsedMs)
-// 或失败：for (it in interceptors) it.onError(sql, args, error)
-```
-
-**C) 幂等性要求（强约束）**
-
-每个拦截器的 AST 改写必须满足幂等：
-- `f(f(ast)) == f(ast)`
-
-用于避免多租户/数据权限/软删等注入条件在多次执行（或重试、分页 count+select）时重复叠加导致 SQL 膨胀或语义错误。
-
-**推荐策略**（非强制实现细节）：
-- 在 AST 上用固定结构表示注入条件（例如统一附加到 where 的 And(children) 中）
-- 或在注入前检测 AST 是否已包含相同条件（基于结构相等）
-
----
-
-#### 3.6.8 AST 不可变性保证（冻结）
-
-**冻结规则**：QueryAst / SelectAst 永远保持不可变结构，禁止为了性能将其改成 mutable。
-
-**A) 不可变承诺**
-
-- QueryAst / SelectAst 必须使用不可变数据结构表达（推荐：`data class` + `val` 字段）。
-- 改写必须通过 `copy()` 返回新对象，禁止原地修改。
-
-**B) 防御性拷贝（冻结）**
-
-任何可能来自外部可变集合的字段，在 AST 构建完成时必须做防御性拷贝：
-- `List` / `Map` / `Set` 等统一 `toList()` / `toMap()` / `toSet()` 进入 AST。
-- AST 对外暴露后应视为只读快照。
-
-**C) 兼容性声明**
-
-- v2 保证：AST 结构与字段语义不会在 minor 版本中发生破坏性变更（新增字段允许，但不得改变现有字段含义）。
-- 未来如需扩展（CTE/subquery/window），只能以"新增 AST 节点/字段"的方式演进，不得推翻 v2 结构。
-
----
-
-#### 3.6.9 DbContext 职责边界（冻结）
-
-**冻结规则**：DbContext 是"统一执行门面"（内部基础设施），只负责执行与观测调度，不承载业务策略。
-
-**A) DbContext 必须承担的职责（冻结）**
-
-DbContext 的职责边界固定为：
-
-1. **SQL 执行**
-   - `query(BuiltSql): List<Row>`
-   - `execute(BuiltSql): Long`
-
-2. **事务边界**
-   - `transaction { }`（在 driver 支持后落地；v2 可允许 TODO，但接口语义冻结）
-
-3. **拦截链调度**
-   - 调用 `QueryInterceptor.beforeQuery/beforeSelect`（AST rewrite）
-   - 调用 `QueryInterceptor.onExecute/onError`（观测）
-
-4. **JOIN 入口**
-   - `from(table)` 构建 SelectBuilder / TableRef（不要求对外暴露更多 TableOps API）
-
-**B) 禁止内置业务策略（冻结）**
-
-DbContext（含 SqlxDbContext 实现类）禁止直接实现以下能力：
-- ❌ SQL cache / query result cache
-- ❌ 多租户注入逻辑（tenant_id 条件）
-- ❌ 数据权限注入逻辑（org_id / dept scope）
-- ❌ 软删除注入逻辑（deleted / deleted_at 条件）
-- ❌ Metrics/Tracing/SlowSQL 的具体策略
-- ❌ 自定义重试、熔断等策略
-
-上述能力必须通过 `QueryInterceptor` 扩展实现，保证 DbContext 的长期可控性，避免演变为 God Object。
-
-**C) Phase 1 / Phase 4 执行统一（冻结）**
-
-- Phase 1（单表 QueryAst）与 Phase 4（JOIN SelectAst）在实际执行时，必须都通过 DbContext 的统一执行入口完成：
-  - AST rewrite → SqlBuilder → BuiltSql → DbContext.query/execute → onExecute/onError
-- 对外 API 保持稳定，不强推用户改写为 `DbContext.table()/TableOps` 等新 API。
-
----
-
-**🔒 冻结声明**
-
-NetonSQL v2 执行链模型自本版本起冻结。
-- 不允许新增绕过 DbContext 的执行路径
-- 不允许新增全局 SQL 执行单例
-- 不允许在 DSL 之外拼接 SQL
-
-所有扩展必须基于：
-- SelectAst
-- QueryAst
-- DbContext
-- QueryInterceptor
-
----
-
-## 四、完整使用示例
-
-### 4.1 单表查询（Phase 1 写法不变，Phase 2 内部增强）
+### 5.1 单表查询（Phase 1 写法不变，Phase 2 内部增强）
 
 ```kotlin
 // 用户写法完全不变 —— KProperty1 是单表主路径
@@ -1456,7 +1017,7 @@ val page = SystemUserTable.query {
 }.page(1, 20)
 ```
 
-### 4.2 单表投影（Phase 3）
+### 5.2 单表投影（Phase 3）
 
 ```kotlin
 // 使用 KProperty1 做 typed select
@@ -1467,30 +1028,30 @@ val records: List<Record2<Long?, String>> = SystemUserTable.query {
 records.forEach { println("id=${it.v1}, name=${it.v2}") }
 ```
 
-### 4.3 JOIN 查询（Phase 4）
+### 5.3 JOIN 查询（Phase 4）
 
 ```kotlin
 // ✅ from 通过 DbContext 调用（不再是顶层函数）
 val db: DbContext = ctx.get(DbContext::class)
 val (q, U) = db.from(SystemUserTable)                                            // t1
-val UR = q.leftJoin(UserRoleTable).on { U[SystemUser::id] eq it[UserRole::userId] }  // t2
-val R  = q.leftJoin(RoleTable).on { UR[UserRole::roleId] eq it[Role::id] }           // t3
+val UR = q.leftJoin(UserRoleTable).on { U.id eq it.userId }  // t2
+val R  = q.leftJoin(RoleTable).on { UR.roleId eq it.id }           // t3
 
 val condition = allOf(
-    U[SystemUser::status] eq 1,
-    whenNotBlank(keyword) { U[SystemUser::username] like "%$it%" }
+    U.status eq 1,
+    whenNotBlank(keyword) { U.username like "%$it%" }
 )
 
 // --- 路径 B：JOIN typed projection（强类型，正式路径）---
 val page: Page<Record4<Long?, String, Long?, String>> = q
     .where(condition)
-    .select(U[SystemUser::id], U[SystemUser::username], R[Role::id], R[Role::name])
+    .select(U.id, U.username, R.id, R.name)
     .page(1, 20)
 
 // --- 逃生口：Row + 一对多聚合（手动映射场景）---
 val rows: Page<Row> = q
     .where(condition)
-    .selectRows(U[SystemUser::id], U[SystemUser::username], R[Role::id], R[Role::name])
+    .selectRows(U.id, U.username, R.id, R.name)
     .pageRows(1, 20)
 
 rows.items.groupOneToMany(
@@ -1512,7 +1073,7 @@ rows.items.groupOneToMany(
 > LIMIT $3 OFFSET $4
 > ```
 
-### 4.4 raw SQL 逃生口（始终可用）
+### 5.4 raw SQL 逃生口（始终可用）
 
 ```kotlin
 // Logic 层使用 DbContext 逃生口（80% 用 DSL，20% 特殊查询走 raw SQL）
@@ -1539,7 +1100,7 @@ class UserLogic(private val db: DbContext = dbContext()) : DbContext by db {
 
 ---
 
-## 五、KSP 生成物总览
+## 六、KSP 生成物总览
 
 对每个 `@Table` 实体（以 `SystemUser` 为例），KSP 生成：
 
@@ -1554,7 +1115,7 @@ class UserLogic(private val db: DbContext = dbContext()) : DbContext by db {
 
 ---
 
-## 六、文件结构
+## 七、文件结构
 
 ```
 neton-database/src/commonMain/kotlin/neton/database/
@@ -1576,7 +1137,7 @@ neton-database/src/commonMain/kotlin/neton/database/
 │   ├── TableDef.kt                       # ★ Phase 2：TableDef<T> (internal)
 │   ├── TableRef.kt                       # ★ Phase 2：TableRef<T> + ColRef<T, V>
 │   ├── ColRefOperators.kt                # ★ Phase 2：ColRef 运算符
-│   ├── ColumnPredicate.kt                # ★ Phase 2：v2 谓词 AST
+│   ├── ColumnPredicate.kt                # ★ Phase 2：v1 谓词 AST
 │   ├── ColumnOrdering.kt                 # ★ Phase 2：排序 + Dir 枚举
 │   ├── ConditionHelpers.kt               # ★ Phase 2：whenPresent/allOf/anyOf
 │   ├── SelectAst.kt                      # ★ Phase 4：多表查询 AST
@@ -1602,7 +1163,7 @@ neton-database/src/commonMain/kotlin/neton/database/
 
 ---
 
-## 七、实施计划
+## 八、实施计划
 
 ### Phase 2 交付物
 
@@ -1622,7 +1183,7 @@ neton-database/src/commonMain/kotlin/neton/database/
 
 **验收**：
 - `SystemUser::username like "%x%"` 内部走 KSP 映射（不再 runtime regex）
-- `TableRef[SystemUser::id] eq value` 编译通过
+- `U.id eq value`（KSP 扩展属性）编译通过
 
 ### Phase 3 交付物
 
@@ -1660,13 +1221,13 @@ neton-database/src/commonMain/kotlin/neton/database/
 **验收**：
 - `db.from(SystemUserTable).leftJoin(RoleTable).on(...).where(...).select(...).fetch()` 生成正确 SQL
 - `db.from()` 绑定 db，执行不经过任何全局静态对象
-- `q.select(U[SystemUser::id], R[Role::name]).fetch()` 返回 `List<Record2<Long?, String>>`
+- `q.select(U.id, R.name).fetch()` 返回 `List<Record2<Long?, String>>`
 - `page().total == count()`（同源验证）
 - PG `$1/$2` / MySQL `?` 占位符正确
 
 ---
 
-## 八、Contract Tests 清单
+## 九、Contract Tests 清单
 
 ### Phase 2
 
@@ -1714,14 +1275,14 @@ neton-database/src/commonMain/kotlin/neton/database/
 | 16 | `Row.get(U, SystemUser::id)` 使用裸列名 `"id"` → 抛异常/编译失败 | 原则 17，禁止 fallback 裸列名 |
 | 17 | `TableDefRegistry.find(prop)` 标 @Deprecated | 原则 15 加固，正式路径走 resolve(klass, prop) |
 | 18 | `db.from(SystemUserTable)` 返回 `SelectBuilder` 持有 db 引用 | DbContext 绑定，不经全局静态对象 |
-| 19 | `q.select(U[SystemUser::id], R[Role::name]).fetch()` 返回 `List<Record2<Long?, String>>` | 路径 B typed projection |
+| 19 | `q.select(U.id, R.name).fetch()` 返回 `List<Record2<Long?, String>>` | 路径 B typed projection |
 | 20 | `q.select(...).page(1, 20)` 返回 `Page<Record2<...>>` | 路径 B 分页 typed projection |
 | 21 | `q.selectRows(...).fetchRows()` 返回 `List<Row>` | 逃生口路径正常 |
 | 22 | `readQualified` 按 ColumnType dispatch，不走 JVM 反射 | KMP Native 安全 |
 
 ---
 
-## 九、Phase 5（Future，不在本 spec 范围）
+## 十、Phase 5（Future，不在本 spec 范围）
 
 - 聚合函数（`count()`, `sum()`, `max()`, `min()`, `avg()`）
 - `having` 支持聚合函数谓词

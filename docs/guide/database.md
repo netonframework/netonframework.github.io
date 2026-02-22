@@ -6,9 +6,10 @@ Neton 的数据库层遵循 **Entity = 纯数据，Table = 表级入口** 的设
 
 | 概念 | 职责 | 说明 |
 |------|------|------|
-| **Entity** | 纯数据类 | `data class`，用 `@Serializable` + `@Table` 标注 |
+| **Controller** | HTTP 端点 | 接收请求、参数校验、调用 Logic |
+| **Logic** | 业务聚合 | 手写，处理 JOIN、事务、缓存等业务用例 |
 | **Table** | 单表 CRUD | KSP 自动生成，提供 `get`/`save`/`where`/`destroy` 等操作 |
-| **Store** | 跨表聚合 | 手写，处理 JOIN、多表关联等复杂查询 |
+| **Entity** | 纯数据类 | `data class`，用 `@Serializable` + `@Table` 标注 |
 
 关键约束：
 - Entity 不包含任何数据库逻辑，不使用 companion object
@@ -42,7 +43,8 @@ data class User(
 | `@Table("表名")` | 标记数据库表，指定表名 | `value`: 表名，默认使用类名小写 |
 | `@Id` | 标记主键字段 | `autoGenerate`: 是否自动生成，默认 `true` |
 | `@Column` | 自定义列映射 | `name`: 列名；`nullable`: 是否可空；`ignore`: 是否忽略 |
-| `@Timestamp` | 时间戳自动填充 | `onCreate`: 创建时设置；`onUpdate`: 更新时设置 |
+| `@CreatedAt` | 插入时自动填充当前时间（epoch millis, UTC） | 无 |
+| `@UpdatedAt` | 插入/更新时自动填充当前时间（epoch millis, UTC） | 无 |
 
 主键字段类型为 `Long?`，新建实体时传 `null`，数据库自动生成。
 
@@ -223,12 +225,11 @@ fun main(args: Array<String>) {
 
 ## CRUD 控制器示例
 
-结合路由注解，构建完整的 RESTful API 控制器：
+结合路由注解，构建完整的 RESTful API 控制器。注意：Controller 不直接引用 Table，所有数据操作通过 Logic 层：
 
 ```kotlin
+import logic.UserLogic
 import model.User
-import model.UserTable
-import neton.database.dsl.ColumnRef
 import neton.core.annotations.*
 import neton.core.http.*
 import neton.logging.Logger
@@ -236,46 +237,35 @@ import neton.logging.Log
 
 @Controller("/api/users")
 @Log
-class UserController(private val log: Logger) {
+class UserController(
+    private val log: Logger,
+    private val userLogic: UserLogic = UserLogic()
+) {
 
     @Get
-    suspend fun all(): List<User> =
-        UserTable.query { where { ColumnRef("status") eq 1 } }.list()
+    suspend fun all(): List<User> = userLogic.all()
 
     @Get("/{id}")
     suspend fun get(id: Long): User? {
         log.info("user.get", mapOf("userId" to id))
-        return UserTable.get(id)
+        return userLogic.get(id)
     }
 
     @Post
-    suspend fun create(@Body user: User): User =
-        UserTable.save(user)
+    suspend fun create(@Body user: User): User = userLogic.create(user)
 
     @Put("/{id}")
-    suspend fun update(id: Long, @Body user: User): User {
-        val current = UserTable.get(id)
-            ?: throw NotFoundException("User $id not found")
-        val updated = current.copy(
-            name = user.name,
-            email = user.email,
-            status = user.status,
-            age = user.age
-        )
-        UserTable.update(updated)
-        return updated
-    }
+    suspend fun update(id: Long, @Body user: User): User =
+        userLogic.update(id, user)
 
     @Delete("/{id}")
-    suspend fun delete(id: Long) {
-        UserTable.destroy(id)
-    }
+    suspend fun delete(id: Long) = userLogic.delete(id)
 }
 ```
 
-## Store 模式：跨表 JOIN
+## Logic 层：跨表聚合
 
-当需要跨多张表进行联合查询时，使用 Store 模式。Store 通过 `SqlRunner` 执行原生 SQL，处理 Table 无法覆盖的复杂聚合场景。
+当需要跨多张表进行联合查询、事务操作或业务聚合时，使用 Logic 层。Logic 通过 `DbContext` 执行原生 SQL，或通过 Table DSL 进行单表操作，是 Controller 与 Table 之间的唯一业务层。
 
 ### 定义聚合 DTO
 
@@ -287,13 +277,20 @@ data class UserWithRoles(
 )
 ```
 
-### 实现 Store
+### 实现 Logic
 
 ```kotlin
-import neton.database.api.SqlRunner
-import neton.database.sqlRunner
+import neton.database.api.DbContext
+import neton.database.dbContext
 
-class UserStore(private val db: SqlRunner = sqlRunner()) : SqlRunner by db {
+class UserLogic(private val db: DbContext = dbContext()) : DbContext by db {
+
+    suspend fun all(): List<User> =
+        UserTable.query { where { User::status eq 1 } }.list()
+
+    suspend fun get(id: Long): User? = UserTable.get(id)
+
+    suspend fun create(user: User): User = UserTable.save(user)
 
     suspend fun getWithRoles(userId: Long): UserWithRoles? {
         val sql = """
@@ -327,27 +324,36 @@ class UserStore(private val db: SqlRunner = sqlRunner()) : SqlRunner by db {
 }
 ```
 
-### 在控制器中使用 Store
+### 在控制器中使用 Logic
 
 ```kotlin
 @Controller("/api/users")
 class UserController(
-    private val userStore: UserStore = UserStore()
+    private val userLogic: UserLogic = UserLogic()
 ) {
+    @Get
+    suspend fun all(): List<User> = userLogic.all()
+
+    @Get("/{id}")
+    suspend fun get(id: Long): User? = userLogic.get(id)
+
     @Get("/{id}/with-roles")
     suspend fun getWithRoles(id: Long): UserWithRoles? =
-        userStore.getWithRoles(id)
+        userLogic.getWithRoles(id)
+
+    @Post
+    suspend fun create(@Body user: User): User = userLogic.create(user)
 }
 ```
 
-### Table vs Store 职责边界
+### Table vs Logic 职责边界
 
-| 维度 | Table | Store |
+| 维度 | Table | Logic |
 |------|-------|-------|
 | 生成方式 | KSP 自动生成 | 手动编写 |
-| 操作范围 | 单表 CRUD | 跨表 JOIN / 聚合 |
-| SQL 编写 | 无需，DSL 自动生成 | 手写原生 SQL |
-| 适用场景 | 标准增删改查 | 复杂报表、关联查询 |
+| 操作范围 | 单表 CRUD + Query DSL | 跨表 JOIN / 事务 / 业务聚合 |
+| SQL 编写 | 无需，DSL 自动生成 | 80% 用 Table DSL，20% 用 DbContext（raw SQL 逃生口） |
+| 适用场景 | 标准增删改查 | 复合用例、报表、关联查询 |
 
 ## 数据库配置
 
@@ -411,6 +417,6 @@ UserTable.transaction {
 
 ## 相关文档
 
-- [数据库 API 规格](/spec/database-api) -- Table 接口完整定义
-- [数据库查询 DSL 规格](/spec/database-query-dsl) -- 查询 DSL 详细设计
-- [数据库 SQLx 设计](/spec/database-sqlx-design) -- 底层 SQLx 集成方案
+- [数据库规范](/spec/database) -- Entity/Table 模型、Query DSL、架构实现
+- [JOIN 查询规范](/spec/database-join) -- 强类型列引用、Typed Projection、JOIN AST
+- [执行链与约束规范](/spec/database-execution) -- DbContext 统一执行门面、QueryInterceptor、事务

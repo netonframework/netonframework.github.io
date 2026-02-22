@@ -15,7 +15,7 @@
 | **编译期确定** | 任务定义来自代码（`@Job`），不来自数据库。与 neton `@Controller`、`@NetonConfig` 一致：KSP 编译期发现，运行时直接使用。 |
 | **配置可覆盖** | `jobs.conf` 覆盖注解默认值（cron、enabled 等），无需改代码重新编译。运维友好。 |
 | **coroutine 原生** | 调度和执行均基于 Kotlin coroutine，不引入线程池、不引入 Java Timer/ScheduledExecutor。 |
-| **SINGLE_NODE 复用锁** | `SINGLE_NODE` 模式下多实例互斥直接复用 [Neton-Redis-Lock-Spec-v1](./redis-lock.md) 的 `LockManager`，不另起炉灶。`ALL_NODES` 模式不使用锁。 |
+| **SINGLE_NODE 复用锁** | `SINGLE_NODE` 模式下多实例互斥直接复用 [Neton Redis 规范](./redis.md) 的 `LockManager`，不另起炉灶。`ALL_NODES` 模式不使用锁。 |
 | **框架与业务分层** | 框架（neton-jobs）提供调度引擎 + `JobExecutionListener` 接口；执行日志写数据库是业务层（neton-backend）的事。 |
 | **v1 最小集** | 不做 DB Job Store、不做动态任务、不做任务依赖、不做 Web UI 控制（启停走配置文件或后台 API）。 |
 
@@ -812,7 +812,7 @@ neton-ksp/src/main/kotlin/neton/ksp/
 ├── ControllerProcessor.kt       # 已有
 ├── NetonConfigProcessor.kt      # 已有
 ├── ValidationProcessor.kt       # 已有
-├── RepositoryProcessor.kt       # 已有
+├── EntityTableProcessor.kt      # 已有
 └── JobProcessor.kt              # 新增
 ```
 

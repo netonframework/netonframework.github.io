@@ -247,6 +247,5 @@ class UserController {
 
 ## 七、相关文档
 
-- [缓存规范](../spec/cache.md) -- 缓存底座的完整技术规范（L1/L2、序列化、TTL、singleflight 等）
-- [缓存注解规范](../spec/cache-annotation.md) -- @Cacheable / @CachePut / @CacheEvict 的详细语义与 KSP 织入规则
+- [缓存规范](../spec/cache.md) -- 缓存底座的完整技术规范（L1/L2、序列化、TTL、singleflight、注解式缓存等）
 - [Redis 与分布式锁指南](./redis.md) -- Redis 组件安装与分布式锁使用

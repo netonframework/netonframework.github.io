@@ -4,6 +4,13 @@
 >
 > **状态**：**v1 设计冻结**。本文档定义各方向 v1 坚决不做的范围、最小交付接口草案、以及基于现有模块的最少改动路径。实现只允许在本边界内填空。
 >
+> **beta1 进度快照（2026-02-17）**：
+> - Config：✅ 已实现（TOML ConfigLoader + 环境覆盖 + 模块独立文件）
+> - Runtime/DI：✅ 已实现（NetonContext bind/get + KSP 构造注入 + ModuleInitializer 拓扑排序）
+> - Jobs：✅ neton-jobs 模块已建立（@Job 注解 + CronParser + CoroutineJobScheduler + KSP JobProcessor）
+> - Security：✅ JWT/Mock 认证 + permission implies auth + 契约测试 26 条
+> - LOG：✅ 已冻结实现（3 文件分流 + 结构化 JSON）
+>
 > **正确实施顺序**（再次强调）：
 > - **P0**：LOG（已冻结，见 [Neton-Logging-Spec-v1.md](./logging.md)）
 > - **P1**：Config → Metrics/Health → DI/Runtime → Trace
@@ -21,7 +28,7 @@
 | 4 | Neton Trace | 跨服务 traceId/spanId 传播、关键 span（http/db/redis） | traceId/spanId 传播 + span 事件打到 log（先不接外部 Trace SDK） |
 | 5 | Neton Discovery/LB | 服务注册、发现、客户端负载均衡、重试策略 | 静态服务列表 + round-robin（先不引入注册中心） |
 | 6 | Neton Resilience | 下游慢/挂时不拖死全站；限并发、舱壁、熔断 | timeout + retry（带退避）+ bulkhead（并发上限） |
-| 7 | Neton Jobs | 定时任务、延迟任务、分布式 job 互斥 | 单实例 cron + 分布式互斥（@Lock）保证「同一任务只跑一个实例」 |
+| 7 | Neton Jobs | 定时任务、延迟任务、分布式 job 互斥 | ✅ neton-jobs 已实现：@Job + cron/fixedRate + SINGLE_NODE/ALL_NODES + KSP JobProcessor |
 | 8 | Neton MQ/Event | 异步解耦、最终一致性、事件驱动 | 消息队列任选一种适配（v1 先做一种） |
 | 9 | 部署与运维基建 | 标准化启动参数、镜像、滚动升级、灰度、回滚、配置注入 | --port/--env/--config + readiness/liveness + structured logs（与 LOG 对齐） |
 
@@ -248,36 +255,39 @@ suspend fun <T> Bulkhead.runWithBulkhead(block: suspend () -> T): T
 
 ---
 
-### 7) Neton Jobs
+### 7) Neton Jobs ✅ beta1 已实现
 
 **要解决**：定时任务、延迟任务、分布式 job 互斥。
 
 **v1 边界（坚决不做）**：
 - 不做分布式调度中心。
-- 不做 cron 表达式解析库自研（用现有 kotlinx-datetime 或简单 cron 库）。
 - 不做任务持久化与恢复（v1 内存调度即可）。
 
-**最小接口草案**：
+**beta1 已实现（neton-jobs 模块）**：
 
-```kotlin
-// 单实例 cron
-interface JobScheduler {
-    fun scheduleCron(cron: String, jobId: String, block: suspend () -> Unit)
-    fun start()
-    fun stop()
-}
+| 组件 | 说明 |
+|------|------|
+| `@Job` 注解 | 声明 cron/fixedRate、executionMode、lockTtlMs |
+| `JobExecutor` 接口 | 业务实现 `suspend fun execute(ctx: JobContext)` |
+| `CronParser` | 5 段 cron 解析（分时日月周），支持 `*`/列表/范围/步长，UTC |
+| `CoroutineJobScheduler` | coroutine 调度引擎，fixedRate + cron 双模式 |
+| `ExecutionMode` | `ALL_NODES`（每实例都跑）/ `SINGLE_NODE`（分布式锁互斥） |
+| `JobsComponent` | NetonComponent 生命周期，读 jobs.conf 配置覆盖 |
+| KSP `JobProcessor` | 编译期扫描 @Job，生成 `GeneratedJobRegistry`，校验 id 唯一/cron+fixedRate 互斥 |
 
-// 分布式互斥：同一 jobId 同一时刻只一个实例执行（用你已有 lock）
-@Target(AnnotationTarget.FUNCTION)
-annotation class Lock(val key: String, val ttlSeconds: Long = 60)
+**SINGLE_NODE 模式**：复用 neton-redis `LockManager.tryLock()`，拿到锁才执行，否则跳过。
 
-// 执行时：先 tryLock(key)，拿到再执行 block，否则跳过
-suspend fun runWithDistributedLock(lockManager: LockManager, key: String, ttlSeconds: Long, block: suspend () -> Unit)
+**配置覆盖**（jobs.conf）：
+```toml
+[jobs]
+enabled = true
+shutdownTimeout = 30000
+
+[[jobs.items]]
+id = "cleanup"
+enabled = false
+cron = "0 2 * * *"
 ```
-
-**需要现有模块的最少改动**：
-- **neton-redis**：已有 `LockManager`/`DistributedLock`，暴露 `runWithDistributedLock` 或由调用方 `lock.tryLock(); try { block() } finally { lock.unlock() }`。
-- **新模块 neton-jobs**：实现 `JobScheduler`（单机 cron + 触发时对每个 job 用 `runWithDistributedLock("job:$jobId", ttl)` 包裹执行），保证多实例部署时同一 cron 只跑一个实例。
 
 ---
 
@@ -350,4 +360,4 @@ P2: Discovery/LB → Resilience → Jobs → MQ/Event → 部署/运维（按需
 
 ---
 
-*文档版本：v1（冻结）*
+*文档版本：v1（冻结）+ beta1 进度快照 2026-02-17*
