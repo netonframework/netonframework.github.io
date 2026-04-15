@@ -26,7 +26,7 @@
 | 13 | **SELECT 投影列必须自动加别名** | `ProjectionExpr.Col` 输出 `{alias}."{column}" AS {alias}_{column}`（如 `t1."id" AS t1_id`），确保 `Row.get(ref, prop)` / `intoOrNull()` 的列名匹配 |
 | 14 | **COUNT + GROUP BY 使用子查询** | 无 `groupBy` → `SELECT COUNT(*)`；有 `groupBy` → `SELECT COUNT(*) FROM (原始 SELECT 去 LIMIT) tmp`，避免返回分组条数而非总行数 |
 | 15 | **TableDefRegistry 必须 O(1) 查找** | `Map&lt;KClass&lt;*&gt;, TableDef&lt;*&gt;&gt;`，`DatabaseComponent.init()` 一次性注册，禁止 resolve 时反射扫描 |
-| 16 | **SelectAst 保持 public（只读）** | `SelectAst` 是 `public data class`，`SqlBuilder` 是 `internal`；未来可做 `QueryInterceptor.beforeExecute(ast)` / query cache / 多租户 rewrite |
+| 16 | **SelectAst 保持 public（只读）** | `SelectAst` 是 `public data class`，`SqlBuilder` 是 `internal`；未来可做 `QueryInterceptor.beforeExecute(ast)` / query cache / 上下文条件 rewrite |
 | 17 | **Row.get 禁止 fallback 裸列名** | `Row.get(ref, prop)` 只能读 `{alias}_{column}`（如 `t1_id`），**不得 fallback 读裸列名**（如 `id`）。避免多表同名列隐式歧义。JOIN 投影列必须 `AS {alias}_{column}`（原则 13） |
 
 ---
@@ -667,7 +667,7 @@ package neton.database.dsl
  * public 暴露是为了未来扩展：
  * - QueryInterceptor.beforeExecute(ast)
  * - query cache（AST 可哈希）
- * - 多租户 rewrite（AST 可重写）
+ * - 上下文条件 rewrite（AST 可重写）
  * - 慢 SQL 分析
  */
 data class SelectAst(

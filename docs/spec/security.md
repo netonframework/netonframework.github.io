@@ -124,17 +124,45 @@ interface Authenticator {
 }
 ```
 
-- **职责**：从请求中提取并验证身份（如 JWT、Session、Basic），返回 Identity 或 null
+- **职责**：从请求中提取并验证身份（如 JWT、Basic），返回 Identity 或 null
 - **位置**：neton-core 定义接口，neton-security 提供实现
 
-**当前实现状态**：
+#### 冻结条文 A：authenticate() 返回值契约（v1 终态，不得违反）
+
+| 返回值 | 含义 | 框架行为 |
+|--------|------|----------|
+| `Identity` | 认证成功 | 后续 Guard / @Permission 使用该 Identity 决策 |
+| `null` | 凭据缺失或无效（认证失败） | 框架作为匿名请求继续，由 Guard 决定是否拒绝 |
+| `throw` | 系统级错误（如 Redis 不可用） | 框架返回 500 |
+
+**禁止用 throw 表达"用户未登录"，应一律返回 null。**
+
+#### 冻结条文 B：name 全局唯一（v1 终态）
+
+- 每个注册到 `SecurityBuilder` 的 `Authenticator` 必须具有唯一 `name`
+- 重复 `name` 在启动阶段 **fail-fast**（`require()` 抛出）
+- 覆盖同一注册槽位（default / group）时允许替换，但最终注册表中 `name` 仍必须全局唯一
+
+**v1 内建认证器 name 表（已冻结）**：
+
+| name | 类 | 说明 |
+|------|----|------|
+| `"jwt"` | `JwtAuthenticator` | HS256，解析 sub/roles/perms |
+| `"basic"` | `BasicAuthenticator` | Base64 解码 + userProvider |
+| `"mock"` | `MockAuthenticator` | 开发测试用，返回固定 Identity |
+| `"anonymous"` | `AnonymousAuthenticator` | 永远返回 null |
+
+自定义 Authenticator 的 `name` 不得与上表冲突。
+
+**v1 内建认证器实现状态**：
 
 | 认证器 | 状态 | 说明 |
 |--------|------|------|
-| MockAuthenticator | ✅ 已实现 | 返回固定 Identity |
-| JwtAuthenticatorV1 | ✅ 已实现 | HS256，解析 sub/roles/perms |
-| SessionAuthenticator | ⚠️ 占位 | 需与 HttpSession 集成 |
-| BasicAuthenticator | ⚠️ 占位 | 需 Base64 解码 + userProvider |
+| `JwtAuthenticator` | ✅ 已实现 | HS256，唯一内建 JWT 实现（原 JwtAuthenticatorV1，已收敛） |
+| `BasicAuthenticator` | ✅ 已实现 | RFC 7617，Base64 解码，auth-scheme 大小写不敏感 |
+| `MockAuthenticator` | ✅ 已实现 | 返回固定 Identity，仅限开发测试 |
+| `AnonymousAuthenticator` | ✅ 已实现 | 永远返回 null |
+| `SessionAuthenticator` | 🚫 v1 不内建 | Session 依赖存储/续期/CSRF 策略，需业务层自行实现 `Authenticator` |
 
 ### 3.2 Guard（守卫 / 授权器）
 
@@ -669,20 +697,21 @@ class JwtAuthenticatorAdapter(
 - `JwtAuthenticatorAdapter` 捕获所有 `AuthenticationException` 并返回 `null`，符合 neton-core `Authenticator` 的契约（认证失败返回 null，由安全管道决定 401/403）
 - `SecurityPreHandle` 收到 null identity 时根据 requireAuth 决定是否 401
 
-### 8.9 命名规范（beta1 冻结）
+### 8.9 命名规范（v1 终态冻结）
 
-| 旧名 | 新名 | 模式 |
-|------|------|------|
-| ~~RealJwtAuthenticator~~ | `JwtAuthenticatorAdapter` | Adapter（桥接两个不同 RequestContext 接口） |
-| ~~RealMockAuthenticator~~ | `MockAuthenticatorAdapter` | Adapter |
-| ~~RealSessionAuthenticator~~ | `SessionAuthenticatorAdapter` | Adapter |
-| ~~RealBasicAuthenticator~~ | `BasicAuthenticatorAdapter` | Adapter |
-| ~~RealSecurityBuilder~~ | `SecurityBuilderImpl` | Impl（同一接口的实现） |
-| ~~RealAuthenticationContext~~ | `AuthenticationContextImpl` | Impl |
-| ~~RealDefaultGuard~~ | `DefaultGuardImpl` | Impl |
-| ~~RealAdminGuard~~ | `AdminGuardImpl` | Impl |
-| ~~RealRoleGuard~~ | `RoleGuardImpl` | Impl |
-| ~~RealAnonymousGuard~~ | `AnonymousGuardImpl` | Impl |
+| 旧名 | 当前名 | 模式 | 备注 |
+|------|--------|------|------|
+| ~~JwtAuthenticatorV1~~ | `JwtAuthenticator` | 正式实现 | V1 后缀已去除，`typealias JwtAuthenticatorV1` 提供过渡兼容 |
+| ~~RealJwtAuthenticator~~ | `JwtAuthenticatorAdapter` | Adapter | 桥接 neton-security ↔ neton-core 两套 RequestContext |
+| ~~RealMockAuthenticator~~ | `MockAuthenticatorAdapter` | Adapter | |
+| ~~SessionAuthenticatorAdapter~~ | **已删除** | — | Session 不内建，v1 不提供 |
+| ~~RealBasicAuthenticator~~ | `BasicAuthenticatorAdapter` | Adapter | |
+| ~~RealSecurityBuilder~~ | `SecurityBuilderImpl` | Impl | 同一接口的标准实现 |
+| ~~RealAuthenticationContext~~ | `AuthenticationContextImpl` | Impl | |
+| ~~RealDefaultGuard~~ | `DefaultGuardImpl` | Impl | |
+| ~~RealAdminGuard~~ | `AdminGuardImpl` | Impl | |
+| ~~RealRoleGuard~~ | `RoleGuardImpl` | Impl | |
+| ~~RealAnonymousGuard~~ | `AnonymousGuardImpl` | Impl | |
 
 **选择标准**：桥接两个不同接口 → `*Adapter`；同一接口的标准实现 → `*Impl`。
 
@@ -863,7 +892,45 @@ class SecurityIdentityContractTest {
 
 ---
 
-## 十二、已删除项
+## 十二、已冻结边界（v1 终态）
+
+本节汇总 Security 模块在 v1 已明确冻结的边界决策，不得在后续版本中静默破坏。
+
+### 12.1 Authenticator.authenticate() 返回值契约
+
+```
+Identity  → 认证成功，后续 Guard 基于此 Identity 决策
+null      → 认证失败/凭据缺失，框架作为匿名请求继续
+throw     → 系统错误（如存储不可用），框架返回 500
+```
+
+**禁止用 throw 表达"用户未登录"。** 此契约影响 401/403 判定、日志级别、RateLimit USER scope 行为一致性。
+
+### 12.2 Authenticator name 全局唯一
+
+- 每个注册到 `SecurityBuilder` 的 `Authenticator` 的 `name` 在注册表中全局唯一
+- `SecurityBuilderImpl` 在 `setDefaultAuthenticator()` / `setGroupAuthenticator()` 时 fail-fast
+- 覆盖同一槽位（default / group）时先释放旧 name 再校验，不触发假冲突
+- 自定义认证器的 `name` 不得与内建保留名（`"jwt"` / `"basic"` / `"mock"` / `"anonymous"`）冲突
+
+### 12.3 Session 认证 v1 不内建
+
+Session 认证依赖应用层的 cookie 策略、session 存储、滑动续期、CSRF 绑定，无法在框架层标准化。
+
+- `registerSessionAuthenticator()` 保留在接口中，调用即 `error()` 并输出结构化引导
+- 业务需要 Session 认证时，自行实现 `Authenticator` 接口并调用 `registerAuthenticator()`
+
+### 12.4 Security 管道执行顺序（不可调换）
+
+```
+Authenticator → Guard → RateLimit(USER scope)
+```
+
+- Authenticator 先行，设置 Identity
+- Guard（RequireAuth / @Permission）依赖 Identity，必须在其后
+- RateLimit USER scope 依赖 Identity，必须在 Authenticator 之后
+
+## 十三、已删除项
 
 | 已删除 | 替代 |
 |--------|------|
@@ -877,4 +944,4 @@ class SecurityIdentityContractTest {
 
 ---
 
-*文档版本：v1.4 — 合并 JWT Authenticator 规范（含 Adapter 桥接层）与 @CurrentUser 设计文档*
+*文档版本：v1.5 — 收敛 Authenticator API（JwtAuthenticator 统一命名、BasicAuthenticator 落地、Session 明确边界）；新增第十二章"已冻结边界"，固化返回值契约、name 唯一性约束、Session 不内建决策和管道执行顺序*

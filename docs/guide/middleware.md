@@ -238,11 +238,11 @@ suspend fun getUser(ctx: HttpContext, @PathVariable id: Long): User? {
 ```kotlin
 // 在 Authenticator 或管道早期设置数据
 ctx.setAttribute("requestTime", System.currentTimeMillis())
-ctx.setAttribute("tenantId", "org-001")
+ctx.setAttribute("requestId", "req-001")
 
 // 在 Controller 中读取数据
 val requestTime = ctx.getAttribute("requestTime") as Long
-val tenantId = ctx.getAttribute("tenantId") as String
+val requestId = ctx.getAttribute("requestId") as String
 
 // 移除属性
 ctx.removeAttribute("tempData")

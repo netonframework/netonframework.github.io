@@ -73,7 +73,7 @@ DbContext 必须承担以下职责：
 | 事务控制 | transaction 作为唯一事务边界 |
 | 拦截链调度 | 在执行前后调用 QueryInterceptor |
 | 错误传播 | 统一错误模型 |
-| 未来扩展点 | 多租户、数据权限、慢 SQL、Metrics |
+| 未来扩展点 | 上下文条件注入、数据权限、慢 SQL、Metrics |
 
 ---
 
@@ -115,7 +115,7 @@ DbContext 必须承担以下职责：
 QueryInterceptor 是 NetonSQL 的唯一 AST 改写与执行观测扩展点。
 
 它用于：
-- 多租户注入
+- 上下文条件注入
 - 数据权限注入
 - 软删除自动注入
 - SQL 执行日志
@@ -180,7 +180,7 @@ v1 中不再存在 SelectExecutor 全局对象。
 1. ❌ 不符合 KMP Native 架构（无全局连接上下文）
 2. ❌ 无法正确管理事务边界
 3. ❌ 无法提供统一拦截链
-4. ❌ 阻断未来多租户 / 观测扩展
+4. ❌ 阻断未来行级过滤 / 观测扩展
 
 所有执行必须经由 DbContext。
 
@@ -223,7 +223,7 @@ flowchart TD
 |------|------|----------|
 | **QueryAst** | Phase 1 查询 AST（KProperty1 + Predicate） | ✅ 可被 interceptor 改写 |
 | **DbContext** | 统一执行门面 | ✅ 唯一拦截链入口 |
-| **beforeQuery** | AST 改写（多租户/数据权限注入） | ✅ 可注入 WHERE 条件 |
+| **beforeQuery** | AST 改写（上下文条件/数据权限注入） | ✅ 可注入 WHERE 条件 |
 | **SqlBuilder** | AST → SQL 转换（internal） | ❌ 不可绕过 |
 | **onExecute** | 执行观测（日志/metrics/慢 SQL） | ✅ 只读，不修改数据 |
 | **EntityMapper** | Row → Entity 映射（KSP 生成） | ❌ 不执行 SQL，仅映射 |
@@ -273,7 +273,7 @@ flowchart TD
 | **SelectBuilder** | JOIN DSL 构建器（auto alias） | ✅ 绑定 DbContext |
 | **SelectAst** | Phase 4 JOIN AST（public immutable） | ✅ 可被 interceptor 改写 |
 | **DbContext** | 统一执行门面 | ✅ 唯一拦截链入口 |
-| **beforeSelect** | AST 改写（多租户/数据权限注入） | ✅ 可注入 WHERE 条件 |
+| **beforeSelect** | AST 改写（上下文条件/数据权限注入） | ✅ 可注入 WHERE 条件 |
 | **SqlBuilder** | AST → SQL 转换（internal） | ❌ 不可绕过 |
 | **readQualified** | Row → RecordN 强类型读取 | ❌ 基于 ColumnType enum，无反射 |
 
@@ -478,7 +478,7 @@ for (it in interceptors) it.onExecute(sql, args, elapsedMs)
 每个拦截器的 AST 改写必须满足幂等：
 - `f(f(ast)) == f(ast)`
 
-用于避免多租户/数据权限/软删等注入条件在多次执行（或重试、分页 count+select）时重复叠加导致 SQL 膨胀或语义错误。
+用于避免上下文条件/数据权限/软删等注入条件在多次执行（或重试、分页 count+select）时重复叠加导致 SQL 膨胀或语义错误。
 
 **推荐策略**（非强制实现细节）：
 - 在 AST 上用固定结构表示注入条件（例如统一附加到 where 的 And(children) 中）
@@ -534,7 +534,7 @@ DbContext 的职责边界固定为：
 
 DbContext（含 SqlxDbContext 实现类）禁止直接实现以下能力：
 - ❌ SQL cache / query result cache
-- ❌ 多租户注入逻辑（tenant_id 条件）
+- ❌ 业务侧上下文注入逻辑
 - ❌ 数据权限注入逻辑（org_id / dept scope）
 - ❌ 软删除注入逻辑（deleted / deleted_at 条件）
 - ❌ Metrics/Tracing/SlowSQL 的具体策略
@@ -582,25 +582,25 @@ flowchart TD
 
 ## 十一、扩展场景示例
 
-### 11.1 多租户自动注入
+### 11.1 上下文条件自动注入
 
 ```kotlin
-class TenantInterceptor(private val tenantId: Long) : QueryInterceptor {
+class OrgScopeInterceptor(private val orgId: Long) : QueryInterceptor {
     override fun beforeQuery(ast: QueryAst<*>): QueryAst<*> {
-        // 注入 WHERE tenant_id = ?
-        val tenantPredicate = Predicate.Eq("tenant_id", tenantId)
+        // 注入 WHERE org_id = ?
+        val orgPredicate = Predicate.Eq("org_id", orgId)
         return ast.copy(
-            where = ast.where?.let { Predicate.And(it, tenantPredicate) }
-                ?: tenantPredicate
+            where = ast.where?.let { Predicate.And(it, orgPredicate) }
+                ?: orgPredicate
         )
     }
 
     override fun beforeSelect(ast: SelectAst): SelectAst {
         // JOIN 查询同样注入
-        val tenantPredicate = ColumnPredicate.Eq("t1", "tenant_id", tenantId)
+        val orgPredicate = ColumnPredicate.Eq("t1", "org_id", orgId)
         return ast.copy(
-            where = ast.where?.let { ColumnPredicate.And(it, tenantPredicate) }
-                ?: tenantPredicate
+            where = ast.where?.let { ColumnPredicate.And(it, orgPredicate) }
+                ?: orgPredicate
         )
     }
 }
@@ -662,7 +662,7 @@ DSL → AST → DbContext → Interceptor → SqlBuilder → Driver
 ### 12.3 未来可演进能力
 
 基于当前架构，未来可无痛扩展：
-- ✅ 多租户自动注入
+- ✅ 上下文条件自动注入
 - ✅ 数据权限控制
 - ✅ 软删除自动过滤
 - ✅ SQL 查询缓存
@@ -697,7 +697,7 @@ DSL → AST → DbContext → Interceptor → SqlBuilder → Driver
 - Phase 1 与 Phase 4 执行路径统一
 - 事务边界统一
 - 扩展点统一
-- 未来能力（多租户 / 数据权限 / SQL cache）可在 AST 层扩展
+- 未来能力（上下文条件 / 数据权限 / SQL cache）可在 AST 层扩展
 - 不需要推翻现有 API
 
 ---
@@ -717,7 +717,7 @@ NetonSQL v1 通过 **C+ 统一执行门面** 实现了：
 1. **架构统一**：Phase 1 和 Phase 4 都走 DbContext 执行链
 2. **API 稳定**：外部 API 保持不变，用户无感知
 3. **扩展点统一**：QueryInterceptor 作为唯一拦截点
-4. **未来可演进**：多租户/数据权限/慢 SQL 等能力可无痛扩展
+4. **未来可演进**：上下文条件/数据权限/慢 SQL 等能力可无痛扩展
 
 **从"SQL DSL 框架"升级为"可扩展数据库内核"。**
 
