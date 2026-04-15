@@ -313,3 +313,134 @@ fun main(args: Array<String>) {
 - **routing.conf**：只声明 group 与 mount，结构极轻
 - **security**：按 group 配置认证/守卫，最符合业务
 - **@AllowAnonymous / @RequireAuth / @RolesAllowed**：做例外控制
+
+---
+
+## 二、RateLimit（声明式限流 v1）
+
+> **定位**：编译期注解驱动的固定窗口限流，集成于路由管道。与 `@Permission`/`@RequireAuth` 同级。
+>
+> **v1 范围**：仅 Fixed Window 算法；Redis 优先，无 Redis 降级本地内存。
+
+### 2.1 注解定义
+
+```kotlin
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.SOURCE)
+annotation class RateLimit(
+    val windowSeconds: Int,
+    val maxRequests: Int,
+    val scope: RateLimitScope = RateLimitScope.USER,
+    val key: String = "",
+    val strategy: RateLimitStrategy = RateLimitStrategy.FIXED_WINDOW,
+    val message: String = "Too many requests"
+)
+
+enum class RateLimitScope {
+    USER,      // 按认证用户限流（需 userId）
+    IP,        // 按客户端 IP 限流
+    GLOBAL,    // 路由全局限流（所有请求共享计数）
+    CUSTOM     // 自定义 key（query:/header:/path: 前缀）
+}
+
+enum class RateLimitStrategy {
+    FIXED_WINDOW,    // v1 唯一实现
+    SLIDING_WINDOW,  // 保留枚举，v2 实现
+    TOKEN_BUCKET     // 保留枚举，v2 实现
+}
+```
+
+### 2.2 使用示例
+
+```kotlin
+// 按 IP 限流：5 分钟内最多 10 次登录
+@Post("/login")
+@AllowAnonymous
+@RateLimit(windowSeconds = 300, maxRequests = 10, scope = RateLimitScope.IP)
+suspend fun login(@Body request: LoginRequest): LoginResponse { ... }
+
+// 按用户限流：1 分钟内最多 5 次发送验证码
+@Post("/sms/send")
+@RateLimit(windowSeconds = 60, maxRequests = 5, scope = RateLimitScope.USER)
+suspend fun sendSms(@Body request: SendSmsRequest) { ... }
+
+// 按自定义 key 限流：按 query 参数 appId，每小时最多 1000 次
+@Get("/api/data")
+@RateLimit(windowSeconds = 3600, maxRequests = 1000, scope = RateLimitScope.CUSTOM, key = "query:appId")
+suspend fun getData() { ... }
+```
+
+### 2.3 KSP 编译期处理
+
+- `@RateLimit` 由 KSP `ControllerProcessor` 解析
+- 生成到 `RouteDefinition.rateLimit: RateLimitConfig?`
+- **编译期拦截**：`strategy != FIXED_WINDOW` 直接报编译错误，提示"v1 仅支持 FIXED_WINDOW"
+- 不依赖运行时反射
+
+### 2.4 执行管道
+
+```
+route match → auth → permission → rate limit → controller
+```
+
+限流位于 permission 之后、controller 之前。理由：
+- `USER` scope 需要先完成认证获取到 userId
+- 未登录接口（`@AllowAnonymous`）仍可用 `IP` scope 限流
+
+### 2.5 存储
+
+```kotlin
+interface RateLimitStore {
+    suspend fun incrementAndGet(key: String, windowSeconds: Int): RateLimitCounter
+}
+
+data class RateLimitCounter(
+    val count: Long,
+    val resetAtEpochSeconds: Long
+)
+```
+
+| 实现 | 适用场景 | 算法 |
+|------|----------|------|
+| `RedisRateLimitStore` | 多实例部署（分布式限流） | `INCR` + `EXPIRE` |
+| `LocalRateLimitStore` | 单实例降级 | `Mutex` + `Map` + 窗口桶清理 |
+
+运行时自动选择：配了 Redis → 用 RedisStore；未配 → 降级 LocalStore，启动日志提示 `rateLimit.initialized: store=local`。
+
+### 2.6 自定义 key 解析（CUSTOM scope）
+
+v1 仅支持三种前缀，不做表达式系统：
+
+| 前缀 | 来源 | 示例 |
+|------|------|------|
+| `query:` | URL query 参数 | `key = "query:appId"` → 取 `?appId=xxx` |
+| `header:` | HTTP 请求头 | `key = "header:X-App-Id"` |
+| `path:` | 路径参数 | `key = "path:id"` → 取 `/resource/{id}` |
+
+`key` 不含前缀时直接作为字面量 key 使用。
+
+### 2.7 被限流响应
+
+| 项目 | 值 |
+|------|------|
+| HTTP 状态码 | `429 Too Many Requests` |
+| `Retry-After` | `windowSeconds` 值（秒） |
+| `X-RateLimit-Limit` | `maxRequests` 值 |
+| `X-RateLimit-Remaining` | 剩余次数（最小 0） |
+| `X-RateLimit-Reset` | 窗口重置时间戳（epoch seconds） |
+| 响应体 | `{"code": 429, "message": "<自定义 message>"}` |
+
+### 2.8 v1 冻结规则
+
+| # | 规则 | 说明 |
+|---|------|------|
+| 1 | 唯一算法 | v1 仅 Fixed Window；SLIDING_WINDOW / TOKEN_BUCKET 保留枚举但不实现 |
+| 2 | 编译期拦截 | `strategy != FIXED_WINDOW` 编译期报错 |
+| 3 | CUSTOM key 限制 | 仅 `query:`/`header:`/`path:` 前缀，不支持 body 字段、SpEL、JSONPath |
+| 4 | Redis 优先 | 有 Redis → RedisStore；无 → LocalStore（单实例限流） |
+| 5 | 管道位置 | auth → permission → rate limit → controller |
+| 6 | 标准响应 | 429 + Retry-After + X-RateLimit-* 头 |
+| 7 | 注解级别 | 仅方法级注解，不支持类级 |
+| 8 | USER scope 未认证 | scope=USER 且当前请求无 identity 时不执行限流，直接放行；未认证接口应使用 IP 或 GLOBAL |
+| 9 | key 组成规则 | Redis/Local 统一格式：`ratelimit:{routeId}:{scope}:{identity}:{windowBucket}`，禁止实现间不一致 |
+| 10 | 窗口对齐 | 窗口桶 = `epochSeconds / windowSeconds`，resetAt = `(桶 + 1) * windowSeconds`，Redis/Local 均对齐 |

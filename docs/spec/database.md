@@ -886,7 +886,7 @@ interface DbContext {
 | **唯一执行入口** | 所有 SQL 执行必须经过 DbContext（或事务内的 TxContext），禁止绕过直接拿连接/adapter（约束 C6） |
 | **SqlxDatabase.require() 仅 adapter 内部** | `SqlxDatabase` 在 `adapter.sqlx` 包内、`internal` 可见性，业务层/Logic 层不可直接调用 |
 | **事务只有 `transaction { }`** | 禁止 `begin()` / `commit()` / `rollback()` 暴露给业务层（约束 C7）。与 jOOQ `dsl.transaction { }` 对齐 |
-| **未来可扩展** | DbContext 是 interceptor / slow SQL sampling / multi-tenant injection / query cache 的注入点 |
+| **未来可扩展** | DbContext 是 interceptor / slow SQL sampling / context condition injection / query cache 的注入点 |
 
 #### 工厂函数收口
 
@@ -1342,7 +1342,7 @@ assert(page.total == manualCount)
 ### 8.1 单 DB 与多 DB
 
 - **默认单 DB**：`SqlxDatabase.require()` 单例，KSP 生成 `dbProvider = { SqlxDatabase.require() }`（Table 适配器）
-- **多 DB（命名连接/读写分离/多租户）**：留 v3，不在此版实现
+- **多 DB（命名连接/读写分离/上下文路由）**：留 v3，不在此版实现
 - **扩展点已预留**：`SqlxTableAdapter(dbProvider: () -> SQLite = { SqlxDatabase.require() }, ...)`，v3 可传 `{ SqlxDatabase.get("analytics") }` 等，无需重构
 
 ### 8.2 SqlxTableAdapter 必须无状态（stateless）
