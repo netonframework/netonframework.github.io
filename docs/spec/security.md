@@ -4,6 +4,8 @@
 >
 > **原则**：Native-first、轻量、类型安全、单点 fail-fast。
 
+> **边界**：本文只定义**框架层**的 `Authenticator` / `Guard` / `@Permission` / `PermissionEvaluator` 抽象。框架不知道 `User` / `Role` / `Menu` 这些具体业务实体；RBAC 数据模型与权限串语义是**应用脚手架**层面的实现选择，不属于 Neton 框架规范范畴。
+
 ---
 
 ## 一、概述与目标
