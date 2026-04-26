@@ -29,6 +29,7 @@
 - [数据库规范 v1](./database.md) — Entity + Table 模式、Query DSL、强类型列引用、Typed Projection **(v1 冻结)**
 - [JOIN 查询规范](./database-join.md) — JOIN DSL、SelectBuilder、SelectAst、RecordN
 - [执行链与约束规范](./database-execution.md) — DbContext 统一执行门面、QueryInterceptor、事务
+- [Migration Boundary Spec](./migration.md) — 运行时不做 schema 变更；手动 SQL 是权威；未来 CLI 边界 **(架构边界 / 必读)**
 
 ## 缓存与 Redis
 
