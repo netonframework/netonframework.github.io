@@ -3,11 +3,11 @@
 > *Schema Governance — runtime 不参与 schema 演进*
 
 > **状态**：边界冻结（Boundary Frozen）
-> **实现状态**：暂缓（Deferred）
-> **当前权威路径**：手动 SQL migration scripts（`sql/{dialect}/V*.sql`）
-> **未来方向**：独立 `neton-migrate` CLI（不嵌入运行时）
+> **实现状态**：`neton-migrate` v0.1 已交付（status / up / verify）
+> **当前权威路径**：`neton-migrate` CLI 或手动执行 `sql/{dialect}/V*.sql`
+> **应用启动语义**：永远不变 — startup 不执行 schema 变更
 > **明确禁止**：运行时自动 schema 变更
-> **标签**：No runtime ALTER — Manual SQL is authoritative — CLI-only future evolution
+> **标签**：No runtime ALTER — CLI is the standard path — Manual SQL still valid
 
 ---
 
@@ -261,3 +261,93 @@ A：可以用，但**不要内置进 neton-database**。如果团队选用 Flywa
 
 **Q：那 Rails、Django 都有 `rake db:migrate` / `manage.py migrate`，它们也是运行时执行？**
 A：不是。`rake db:migrate` 是**独立 CLI 命令**，由部署人员或 CI 显式调用，与 web server 启动是两件事。Neton 的设计与之一致。
+
+---
+
+## 附录 C：neton-migrate CLI 用法（v0.1）
+
+### C.1 命令一览
+
+```bash
+neton-migrate status   # 列出已执行 / 未执行 / changed 脚本（read-only）
+neton-migrate up       # 顺序执行未执行脚本，写入 history
+neton-migrate verify   # 校验已执行脚本的 checksum（read-only）
+```
+
+### C.2 配置来源
+
+优先级：**CLI flag > `config/database.conf` `[default]` 段**
+
+```toml
+# config/database.conf
+[default]
+driver = "mysql"
+uri    = "mysql://root:secret@127.0.0.1:3306/myapp"
+```
+
+### C.3 典型场景
+
+#### 全 CLI flag（CI/CD 推荐）
+
+```bash
+neton-migrate up \
+  --driver mysql \
+  --uri "mysql://root:secret@db.internal:3306/myapp" \
+  --dir sql/mysql
+```
+
+#### 复用 database.conf
+
+```bash
+# 在工作目录下有 config/database.conf
+neton-migrate status --dir sql/mysql
+neton-migrate up     --dir sql/mysql
+neton-migrate verify --dir sql/mysql
+```
+
+#### 三方言示例
+
+```bash
+neton-migrate up --driver sqlite     --uri /var/lib/myapp/data.db        --dir sql/sqlite
+neton-migrate up --driver postgresql --uri "postgresql://u:p@h:5432/db"  --dir sql/postgresql
+neton-migrate up --driver mysql      --uri "mysql://u:p@h:3306/db"       --dir sql/mysql
+```
+
+### C.4 退出码
+
+| Exit | 含义 | 典型用法 |
+|------|------|---------|
+| `0` | OK / nothing to do | 部署可继续 |
+| `1` | `status`: 有未执行脚本 | CI dry-run 提示 |
+| `2` | `up`: 执行失败 | 部署中断 |
+| `3` | checksum 不一致 / `verify` 时 history 表不存在 | 阻塞部署 |
+| `4` | 数据库连接失败 | 检查网络/凭据 |
+| `64` | 命令行参数错误 | 修正调用 |
+
+### C.5 v0.1 不做清单
+
+与 spec §5 边界一致：
+- ❌ `down`（生产回滚需人工 SQL）
+- ❌ dry-run / baseline
+- ❌ dialect 自动推断（`--dir` 必须显式指向 `sql/{dialect}/`）
+- ❌ 多节点并发锁（部署流程保证单点执行）
+- ❌ 远程 SQL 下载
+
+### C.6 部署流程示例（CI/CD）
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# 1. dry-run: 仅检查是否有未执行脚本
+neton-migrate status --dir sql/mysql || PENDING=$?
+
+if [ "${PENDING:-0}" = "1" ]; then
+    echo "Pending migrations detected, applying..."
+    neton-migrate up --dir sql/mysql      # 失败立即非 0 退出
+    neton-migrate verify --dir sql/mysql  # 兜底校验
+fi
+
+# 2. 启动应用 — 应用启动本身永不执行 migration
+exec /usr/local/bin/myapp --env=prod
+```
