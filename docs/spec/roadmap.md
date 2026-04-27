@@ -32,9 +32,9 @@
 | 8 | Neton MQ/Event | 异步解耦、最终一致性、事件驱动 | 消息队列任选一种适配（v1 先做一种） |
 | 9 | 部署与运维基建 | 标准化启动参数、镜像、滚动升级、灰度、回滚、配置注入 | --port/--env/--config + readiness/liveness + structured logs（与 LOG 对齐） |
 
-**Planned（不属于 v1，无日期承诺）：**
+**Delivered（不属于 v1 9 大方向，附加交付）：**
 
-- `neton-migrate` CLI（独立模块，与运行时解耦） — 边界已冻结，见 [Schema Governance / Migration Boundary](./migration.md)。**应用启动语义不变**：永远不在 startup 时执行 schema 变更。
+- ✅ `neton-migrate` CLI v0.1 — 独立 binary，与运行时解耦；status / up / verify 三命令，三方言 history 表；不做 down / dry-run / baseline / 多节点锁。见 [Migration Boundary Spec](./migration.md)。**应用启动语义不变**：永远不在 startup 时执行 schema 变更。
 
 ---
 
