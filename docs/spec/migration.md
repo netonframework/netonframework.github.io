@@ -22,6 +22,7 @@
 6. [版本表规范](#六版本表规范)
 7. [明确禁止事项](#七明确禁止事项)
 8. [冻结约束](#八冻结约束)
+9. [Canonical Deployment Workflow](#九canonical-deployment-workflow)
 
 附录:
 - [附录 A: 常见误区](#附录-a常见误区)
@@ -443,6 +444,92 @@ history_table = "privchat_migrations"   # 可选, 默认 neton_schema_history
 | **SQL 资源路径** | 由 `ModuleInitializer.migrations()` 中的 `MigrationSource.resourcePath` 显式声明(框架不锁死目录约定);沿用现状 `<module>/sql/{dialect}/V*.sql` |
 | **History 表** | 每 application 一张全局表(`UNIQUE(module_id, version)`);**表名由 config 配**,默认 `neton_schema_history`,框架不硬编码具体名字 |
 | **默认命令集** | `status` / `up` / `verify`;`down` 不承诺 |
+
+---
+
+## 九、Canonical Deployment Workflow
+
+**前置**: SQL 文件由各模块自管(`<module-repo>/sql/postgresql/V*.sql`)。application 的 `copyModuleMigrations` Gradle task 在构建期把各模块 SQL 聚合到 `application/migrations/<moduleId>/postgresql/`。运行期由各 `ModuleInitializer.migrations()` 声明的 `resourcePath = "migrations/<moduleId>/postgresql"` 让 engine 在 application cwd 下读到。
+
+### 9.1 构建
+
+```bash
+./gradlew :application:copyModuleMigrations \
+          :application:linkReleaseExecutableLinuxX64
+```
+
+部署产物布局:
+```
+application/
+├── application.kexe                       # 单一 binary,既是 server 也是 migrate
+├── config/
+│   ├── database.conf                      # [default].driver/uri + [migration].history_table (可选)
+│   ├── application.conf
+│   └── ...
+└── migrations/
+    ├── infra/postgresql/V001+V002         # 由 InfraModuleInitializer.migrations() 引用
+    ├── member/postgresql/V001             # MemberModuleInitializer.migrations() 引用
+    ├── payment/postgresql/V001            # ...
+    ├── platform/postgresql/V001
+    ├── game/postgresql/V001+V002
+    └── privchat/postgresql/V001+V002
+```
+
+### 9.2 部署流程(空库 / 升级 统一形态)
+
+```bash
+cd application/                           # ★ 必须 cd, resourcePath 是 cwd-relative
+
+./application.kexe migrate status         # exit 1 = pending; exit 0 = nothing to do
+./application.kexe migrate up             # 执行所有 pending
+./application.kexe migrate verify         # 校验 checksum
+./application.kexe                        # 启动 server
+```
+
+**关键**: 始终在 `application/` 目录下执行。从其它目录调用 `/path/to/application.kexe migrate` 会让 `resourcePath` 相对解析到错误目录。后续可加 `--workdir` 或 executable-path 推导,**现阶段约束部署脚本必须 cd**。
+
+### 9.3 启动期红线(SPEC §0.6)
+
+`./application.kexe`(无 `migrate` arg)启动时:
+1. 读 config / 初始化 database 连接(只连,不写)
+2. 按各模块声明的 dialect 过滤后聚合 `MigrationSource`
+3. 跑 `MigrationCommand.STATUS`(read-only)
+4. **任一**模块有 pending / failed / checksum mismatch / history 表不存在 → **fail-fast** 打印诊断 + `please run ./application.kexe migrate up` + exit 1
+5. **绝不**创建 history 表,**绝不**执行 V*.sql,**绝不**写业务表
+
+### 9.4 验收 checklist(部署冒烟)
+
+| # | 场景 | 操作 | 预期 |
+|---|------|------|------|
+| 1 | 空库 | `./application.kexe` | exit 1,"schema not initialized; please run ./application.kexe migrate up" |
+| 2 | 空库 | 查库: `\dt` (psql) | history 表不存在,业务表不存在 |
+| 3 | 空库 | `./application.kexe migrate up` | exit 0,所有 V*.sql 应用 |
+| 4 | up 后 | `./application.kexe migrate verify` | exit 0,"All checksums match" |
+| 5 | up 后 | `./application.kexe` | server 启动,banner 打印 |
+| 6 | 漂移 | 修改任一已应用 V*.sql 内容 → `./application.kexe migrate verify` | exit 3,列出 mismatch |
+| 7 | 漂移 | `./application.kexe`(同上漂移) | fail-fast,"checksum mismatch" |
+| 8 | 部分应用 | 跑 `migrate up` 跑到一半 SQL 报错 | history 写 success=false,exit 2 |
+| 9 | failed 状态 | 接 #8,再跑 `./application.kexe migrate up` | Aborted,要求 manual intervention(SPEC §6.6) |
+| 10 | 增量升级 | 添加新模块 V003,`./application.kexe migrate up` | 只跑 V003,其它跳过 |
+
+### 9.5 操作员从 FAILED 恢复
+
+(详见 SPEC §6.6)
+
+```bash
+# 1. 排查
+psql ... -c "SELECT * FROM neton_schema_history WHERE success=false;"
+
+# 2. 修复 schema(尤其 MySQL DDL autocommit 后的半成状态)
+
+# 3. 清账
+psql ... -c "DELETE FROM neton_schema_history WHERE module_id='X' AND version='Y';"
+
+# 4. 重试
+./application.kexe migrate up
+```
+
+框架**不**提供 `migrate reset` / `migrate retry` 子命令 — 危险操作必须显式 SQL。
 
 ---
 
