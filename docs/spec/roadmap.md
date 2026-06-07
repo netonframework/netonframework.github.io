@@ -34,7 +34,8 @@
 
 **Delivered（不属于 v1 9 大方向，附加交付）：**
 
-- ✅ `neton-migrate` CLI v0.1 — 独立 binary，与运行时解耦；status / up / verify 三命令，三方言 history 表；不做 down / dry-run / baseline / 多节点锁。见 [Migration Boundary Spec](./migration.md)。**应用启动语义不变**：永远不在 startup 时执行 schema 变更。
+- ✅ Schema Migration — Migration engine 内化在 `neton-database`,正式入口 `application.kexe migrate` (status / up / verify);跨模块统一 history 表 `UNIQUE(module_id, version)`;不做 down / dry-run / baseline / 多节点锁。完整边界规范见 [database.md §十二 Schema Migration](./database.md#十二schema-migration数据库演进规范)。**应用启动语义不变**:永远不在 startup 时执行 schema 变更。
+  > 历史:曾以独立 `neton-migrate` CLI binary 实现 (v0.1 / 2026-05);engine 2026-06-01 迁入 `neton-database`,CLI binary 2026-06-07 物理删除。
 
 ---
 
