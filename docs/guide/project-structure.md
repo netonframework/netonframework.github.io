@@ -10,7 +10,7 @@ Neton 采用模块化架构设计，每个模块职责清晰、按需引入。�
 |--------|---------|------|
 | `neton-core` | 框架核心：启动流程、组件模型（`NetonComponent`）、运行时容器、配置加载、HTTP 抽象（`HttpContext`、`HttpRequest`、`HttpResponse`）、安全上下文 | 是 |
 | `neton-logging` | 结构化日志系统：统一 Logger API、JSON 输出、异步写入、Sink 路由、traceId / spanId 传播、自动脱敏 | 是 |
-| `neton-http` | HTTP 服务器适配层：将底层 HTTP 引擎适配到 Neton 的 `HttpAdapter` 接口 | 是 |
+| `neton-http` | HTTP 能力：入站 Server Adapter，以及出站 `NetonHttpClient`、stream、SSE 与错误模型 | 是 |
 | `neton-routing` | 路由引擎：路由解析、路由组、目录约定分组、DSL 路由注册、Controller 扫描与绑定 | 是 |
 | `neton-security` | 安全模块：Authenticator（认证器）+ Guard（授权守卫）双层架构，支持 JWT / Session / Mock，注解驱动授权 | 否 |
 | `neton-redis` | Redis 客户端抽象：连接管理、基础命令、分布式锁（`@Lock` / `LockManager`） | 否 |

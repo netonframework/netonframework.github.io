@@ -1842,7 +1842,7 @@ history_table = "privchat_migrations"   # 可选, 默认 neton_schema_history
 
 #### 6.7 DDL bit-exact(三方言)
 
-`historyTableDdl(dialect, tableName)` 输出由 [SchemaHistoryContractTest](../../../privchat/neton/neton-database/src/commonTest/kotlin/neton/database/migration/SchemaHistoryContractTest.kt) golden 锁定。任何 DDL 字节级改动必须先更新该测试。约束:
+`historyTableDdl(dialect, tableName)` 输出由 `SchemaHistoryContractTest` golden 锁定。任何 DDL 字节级改动必须先更新该测试。约束:
 
 - 三方言 UNIQUE 都用**行内** `UNIQUE(...)`(MySQL 不再用 `UNIQUE KEY uq_${table}_...` 命名索引,避免 table 名接近 63 char 上限时索引名超过 MySQL 64 char 限制)
 - `success` 列类型按方言原生表示(SQLite INTEGER / PG BOOLEAN / MySQL TINYINT(1)),写入走 dialect-specific literal(`TRUE/FALSE` vs `1/0`),读出兼容 `t/true/1`
@@ -1990,4 +1990,3 @@ A:不引入 Java 生态依赖。Neton 自带的 MigrationEngine 在 `neton-datab
 A:不是,且 Neton 与之一致 —— `application.kexe migrate` 是**显式子命令**,由部署人员或 CI 显式调用,与 `application.kexe` serve 模式是两件事;serve 模式永不自动 migrate。Rails / Django 的 `migrate` 也是同一形态。
 
 ---
-
