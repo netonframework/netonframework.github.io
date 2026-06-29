@@ -34,9 +34,9 @@
 
 ### 1.3 入站与出站边界
 
-`neton-http` 是 Neton 唯一的 HTTP 发布模块，同时承载两类能力：
+`neton-http` 是 Neton 主仓唯一的 HTTP 发布模块，同时承载两类能力：
 
-- **入站 Server**：`HttpComponent`、`HttpAdapter` 实现及请求/响应适配。默认使用 Ktor Server；Hyper 由应用额外引入 `neton-http-hyper4k` 后通过 `http.engine` 选择。
+- **入站 Server**：`HttpComponent`、`HttpAdapter` 实现及请求/响应适配。`http { }` 默认使用 Ktor Server；其他 Adapter 由应用传入构造器引用。
 - **出站 Client**：`neton.http.client` 包中的 `NetonHttpClient`、请求/响应模型、错误模型、stream、SSE parser、redaction 与 retry primitive。
 
 **v1 模块规则（冻结）**：
@@ -45,7 +45,24 @@
 2. 业务模块和 `neton-ai` 依赖 `neton-http`，但通过 `NetonHttpClient` 抽象发起出站请求，不直接依赖内部 Ktor 实现。
 3. `NetonHttpClient.create { }` 可脱离 Neton Runtime 独立使用；`httpClient { }` 将 Client 绑定到 `NetonContext`，供其他 Component 获取。
 4. Client 由创建方持有并关闭；`HttpClientComponent` 创建的实例由组件生命周期管理。
-5. 入站 Server Engine 与出站 Client Engine 是不同概念。将 `http.engine` 切换为 Hyper 只替换 Server Adapter，不改变出站 Client 的平台 Engine。
+5. 入站 Server Adapter 与出站 Client Engine 是不同概念。替换 Server Adapter 不改变出站 Client 的平台 Engine。
+
+入站 Adapter 选择规则（冻结）：
+
+```kotlin
+typealias HttpAdapterFactory =
+    (HttpServerConfig, ParamConverterRegistry) -> HttpAdapter
+
+Neton.run(args) {
+    http(::XxxHttpAdapter) { port = 8080 }
+}
+```
+
+- `http { }` 等价于 `http(::KtorHttpAdapter) { }`。
+- 禁止使用 `HttpEngine` 枚举、字符串类名、运行时 Provider 注册或 `http.engine` 配置选择 Adapter。
+- 第三方 Adapter 可以独立仓库发布；Neton 主仓不依赖、不枚举这些实现。
+- `application.conf` 只管理 port、timeout、maxConnections、CORS 等运行参数。
+- Kotlin/Native 使用 constructor reference 完成类型安全注入，不使用 `KClass` 反射构造。
 
 出站 Client 的最小公共面：
 
