@@ -80,8 +80,8 @@ val user: User? = UserTable.get(1L)
 // 查询所有
 val allUsers: List<User> = UserTable.findAll()
 
-// 新建（id 传 null，自动生成）
-val newUser = UserTable.save(User(null, "Alice", "alice@example.com", 1, 25))
+// 新建
+val newUser = UserTable.insert(User(null, "Alice", "alice@example.com", 1, 25))
 
 // 更新
 UserTable.update(existingUser.copy(name = "New Name"))
@@ -103,12 +103,12 @@ val exists: Boolean = UserTable.exists(1L)
 val users = listOf(user1, user2, user3)
 UserTable.insertBatch(users)
 
-// 批量保存（返回列表）
-val saved = UserTable.saveAll(users)
-
 // 批量更新
 UserTable.updateBatch(users)
 ```
+
+`insert` 返回数据库中的最终实体，包括数据库生成的主键。`insertBatch` 只返回影响行数，
+不会修改传入实体，也不返回每行的生成主键；需要这些主键时，应在显式事务中逐条调用 `insert`。
 
 ## 查询 DSL
 
@@ -185,7 +185,7 @@ val count = UserTable.query { where { ColumnRef("status") eq 1 } }.count()
 
 ## 安装数据库组件
 
-在应用入口 DSL 中配置 `database` 组件，注册所有 Table：
+在应用入口 DSL 中安装 `database` 组件。KSP 生成的 Table 不需要运行时注册：
 
 ```kotlin
 import neton.core.Neton
@@ -197,31 +197,15 @@ fun main(args: Array<String>) {
     Neton.run(args) {
         http { port = 8081 }
 
-        database {
-            tableRegistry = { clazz ->
-                @Suppress("UNCHECKED_CAST")
-                when (clazz) {
-                    User::class -> UserTable
-                    Role::class -> RoleTable
-                    UserRole::class -> UserRoleTable
-                    else -> null
-                }
-            }
-        }
+        database { }
 
         routing { }
 
-        onStart {
-            // 启动时确保表结构存在
-            UserTable.ensureTable()
-            RoleTable.ensureTable()
-            UserRoleTable.ensureTable()
-        }
     }
 }
 ```
 
-`tableRegistry` 是一个从 `KClass` 到 `Table` 实例的映射函数，框架通过它在运行时查找 Table 对象。`ensureTable()` 在应用启动时创建表结构（如果不存在）。
+数据库组件初始化 `DbSessionProvider` 和 `DbContext`。正式应用的表结构由 migration SQL 管理，启动过程不调用 `ensureTable()`。
 
 ## CRUD 控制器示例
 
@@ -281,16 +265,14 @@ data class UserWithRoles(
 
 ```kotlin
 import neton.database.api.DbContext
-import neton.database.dbContext
-
-class UserLogic(private val db: DbContext = dbContext()) : DbContext by db {
+class UserLogic(private val db: DbContext) : DbContext by db {
 
     suspend fun all(): List<User> =
         UserTable.query { where { User::status eq 1 } }.list()
 
     suspend fun get(id: Long): User? = UserTable.get(id)
 
-    suspend fun create(user: User): User = UserTable.save(user)
+    suspend fun create(user: User): User = UserTable.insert(user)
 
     suspend fun getWithRoles(userId: Long): UserWithRoles? {
         val sql = """
@@ -391,27 +373,23 @@ debug = false
 
 ## 表初始化
 
-在 `onStart` 回调中调用 `ensureTable()` 确保表结构存在：
+`ensureTable()` 只用于 demo 或临时测试数据库：
 
 ```kotlin
-onStart {
-    UserTable.ensureTable()
-    RoleTable.ensureTable()
-    UserRoleTable.ensureTable()
-}
+UserTable.ensureTable()
 ```
 
-`ensureTable()` 是幂等的，已存在的表不会被重复创建或修改。
+正式应用禁止在启动阶段调用 `ensureTable()`；schema 演进必须使用版本化 migration SQL。
 
 ## 事务支持
 
-使用 `transaction` 在事务中执行多个操作：
+通过注入的 `DbContext` 执行事务，块内所有 Table 自动使用同一个 transaction session：
 
 ```kotlin
-UserTable.transaction {
-    val user = save(User(null, "Alice", "alice@example.com", 1, 25))
+db.transaction {
+    val user = UserTable.insert(User(null, "Alice", "alice@example.com", 1, 25))
     // 如果后续操作失败，整个事务回滚
-    destroy(user.id!!)
+    UserTable.destroy(user.id!!)
 }
 ```
 

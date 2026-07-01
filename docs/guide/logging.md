@@ -63,7 +63,7 @@ class UserController(private val log: Logger) {
     @Post
     suspend fun create(@Body user: User): User {
         log.info("user.create", mapOf("name" to user.name, "email" to user.email))
-        return UserTable.save(user)
+        return UserTable.insert(user)
     }
 }
 ```

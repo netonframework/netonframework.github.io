@@ -43,3 +43,4 @@ Neton 文档分为两个部分：
 
 - [中间件机制](./middleware.md) -- 请求管道、自定义中间件
 - [部署与跨平台](./deployment.md) -- 构建发布、跨平台编译目标
+- [工具链已知问题](./tooling-known-issues.md) -- Kotlin/Native、KSP 与 Gradle 的已知构建噪音
