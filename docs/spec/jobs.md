@@ -56,7 +56,7 @@ class JobContext(
 ```
 
 - `fireTime`：调度器决定触发的时间点，非实际开始执行的时间（如果等待锁，实际执行会晚于 fireTime）。
-- `ctx`：与 `NetonContext.current()` 同一实例，提供完整的 DI 能力。
+- `ctx`：应用显式传入的只读 `NetonContext`，提供运行期 DI 能力。
 - `logger`：使用 `LoggerFactory.get("neton.jobs.$jobId")` 创建，每个任务独立 logger，便于日志过滤。
 
 ### 2.3 @Job 注解

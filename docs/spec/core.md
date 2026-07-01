@@ -14,7 +14,7 @@
 |------|------|------|
 | 应用入口 | `Neton.run(args) { }`、`LaunchBuilder`、启动顺序 | neton-core |
 | 组件模型 | `NetonComponent&lt;C&gt;`、install、init/start | neton-core |
-| 运行时容器 | `NetonContext`（bind/get）、`ServiceFactory`（全局 lookup） | neton-core |
+| 运行时容器 | `NetonContext`（启动期 bind、运行期只读 get） | neton-core |
 | 配置 | `ConfigLoader`、`NetonConfigRegistry`、`NetonConfigurer` | neton-core |
 | HTTP 抽象 | `HttpAdapter`、`HttpContext`、`HttpRequest`、`HttpResponse`、参数与类型 | neton-core |
 | 路由与处理 | `RequestEngine`、`RouteDefinition`、`RouteHandler`、`ParameterBinding` | neton-core |
@@ -27,16 +27,14 @@
 neton.core
 ├── Neton.kt                    # 入口、LaunchBuilder、Application、KotlinApplication
 ├── CoreLog.kt                  # 进程级/ctx 级 Logger 注入
-├── InjectExtensions.kt         # inject()、get() 扩展
 ├── component/
 │   ├── NetonComponent.kt       # 组件接口
 │   ├── NetonContext.kt        # 唯一容器 bind/get
+│   ├── NetonLifecycle.kt      # 生命周期 owner 与状态机
 │   └── HttpConfig.kt          # HTTP install DSL 配置
 ├── config/
 │   ├── ConfigLoader.kt        # 约定式配置加载
 │   └── NetonConfig.kt         # NetonConfigurer、NetonConfigRegistry、@NetonConfig
-├── factory/
-│   └── ServiceFactory.kt      # 全局服务注册与 Mock 回退
 ├── http/
 │   ├── adapter/HttpAdapter.kt
 │   ├── HttpContext.kt         # Ctx、HttpStatus、HttpMethod、Headers、Parameters、Cookie
@@ -128,7 +126,7 @@ fun Neton.LaunchBuilder.redis(block: RedisConfig.() -> Unit = {}) {
 
 ### 2.4 组件规则
 
-- 组件**无内部可变状态**；所有运行时状态通过 `ctx.bind` 暴露，由 Core 或其它组件通过 `ctx.get` / `ServiceFactory` 使用。
+- 组件**无内部可变状态**；所有运行时状态通过 `ctx.bind` 暴露，由 Core 或其它组件通过显式 `ctx.get` 使用。
 - 先 install 的组件先 init；若某组件依赖另一组件，被依赖者需先 install。
 - ❌ 在 Component 内使用 `ctx.config&lt;T&gt;()`（config 由 install 时 merge，init 只接收 final config）
 - ❌ 定义 `component.key`（用 `component::class` 标识）
@@ -161,15 +159,13 @@ fun main(args: Array<String>) {
 
 1. **前置**：若 `installs.isEmpty()` 则 `error("No components installed...")`；否则 `runBlocking { startSyncWithInstalls(args) }`。
 2. **创建上下文**：`val ctx = NetonContext(args)`；`ctx.bind(NetonConfigRegistry::class, ...)`；`ctx.bindIfAbsent(LoggerFactory::class, defaultLoggerFactory())`；设置 `CoreLog.log`。
-3. **组件 init**：对每个 `(component, block)`：`config = component.defaultConfig()` → `block(config)` → `component.init(ctx, config)`。
-4. **组件 start**：对每个 component 调用 `component.start(ctx)`。
-5. **同步到 ServiceFactory**：`ctx.syncToServiceFactory()`，将 ctx 内所有绑定写入 `ServiceFactory`。
-6. **设置当前上下文**：`NetonContext.setCurrent(ctx)`，随后在 `try/finally` 中执行后续步骤并在结束时 `setCurrent(null)`。
-7. **基础设施**：`initializeInfrastructure(ctx, log)` → 模块初始化（按拓扑序）+ 统计日志输出（详见 §3.4）。
-8. **组件配置块**：若存在 `app.componentConfigBlock`，执行 `ComponentConfigurator` 的 security/routing/http 等（依赖 `ServiceFactory.getSecurityBuilder()` 等，即 install 已注册的实现）。
-9. **安全与路由**：`buildSecurityConfigurationFromCtx(ctx)` → `configureRequestEngineFromCtx(ctx, securityConfig)`（为 `RequestEngine` 设置 `AuthenticationContext`）。
-10. **用户 onStart**：`userBlock` 在 `startHttpServerSync` 内、`httpAdapter.start(ctx)` 之前执行，传入 `KotlinApplication(actualPort, ctx)`。
-11. **HTTP 服务器**：`httpAdapter.start(ctx)`，阻塞直至服务器停止。
+3. **组件 init/configure**：按安装顺序绑定基础服务并应用模块注册前配置。
+4. **模块注册**：校验依赖并按拓扑序执行 ModuleInitializer。
+5. **组件 prepare**：消费完整注册图并绑定最终运行时服务。
+6. **应用配置与校验**：执行 `onStart`，定型安全与路由，校验必需 capability。
+7. **Context freeze**：此后 `bind` 与 lifecycle registration 均失败。
+8. **启动**：按顺序启动 Component 和 Lifecycle owner。
+9. **HTTP / READY**：HTTP 最后启动；确认监听后进入 READY 并执行 `onReady`。
 
 ### 3.4 模块初始化与统计日志（beta1 新增）
 
@@ -221,17 +217,14 @@ class NetonContext(val args: Array<String>) {
     inline fun <reified T : Any> get(): T
     fun <T : Any> getOrNull(type: KClass<T>): T?
     inline fun <reified T : Any> getOrNull(): T?
-    fun syncToServiceFactory()   // 将 registry 全量同步到 ServiceFactory
-
-    companion object {
-        fun current(): NetonContext
-        internal fun setCurrent(ctx: NetonContext?)
-    }
+    fun freeze()
+    val lifecycle: LifecycleRegistry
+    val lifecycleState: NetonLifecycleState
 }
 ```
 
 - **唯一容器**：启动期与运行期共用；Core 不持有 port 等业务语义，仅 bind/get。
-- **syncToServiceFactory**：在 install 路径中 init+start 之后调用，使 Controller 等通过 `ServiceFactory.getService(...)` 能拿到与 ctx 一致的实例。
+- **冻结语义**：READY 前完成注册，freeze 后只允许读取和显式运行期服务操作。
 
 ### 4.2 Context 实现建议（生产级）
 
@@ -260,33 +253,13 @@ class NetonContext(val args: Array<String>) {
 - ❌ 使用 `mutableMapOf`（应 `ConcurrentHashMap`）
 - ❌ 在 ctx 外缓存 `ctx.get&lt;T&gt;()` 结果并跨请求复用（除单例服务外）
 
-### 4.4 ServiceFactory
+### 4.4 依赖注入
 
-```kotlin
-object ServiceFactory {
-    fun <T : Any> registerService(serviceClass: KClass<T>, instance: T)
-    fun <T : Any> getService(serviceClass: KClass<T>): T?
-    fun getHttpAdapter(): HttpAdapter           // 无则 MockHttpAdapter
-    fun getRequestEngine(): RequestEngine       // 无则 MockRequestEngine
-    fun getSecurityBuilder(): SecurityBuilder  // 无则 MockSecurityBuilder
-    fun getSecurityFactory(): SecurityFactory  // 无则 MockSecurityFactory
-    fun getRegisteredServices(): Map<KClass<*>, Any>
-    fun hasService(serviceClass: KClass<*>): Boolean
-    fun clearServices()  // 测试用
-}
-```
-
-- **Mock 回退**：未安装对应组件时，`getHttpAdapter` / `getRequestEngine` / `getSecurityBuilder` / `getSecurityFactory` 返回 Mock 实现并打 warn 日志。
-- **过渡期**：Controller 等可通过 `ServiceFactory.getService(X::class)` 或 NetonContext.current().get(X::class) 获取服务；推荐在 `Neton.run { }` / `onStart` 作用域内使用 `get&lt;T&gt;()` 或 `inject&lt;T&gt;()`。
-
-### 4.5 注入扩展（InjectExtensions）
-
-```kotlin
-inline fun <reified T : Any> inject(): Lazy<T> = lazy { NetonContext.current().get(T::class) }
-inline fun <reified T : Any> get(): T = NetonContext.current().get(T::class)
-```
-
-- 仅在 `NetonContext.setCurrent(ctx)` 生效的作用域内可用（如 onStart 块、或由 HttpAdapter 在请求处理前设置的上下文）。
+- `NetonContext` 是唯一权威容器，不存在并行的全局 `ServiceFactory`。
+- `NetonContext.current()`、全局 `inject()` 和全局 `get()` 不属于 1.0 API。
+- Component、ModuleInitializer 和 RuntimeBootstrap 接收显式 `ctx`。
+- Controller、Logic 等应用对象由 KSP 生成构造器注入代码，禁止运行时反射解析。
+- 缺少必需 binding 必须在启动期 fail-fast；Mock 只允许测试显式安装。
 
 ### 4.6 v1.1 冻结约束（Runtime/DI）
 
@@ -294,20 +267,13 @@ inline fun <reified T : Any> get(): T = NetonContext.current().get(T::class)
 
 | 约束 | 说明 |
 |------|------|
-| **唯一权威容器** | **NetonContext** 是实例的唯一权威来源。ServiceFactory 仅作为「桥接层」：在 install 路径中由 `ctx.syncToServiceFactory()` 单向同步后，供 KSP 生成代码等无法直接持有 ctx 的调用方只读使用。禁止在业务代码或组件中向 ServiceFactory 直接 register，导致与 ctx 分叉。 |
-| **ServiceFactory 定位** | 要么**只读桥接**（仅从 ctx 同步后的 view，不再接受独立 register），要么在**非测试环境**对 HttpAdapter / RequestEngine / SecurityBuilder / SecurityFactory 做 **fail-fast**：未安装则抛异常，不再 silent Mock 回退。Mock 仅允许在显式 test 或 dev mode 下使用。 |
-| **current() 语义** | **NetonContext.current()** 仅表示 **application-scope**（进程级、单例 ctx）。禁止在并发请求中通过 setCurrent 切换请求级上下文；否则多请求/协程下会出现 A 的 lazy inject 读到 B 的绑定。请求级数据**必须**通过 **HttpContext**（attributes、request/response）或 **CurrentLogContext**（logging）传递，不得用「切 current ctx」传递请求上下文。 |
-| **inject() / get() 使用范围** | 仅在「应用启动期」且 setCurrent(ctx) 已生效的**单线程/顺序**作用域内使用（如 onStart 块、LaunchBuilder 内部）。请求 handler 内若需访问应用级服务，应通过 **HttpContext.getApplicationContext()?.get&lt;T&gt;()** 或由适配器注入的 ctx 引用，不得依赖 NetonContext.current()。 |
-| **生命周期收口** | 组件的 **stop(ctx)** 必须在框架层收口：startSyncWithInstalls 的 **try** 块（含 startHttpServerSync）后的 **finally** 中，先 `setCurrent(null)`，再按 install **逆序**对所有 component 调用 `stop(ctx)`；单组件 stop 抛异常时打 warn 并继续其余组件，不中断收口。实现见下「stop 收口实现方案」。 |
-| **DI 路线** | 当前为 **Service Locator**（手动 install + ctx.get / ServiceFactory.getService），不是构造注入。若后续做「构造注入 Controller/Service」，**Native-first 路线**必须采用 **KSP 生成 Provider/Factory**，禁止依赖 kotlin-reflect 运行时构造 resolve。 |
+| **唯一权威容器** | **NetonContext** 是实例的唯一权威来源；READY 后冻结，只读获取。 |
+| **全局入口** | 禁止 `current()`、全局 `inject()`、全局 `get()` 和并行 Service Locator。 |
+| **请求上下文** | 请求数据只通过 **HttpContext** 与 **CurrentLogContext** 传递。 |
+| **生命周期收口** | HTTP 先停止；Lifecycle owner 与已初始化 Component 分别逆序停止；单个 stop 失败不阻断后续清理。 |
+| **DI 路线** | 应用对象采用 KSP 生成的构造器注入，禁止 kotlin-reflect 运行时解析。 |
 
-**stop 收口实现方案（最小侵入）**
-
-- **位置**：`startSyncWithInstalls` 内，现有 `try { ... startHttpServerSync(...) } finally { setCurrent(null) }` 的 **finally** 中。
-- **顺序**：先执行 `NetonContext.setCurrent(null)`（保持当前语义），再按 **installs 逆序** 对每个 component 调用 `(component as NetonComponent&lt;Any&gt;).stop(ctx)`。
-- **异常**：单个 component.stop(ctx) 若抛异常，用 log?.warn("neton.component.stop.failed", mapOf("component" to component::class.simpleName, "message" to (e.message ?: ""))) 记录后 **continue**，不中断后续组件的 stop，避免一个组件清理失败导致其他资源无法释放。
-- **HttpAdapter**：不在 Core 中单独调用 httpAdapter.stop()；由 **HttpComponent**（或各 HTTP 实现）在自身的 `stop(ctx)` 中从 ctx 取 HttpAdapter 并调用 stop()，保持「资源释放归组件」的边界。
-- **协程**：stop(ctx) 为 suspend，startSyncWithInstalls 已为 suspend，在 runBlocking 内执行，故无需额外 launch。
+完整顺序、失败传播和资源 owner 契约见 [Application Lifecycle Contract](./lifecycle.md)。
 
 ---
 
@@ -326,11 +292,10 @@ inline fun <reified T : Any> get(): T = NetonContext.current().get(T::class)
 │  HttpComponent / RoutingComponent / SecurityComponent / RedisComponent │
 │  defaultConfig() → block(config) → init(ctx, config) → start()  │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │ ctx.bind(Type, impl) / ctx.syncToServiceFactory()
+                               │ ctx.bind(Type, impl) → freeze → ctx.get(Type)
 ┌──────────────────────────────▼──────────────────────────────────┐
-│  上下文与服务（NetonContext + ServiceFactory）                        │
-│  NetonContext: 启动期容器，按 KClass 注册/获取                          │
-│  ServiceFactory: 运行时全局 lookup，供 Controller 等使用               │
+│  上下文与服务（NetonContext）                                          │
+│  启动期注册，运行期冻结；应用对象由 KSP 生成构造器注入                   │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ 接口定义在 core，实现在各模块
 ┌──────────────────────────────▼──────────────────────────────────┐
@@ -346,10 +311,8 @@ inline fun <reified T : Any> get(): T = NetonContext.current().get(T::class)
 ```
 Neton.run { ... }
   → install 时：merge config（file + default + block）
-  → 1. initComponents：forEach { component.init(ctx, config) }
-  → 2. startComponents：forEach { component.start(ctx) }
-  → 3. http.start(ctx)
-  → 4. onStart?.invoke(ctx)
+  → init → configure → modules → prepare → validate → freeze
+  → component/lifecycle start → HTTP start → READY/onReady
 ```
 
 #### 关闭顺序（推荐）
@@ -357,8 +320,9 @@ Neton.run { ... }
 ```
 收到 SIGTERM / Ctrl+C
   → http.stop()
-  → stopComponents：forEach { component.stop(ctx) }   // 逆序
-  → NetonContext.setCurrent(null)
+  → lifecycle owners reverse stop
+  → initialized components reverse stop
+  → clear framework globals
 ```
 
 #### 阶段语义
@@ -534,14 +498,13 @@ codec = "json"
 
 ```kotlin
 interface HttpAdapter {
-    suspend fun start(ctx: NetonContext)
+    suspend fun start(ctx: NetonContext, onStarted: (suspend (Long) -> Unit)? = null)
     suspend fun stop()
     fun port(): Int
 }
 ```
 
 - Core 只定义接口；port 与具体配置由实现（HTTP 适配器）在组件 config 中设置。
-- 废弃：`runCompat(port, args)` 仅兼容旧路径，会临时构造 ctx 并从 ServiceFactory 填充后调用 `start(ctx)`。
 
 ### 7.2 Adapter 规范
 
@@ -790,11 +753,10 @@ object SecurityContext {
 │  HttpComponent / RoutingComponent / SecurityComponent / RedisComponent │
 │  defaultConfig() → block(config) → init(ctx, config) → start()  │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │ ctx.bind(Type, impl) / ctx.syncToServiceFactory()
+                               │ ctx.bind(Type, impl) → freeze → ctx.get(Type)
 ┌──────────────────────────────▼──────────────────────────────────┐
-│  上下文与服务（NetonContext + ServiceFactory）                        │
-│  NetonContext: 启动期容器，按 KClass 注册/获取                          │
-│  ServiceFactory: 运行时全局 lookup，供 Controller 等使用               │
+│  上下文与服务（NetonContext）                                          │
+│  启动期注册，运行期冻结；应用对象由 KSP 生成构造器注入                   │
 └──────────────────────────────┬──────────────────────────────────┘
                                │ 接口定义在 core，实现在各模块
 ┌──────────────────────────────▼──────────────────────────────────┐
@@ -810,7 +772,6 @@ object SecurityContext {
 | `Neton.kt` | 入口：`run(args) { }` / `LaunchBuilder`，启动流程、协程包装（runBlocking）、ServerTask 等 |
 | `component/` | `NetonComponent&lt;C&gt;` 接口、`NetonContext`（KClass→Any 容器）、`HttpConfig` |
 | `config/` | `ConfigLoader`（约定式 TOML 加载）、`NetonConfig` / `NetonConfigurer`（KSP 配置器 SPI） |
-| `factory/` | `ServiceFactory`（全局服务 lookup，含 Mock 回退）、`ComponentRegistry` |
 | `http/` | `HttpContext` / `HttpRequest` / `HttpResponse` / `ParameterResolver`，`HttpAdapter` 接口 |
 | `interfaces/` | `RequestEngine`、`SecurityBuilder`、`RouteDefinition`、`ParameterBinding` |
 | `security/` | `AuthenticationContext`、`SecurityContext` |
@@ -825,7 +786,7 @@ object SecurityContext {
 |------|------|------|
 | 启动 DSL | `Neton.run(args) { http { }; routing { }; onStart { } }` | 上手成本低 |
 | 组件安装 | `install(Component) { config }`，各模块提供 `http { }`、`redis { }` 等语法糖 | 按需组合，无强制依赖 |
-| 服务获取 | `ServiceFactory.getService(RedisClient::class)` | 简单 lookup，无复杂 DI |
+| 服务获取 | KSP 构造器注入或显式 `ctx.get(RedisClient::class)` | 无全局 locator |
 | 配置 | `ConfigLoader.loadComponentConfig("RedisComponent")` + `config/redis.conf` | 约定优于配置，DSL 可覆盖 |
 
 **不足**：`Neton.kt` 内 ServerTask / HttpServerWrapper 等启动路径较绕，协程封装层级多，新人阅读成本高。
@@ -834,12 +795,12 @@ object SecurityContext {
 
 | 方面 | 现状 | 说明 |
 |------|------|------|
-| 服务注册 | `NetonContext` + `ServiceFactory` 均为 `MutableMap&lt;KClass&lt;*&gt;, Any&gt;` | O(1) lookup，无反射 |
+| 服务注册 | `NetonContext` 按 `KClass` 注册 | O(1) lookup，无反射 |
 | 路由注册 | KSP 生成 `GeneratedInitializer`，编译期注册 | 无运行时扫描，启动快 |
 | 协程 | `runBlocking` 启动 HTTP 服务器 | 主线程阻塞 |
 | ConfigLoader | 按约定路径加载 TOML | 真实 I/O + 解析 |
 
-**不足**：NetonContext 与 ServiceFactory 双重存储，存在冗余。
+Context freeze 后对象图稳定，不存在第二套全局注册表。
 
 #### 灵活性 ✅
 
@@ -848,9 +809,9 @@ object SecurityContext {
 | 接口与实现分离 | `HttpAdapter`、`RequestEngine`、`SecurityBuilder` 等均在 core 定义 | 可替换实现，Mock 回退 |
 | 组件化 | `NetonComponent&lt;C&gt;` 统一生命周期 | 新组件仅需实现接口 + install DSL |
 | 配置器 SPI | `NetonConfigurer&lt;T&gt;` + `@NetonConfig(component)`，KSP 生成 registry | 业务层可参与配置，无侵入 core |
-| Mock 支持 | `MockHttpAdapter`、`MockRequestEngine` 等 | 无 HTTP 模块时仍可运行，便于测试 |
+| Mock 支持 | `MockHttpAdapter`、`MockRequestEngine` 等 | 仅测试显式安装 |
 
-**不足**：Mock 与真实实现切换依赖 ServiceFactory 注册顺序，无显式「测试模式」开关。
+生产缺少必需 capability 时 fail-fast，不做 silent Mock 回退。
 
 ---
 
@@ -1142,12 +1103,11 @@ object GeneratedInitializer {
 
 | 约束 | 说明 |
 |------|------|
-| **唯一权威容器** | NetonContext 是实例的唯一权威来源；ServiceFactory 仅作桥接层 |
-| **ServiceFactory 定位** | 只读桥接或 fail-fast；禁止 silent Mock 生产环境 |
-| **current() 语义** | 仅表示 application-scope；请求级用 HttpContext |
-| **inject() / get() 使用范围** | 仅在应用启动期单线程作用域内使用 |
-| **生命周期收口** | stop(ctx) 必须在框架层收口，按 install 逆序执行 |
-| **DI 路线** | Service Locator；Native-first 路线用 KSP 生成 Provider |
+| **唯一权威容器** | NetonContext 是实例的唯一权威来源；READY 后冻结 |
+| **全局入口** | 不提供 ServiceFactory、current、全局 inject/get |
+| **请求上下文** | 请求级状态只用 HttpContext / CurrentLogContext |
+| **生命周期收口** | HTTP 先停；owner 与 component 分别逆序停止 |
+| **DI 路线** | Native-first KSP 构造器注入，无运行时反射 |
 
 ### 16.2 v1.1 配置冻结约束
 
@@ -1179,8 +1139,8 @@ object GeneratedInitializer {
 | 唯一入口 | 应用通过 `Neton.run(args) { install(...); onStart { } }` 启动 |
 | 组件无状态 | Component 不持有可变状态，全部通过 ctx 暴露 |
 | 接口在 Core | HttpAdapter、RequestEngine、SecurityBuilder、SecurityFactory 等均在 core 定义，实现由各模块提供 |
-| **v1.1 容器** | ctx 为唯一权威；ServiceFactory 仅作桥接或 fail-fast |
-| **v1.1 上下文** | NetonContext.current() 仅表示 app-scope；请求级只用 HttpContext |
+| **v1.1 容器** | ctx 为唯一权威，READY 后冻结 |
+| **v1.1 上下文** | 无全局 current；请求级只用 HttpContext |
 | **v1.1 配置** | TOML only；application.conf + 模块独立 &lt;module&gt;.conf；优先级与合并见配置章节 |
 | 配置扩展 | 业务配置通过 NetonConfigurer + @NetonConfig 扩展 |
 

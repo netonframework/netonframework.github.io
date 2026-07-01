@@ -7,6 +7,8 @@
 ## 核心架构
 
 - [Core 规范 v1](./core.md) — 启动流程、组件模型、运行时容器、HTTP 抽象 **(v1 冻结)**
+- [Application Lifecycle Contract](./lifecycle.md) — 启动状态机、Context freeze、失败传播与资源所有权 **(NETON-LIFECYCLE-P0)**
+- [Neton 1.0 Release Gate R0](./release-gate.md) — 原生 CI、release smoke 与发布基线
 - [Core SPI 最佳实践](./core-spi-best-practices.md) — SPI 层实现规范
 - [Config SPI 规范](./config-spi.md) — @NetonConfig 与配置扩展点
 
@@ -26,10 +28,11 @@
 
 ## 数据库
 
+- [Database Session and Transaction Contract](./database-session.md) — transaction-aware DbSession、Table 唯一执行链 **(NETON-DB-SESSION-P0)**
 - [数据库规范 v1](./database.md) — Entity + Table 模式、Query DSL、强类型列引用、Typed Projection **(v1 冻结)**
 - [JOIN 查询规范](./database-join.md) — JOIN DSL、SelectBuilder、SelectAst、RecordN
 - [执行链与约束规范](./database-execution.md) — DbContext 统一执行门面、QueryInterceptor、事务
-- [Schema Migration (database.md §十二)](./database.md#十二schema-migration数据库演进规范) — 运行时不做 schema 变更；`application.kexe migrate` 是唯一执行入口 **(架构边界 / 必读)**
+- [Schema Migration](./database.md#12-schema-migration) — history 表、原子执行与 `application.kexe migrate` 边界 **(架构边界 / 必读)**
 
 ## 缓存与 Redis
 
