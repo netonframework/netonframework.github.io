@@ -274,8 +274,22 @@ kotlin {
 ./gradlew linkReleaseExecutableMingwX64
 ```
 
-::: warning 交叉编译说明
-Kotlin/Native 需要在目标平台（或对应的交叉编译工具链）上构建。例如，Linux 二进制通常需要在 Linux 主机上构建，Windows 二进制需要在 Windows 主机或安装了 MinGW 工具链的环境上构建。macOS 二进制需要在 macOS 上构建。
+::: tip 在 macOS 上交叉编译 Linux 二进制（2026-07 起支持）
+安装 Linux GCC 交叉工具链后即可在 macOS 直接产出 Linux 可执行文件（无需 Linux 主机）：
+
+```bash
+brew tap messense/macos-cross-toolchains
+brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+
+./gradlew linkReleaseExecutableLinuxX64      # 直接在 macOS 上出 Linux x64 kexe
+```
+
+自定义工具链路径可通过环境变量 `NETON_LINUX_X64_CC` / `NETON_LINUX_X64_AR` /
+`NETON_LINUX_ARM64_CC` / `NETON_LINUX_ARM64_AR`，或对应的 Gradle 属性
+`neton.linuxX64.cc` 等注入（见 neton 仓 README「Cross-compiling Linux on macOS」）。
+
+⚠️ 交叉编译只验证链接：发布前必须在目标 Linux 架构上运行产物并跑运行期 smoke。
+Windows 二进制仍需 Windows 主机或 MinGW 工具链；macOS 二进制需在 macOS 上构建。
 :::
 
 ---
@@ -467,6 +481,9 @@ suspend fun health(ctx: HttpContext): String {
 | **健康检查** | 注册 `/health` 端点，配置存活和就绪探针 |
 | **资源限制** | Kubernetes 中设置 memory/cpu limits，防止资源泄漏 |
 | **配置隔离** | 敏感配置（密码、密钥）通过环境变量或 Kubernetes Secret 注入，不写入配置文件 |
+| **数据库迁移** | 部署新 binary 后先 `./application.kexe migrate up` 再启动——启动流程检测到 pending migration 会**拒绝启动**（启动绝不自动迁移）；迁移 SQL 编译进 binary（每模块 Gradle task 生成 Kotlin 常量），运行期不读 .sql 文件 |
+| **进程替换** | `systemctl restart` 可能留下未退出的旧进程占用端口导致新进程循环 crash；SOP：stop → 确认进程退出（必要时 pkill）→ 替换 binary → start |
+| **EnvironmentFile** | 通过 `getenv` 直读的密钥（如钱包卡加密 key）不走配置文件加载链，systemd unit 必须配置 `EnvironmentFile=` 才会进入进程环境 |
 
 ---
 

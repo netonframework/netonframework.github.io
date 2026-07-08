@@ -398,3 +398,15 @@ db.transaction {
 - [数据库规范](/spec/database) -- Entity/Table 模型、Query DSL、架构实现
 - [JOIN 查询规范](/spec/database-join) -- 强类型列引用、Typed Projection、JOIN AST
 - [执行链与约束规范](/spec/database-execution) -- DbContext 统一执行门面、QueryInterceptor、事务
+
+## 数据库迁移（migration）
+
+迁移能力内建于 neton-database（2026-06 起，独立的 neton-migrate CLI 已废弃）：
+
+- **入口**：应用二进制自带子命令 —— `./application.kexe migrate up` 应用全部 pending
+  迁移；每个模块自管自己的 SQL 与 history 表（如 `neton_schema_history_member`）。
+- **SQL 编译进 binary**：每模块的 `sql/postgresql/V*.sql` 由 Gradle task 生成 Kotlin
+  常量参与编译，运行期不读 .sql 文件（适配 K/N 单 binary 部署）。
+- **启动纪律**：应用启动**绝不自动迁移**；检测到 pending migration 时拒绝启动并列出
+  待执行项，提示先运行 `migrate up`。
+- 模块声明：`@Module(migrations = true)`（KSP 一致性校验会检查该标记与 sql 目录的对应）。
