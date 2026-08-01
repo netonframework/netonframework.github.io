@@ -30,13 +30,14 @@ Neton 缓存采用两级透明分层架构，业务代码无需关心数据存�
 
 ## 二、缓存接口（编程式 API）
 
-`Cache` 接口提供四个核心操作：
+`Cache` 接口提供五个核心操作：
 
 ```kotlin
 interface Cache<K, V> {
     suspend fun get(key: K): V?
     suspend fun put(key: K, value: V, ttl: Duration? = null)
     suspend fun delete(key: K)
+    suspend fun clear()
     suspend fun getOrPut(key: K, ttl: Duration? = null, loader: suspend () -> V?): V?
 }
 ```
@@ -46,6 +47,7 @@ interface Cache<K, V> {
 | `get(key)` | 先查 L1，miss 查 L2，再 miss 返回 null |
 | `put(key, value, ttl)` | 写入 L2 并回填 L1 |
 | `delete(key)` | 删除 L2 和 L1 中对应的 key |
+| `clear()` | 清空该缓存实例的全部条目（L1 + L2） |
 | `getOrPut(key, ttl, loader)` | Cache-aside 核心方法：miss 时执行 loader 回源，结果非 null 则回填 L2 + L1 |
 
 ### 编程式使用示例
@@ -55,11 +57,11 @@ interface Cache<K, V> {
 val cacheManager = ctx.get(CacheManager::class)
 
 // 获取名为 "users" 的缓存实例
-val userCache = cacheManager.getCache<String, User>("users")
+val userCache = cacheManager.getCache<User>("users")
 
 // 读取缓存，miss 时从数据库加载
 val user = userCache.getOrPut("user:$id") {
-    UserTable.findById(id)
+    UserTable.get(id)
 }
 
 // 手动写入缓存
@@ -109,7 +111,7 @@ Neton 提供三个缓存注解，覆盖「读/写/删」三种场景。注解由
 最常用的注解。语义等价于 `getOrPut`：命中直接返回，miss 则执行方法体并回填缓存。
 
 ```kotlin
-@Cacheable(name = "users", key = "{id}", ttl = 300)
+@Cacheable(name = "users", key = "{id}", ttlMs = 300_000)
 suspend fun getUser(id: Long): User? = UserTable.get(id)
 ```
 
@@ -156,7 +158,7 @@ suspend fun updateUser(user: User): User {
 ```kotlin
 @CacheEvict(name = "users", key = "{id}")
 suspend fun deleteUser(id: Long) {
-    UserTable.delete(id)
+    UserTable.destroy(id)
 }
 ```
 
@@ -197,7 +199,7 @@ class UserController {
     @Get("/users/{id}")
     @Cacheable(name = "users", key = "{id}", ttlMs = 300_000)
     suspend fun getUser(@PathVariable id: Long): User? {
-        return UserTable.findById(id)
+        return UserTable.get(id)
     }
 
     /**
@@ -207,9 +209,9 @@ class UserController {
     @CachePut(name = "users", key = "{id}")
     suspend fun updateUser(
         @PathVariable id: Long,
-        @RequestBody user: User
+        @Body user: User
     ): User {
-        UserTable.update(id, user)
+        UserTable.update(user)
         return user
     }
 
@@ -219,7 +221,7 @@ class UserController {
     @Delete("/users/{id}")
     @CacheEvict(name = "users", key = "{id}")
     suspend fun deleteUser(@PathVariable id: Long) {
-        UserTable.delete(id)
+        UserTable.destroy(id)
     }
 }
 ```

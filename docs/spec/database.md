@@ -1,8 +1,8 @@
 # Neton Database Specification
 
 > Status: Accepted, 1.0 convergence in progress
-> Baseline: Kotlin 2.3.10
-> Related: [Database Session and Transaction Contract](./database-session.md), [Migration](./migration.md)
+> Baseline: Kotlin 2.4.0 (KSP plugin 2.3.10)
+> Related: [Database Session and Transaction Contract](./database-session.md), [Schema Migration](#_12-schema-migration)
 
 ## 1. Positioning
 
@@ -112,6 +112,49 @@ reads `LAST_INSERT_ID()` on the same transaction/session.
 and does not return generated ids. Code that needs generated ids must call `insert` for each entity
 inside an explicit transaction until a separate batch-returning API is specified.
 
+### 4.3 Concurrency-safe writes
+
+Read-modify-write loses updates under concurrency. Two primitives push the decision into the
+database so no application-level lock is required.
+
+**Idempotent insert** is *not* part of the 1.0 surface yet. The intended API,
+`insertOrIgnore(entity): Boolean`, would replace the racy "check `existsWhere`, then `insert`"
+pair for repeated deliveries such as payment callbacks and outbox records, returning whether a
+new row was written.
+
+It is withheld from beta.1 because the contract cannot be honoured on every supported dialect.
+PostgreSQL and SQLite express it exactly as `ON CONFLICT DO NOTHING`. MySQL has no equivalent:
+`INSERT IGNORE` also downgrades truncation, `NOT NULL` and `CHECK` violations, so a `false`
+return would mean "bad data" rather than "row already exists"; the correct
+`ON DUPLICATE KEY UPDATE` form instead reports its outcome through affected rows, which a
+connection with `CLIENT_FOUND_ROWS` reports as `1` for a duplicate as well. Resolving that needs
+an integration test against a real MySQL server. Until then, use raw SQL through `DbContext` for
+idempotent inserts.
+
+**Atomic increment / conditional update (CAS).** `UpdateScope` exposes `increment(prop, delta)` and
+`decrement(prop, delta)` alongside `set(prop, value)`. They render `col = col + ?` with the delta
+bound as a parameter, so the arithmetic happens inside the database. Combined with `where { }` this
+is a compare-and-swap: when the guard does not hold, the affected-row count is `0` and the caller
+treats that as failure.
+
+```kotlin
+val affected = InviteCodeTable.query {
+    where { and(InviteCode::id eq id, InviteCode::usedCount lt maxUses) }
+}.update { increment(InviteCode::usedCount) }
+
+if (affected == 0L) throw BadRequestException("INVITE_CODE_EXHAUSTED")
+```
+
+Balance deduction follows the same shape: guard with `Account::balance ge amount` and apply
+`decrement(Account::balance, amount)`.
+
+Neither primitive is an optimization; hand-written `SELECT` + `UPDATE` for these cases is incorrect
+under concurrent load.
+
+Known limit: `Predicate` compares a column against a bound value, not against another column. A CAS
+guard of the form `used_count < max_uses` therefore still requires raw SQL through
+`db.execute(sql, params)` until column-to-column predicates are specified.
+
 The following APIs are forbidden in the 1.0 public ABI:
 
 - `save` and `saveAll`
@@ -129,7 +172,7 @@ The canonical typed query form is:
 ```kotlin
 val page = UserTable.query {
     where {
-        (User::status eq 1) and (User::name like "%neton%")
+        and(User::status eq 1, User::name like "%neton%")
     }
     orderBy(User::id.desc())
 }.page(page = 1, size = 20)

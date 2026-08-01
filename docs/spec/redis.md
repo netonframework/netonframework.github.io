@@ -47,7 +47,7 @@
 
 | 层次 | 类型 | 职责 |
 |------|------|------|
-| 业务 | 任意 | 通过 `ctx.getRedis()` 或 `ServiceFactory.getService(RedisClient::class)` 取得 `RedisClient`，只调用接口与扩展。 |
+| 业务 | 任意 | 通过 `ctx.getRedis()` 或 `ctx.get(RedisClient::class)` 取得 `RedisClient`，只调用接口与扩展。 |
 | 接口 | `RedisClient`、`RedisPipeline` | 定义 KV / Hash / List / Set / Pipeline 能力，不暴露实现。 |
 | 扩展 | `RedisExtensions` | `get(key): String?`、`get&lt;T&gt;(key): T?`、`remember&lt;T&gt;(key, ttl) { }`，基于 `getValue` + JSON/基本类型解码。 |
 | 实现 | `DefaultRedisClient` | 委托底层 Redis 驱动，实现所有接口方法；Pipeline 当前为顺序执行。 |
@@ -251,7 +251,7 @@ end
 | 模块 | 职责 |
 |------|------|
 | **neton-redis** | 提供 `LockManager`、`DistributedLock`、`LockNotAcquiredException`；实现 SET NX PX + Lua 释放（及 v2 续租 Lua）；可基于现有 `RedisClient` 或底层连接封装。 |
-| **neton-ksp** | 对 Controller/Service 方法上的 `@Lock` 织入：解析 key 模板取参 → `LockManager.withLock(key, ttl, wait, retry) { 调用原方法 }`；拿不到锁时抛 `LockNotAcquiredException`。 |
+| **neton-ksp** | 对 **Controller 路由方法**上的 `@Lock` 织入（标在 Logic/Service 上会编译期报错，因为织入点就是生成的 RouteHandler）：解析 key 模板取参 → `LockManager.withLock(key, ttl, wait, retry) { 调用原方法 }`；拿不到锁时抛 `LockNotAcquiredException`。 |
 | **neton-core** | 统一异常映射：`LockNotAcquiredException` → **HTTP 409**（v1 固定），与现有 HttpException 体系一致。 |
 
 - **@Lock 注解**：可定义在 neton-redis（与 LockManager 同模块）或 neton-core（与其它 HTTP 相关注解一起）；若 KSP 在 neton-ksp，注解需被 neton-ksp 依赖，建议放 neton-redis，neton-ksp 依赖 neton-redis 做织入。
@@ -286,8 +286,8 @@ end
 
 ## 七、与 neton-core 的集成
 
-- 通过 **NetonComponent** 与 **ConfigLoader**：组件 key `"redis"`，配置可从 `ConfigLoader.loadComponentConfig("RedisComponent")` 的 `redis` 段合并。
-- 业务获取客户端：`NetonContext.getRedis()`（扩展）或 `ServiceFactory.getService(RedisClient::class)`，不直接依赖 DefaultRedisClient。
+- 通过 **NetonComponent** 与 **ConfigLoader**：模块名 `"redis"`，配置由 `ConfigLoader.loadModuleConfig("redis", ...)` 读取 `config/redis.conf`（根级平铺，禁止 `[redis]` 段）后与 DSL 合并。
+- 业务获取客户端：`NetonContext.getRedis()`（扩展）或 `ctx.get(RedisClient::class)`，不直接依赖 DefaultRedisClient；框架不提供 `ServiceFactory`。
 
 ---
 

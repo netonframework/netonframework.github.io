@@ -21,11 +21,16 @@ features:
   - title: 约定优于配置
     details: 参数绑定自动推断（Path / Query / Body），90% 场景零注解。路由按目录约定分组。
   - title: 内建安全体系
-    details: Authenticator + Guard 双层架构，支持 JWT / Session / Mock 认证，注解驱动授权。
+    details: Authenticator + Guard 双层架构，内建 JWT / Mock 认证（Session 需自行实现），注解驱动授权。
   - title: 模块化组件系统
-    details: http / routing / security / redis / cache / database / logging，install 即用，按需组合。
+    details: http / routing / security / redis / cache / database / storage / jobs / ai / logging，install 即用，按需组合。
   - title: 结构化日志
     details: 统一 Logger API，JSON 输出，内建 traceId / spanId 传播，自动脱敏，便于对接日志采集系统。
   - title: KSP 编译期生成
     details: Controller 路由、参数绑定、Config SPI 均由 KSP 在编译期完成，零反射、零运行时扫描。
 ---
+
+::: info 版本对应声明
+本文档对应 **Neton 1.0.0-beta1**（Kotlin 2.4.0 / KSP 2.3.10）。
+若文档与代码不一致，**一律以 `neton/examples/` 下的可编译示例和框架源码为准**，并欢迎提 issue 修正文档。
+:::

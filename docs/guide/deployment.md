@@ -63,18 +63,18 @@ Neton (Native)：  ~20MB 内存、~3ms 启动、~3.5MB 单文件
 ./helloworld.kexe
 
 # 指定端口
-./helloworld.kexe --port=9090
+./helloworld.kexe --server.port=9090
 
 # 指定运行环境（加载对应的环境配置）
 ./helloworld.kexe --env=prod
 
 # 组合使用
-./helloworld.kexe --port=9090 --env=prod
+./helloworld.kexe --server.port=9090 --env=prod
 ```
 
 | 参数 | 说明 |
 |------|------|
-| `--port=&lt;N&gt;` | HTTP 监听端口 |
+| `--server.port=&lt;N&gt;` | HTTP 监听端口（对应 `application.conf` 的 `[server] port`） |
 | `--env=&lt;name&gt;` | 运行环境名称，用于加载 `application.&lt;env&gt;.conf` |
 
 ### 2.2 环境变量覆盖
@@ -83,7 +83,7 @@ Neton 支持通过环境变量覆盖配置：
 
 ```bash
 # 通过环境变量设置端口
-NETON_PORT=8081 ./helloworld.kexe
+NETON_SERVER__PORT=8081 ./helloworld.kexe
 
 # 通过环境变量设置运行环境
 NETON_ENV=prod ./helloworld.kexe
@@ -94,8 +94,8 @@ NETON_ENV=prod ./helloworld.kexe
 Neton 的配置系统采用分层覆盖策略，优先级从高到低：
 
 ```
-CLI 参数（--port=9090）
-  > 环境变量（NETON_PORT=9090）
+CLI 参数（--server.port=9090）
+  > 环境变量（NETON_SERVER__PORT=9090）
     > 环境配置文件（application.prod.conf）
       > 基础配置文件（application.conf）
         > 代码默认值（DSL defaultConfig）
@@ -106,8 +106,8 @@ CLI 参数（--port=9090）
 ```
 application.conf 中 port = 8080
 application.prod.conf 中 port = 80
-环境变量 NETON_PORT=9090
-CLI 参数 --port=3000
+环境变量 NETON_SERVER__PORT=9090
+CLI 参数 --server.port=3000
 
 最终生效：port = 3000（CLI 最高优先级）
 ```
@@ -333,7 +333,7 @@ docker build -t my-neton-app:latest .
 docker run -d \
   --name my-app \
   -p 8080:8080 \
-  -e NETON_PORT=8080 \
+  -e NETON_SERVER__PORT=8080 \
   my-neton-app:latest
 ```
 
@@ -377,7 +377,7 @@ spec:
           env:
             - name: NETON_ENV
               value: "prod"
-            - name: NETON_PORT
+            - name: NETON_SERVER__PORT
               value: "8080"
           resources:
             requests:

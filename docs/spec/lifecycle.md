@@ -3,7 +3,7 @@
 > Status: Implemented; macOS release smoke passed, Linux/Windows native CI pending
 > Track: NETON-LIFECYCLE-P0
 > Target: Neton 1.0
-> Kotlin baseline: 2.3.10
+> Kotlin baseline: 2.4.0 (KSP plugin 2.3.10)
 
 ## 1. Purpose
 
@@ -158,7 +158,7 @@ NETON-LIFECYCLE-P0 closes only when:
 6. Module jobs are visible when JobsComponent prepares and starts.
 7. RuntimeBootstrap background resources have registered lifecycle owners.
 8. HTTP starts last, reports READY accurately and stops first.
-9. Framework lifecycle tests and the real PrivChat application compile on Kotlin 2.3.10.
+9. Framework lifecycle tests and the real PrivChat application compile on Kotlin 2.4.0.
 10. Native release validation runs on the target's native host: macOS for `macosArm64`, Linux for
     `linuxX64`, and Windows for `mingwX64`. Cross-compilation from macOS is not accepted as evidence
     for Linux or Windows lifecycle behavior.
@@ -169,5 +169,5 @@ NETON-LIFECYCLE-P0 closes only when:
 - component dependency DAG and automatic installation ordering
 - HTTP Dispatcher unification
 - KSP processor architecture refactor
-- Kotlin 2.4 language features
+- adopting new Kotlin 2.4 language features in framework code
 - Gradle plugin auto-discovery

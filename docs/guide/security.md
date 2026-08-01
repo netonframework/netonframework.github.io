@@ -67,15 +67,15 @@ import neton.core.component.NetonContext
 import neton.core.config.NetonConfig
 import neton.core.config.SecurityConfigurer
 import neton.core.interfaces.SecurityBuilder
-import neton.security.RealAnonymousGuard
-import neton.security.RealDefaultGuard
+import neton.security.AnonymousGuardImpl
+import neton.security.DefaultGuardImpl
 
 @NetonConfig(component = "security", order = 0)
 class AppSecurityConfig : SecurityConfigurer {
 
     override fun configure(ctx: NetonContext, security: SecurityBuilder) {
         // 默认组：开放（匿名守卫 = 允许所有请求）
-        security.setDefaultGuard(RealAnonymousGuard())
+        security.setDefaultGuard(AnonymousGuardImpl())
 
         // admin 组：Mock 认证 + 默认守卫
         security.registerMockAuthenticator(
@@ -84,7 +84,7 @@ class AppSecurityConfig : SecurityConfigurer {
             roles = setOf("admin"),
             permissions = setOf("system:user:edit", "system:user:delete")
         )
-        security.setGroupGuard("admin", RealDefaultGuard())
+        security.setGroupGuard("admin", DefaultGuardImpl())
 
         // 可选：自定义 PermissionEvaluator（superadmin 绕过）
         security.setPermissionEvaluator { identity, permission, _ ->

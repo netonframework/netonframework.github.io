@@ -2,61 +2,30 @@
 
 > **目标**：轻量级统一存储抽象——借鉴 OpenDAL Operator 概念，Phase 1 只做 Local + S3 两种后端。  
 > **验收闭环**：用 Local 和 S3（MinIO）跑通文件的上传、下载、删除、列表。  
-> **附带成果**：冻结 v1.0 客户端类模块统一配置规范（`[[sources]]`），database/redis/storage 一步到位。
+> **附带成果**：冻结 storage 的 `[[sources]]` 多源配置规范（**不适用于 database/redis**，二者格式见 0.1）。
 
 ---
 
 ## 0. 前置结论（冻结）
 
-### 0.1 v1.0 配置冻结：客户端类模块统一 `[[sources]]`
+### 0.1 v1.0 配置：`[[sources]]` **仅适用于 storage**
 
-**适用范围**：database、redis、storage——所有"客户端类模块"。
+::: warning 与实现对齐（1.0 实况）
+早期草案曾计划把 database/redis/storage 统一到 `[[sources]]`。**1.0 实现并未这样做**，
+本节按真实实现描述，请勿照抄旧稿。
+:::
 
-**冻结规则**：
+**冻结规则（按模块）**：
 
-| 规则 | 说明 |
-|------|------|
-| 配置格式 | `[[sources]]` 数组，每个元素必须含 `name` |
-| 默认源 | `name = "default"` 为保留名，代表默认源，**必须存在** |
-| 旧格式 | `[default]`、`[database.default]`、根级平铺 —— 全部禁止，启动 fail-fast |
-| name 约束 | 不可缺失、不可空串、不可重复，违反则 fail-fast |
-| 文件名 = 命名空间 | `database.conf` → database 模块；`redis.conf` → redis 模块；`storage.conf` → storage 模块 |
+| 模块 | 配置文件 | 实际格式 | 实现落点 |
+|------|---------|---------|---------|
+| storage | `config/storage.conf` | `[[sources]]` 数组，每元素含 `name`，必须存在 `name = "default"` | `SourceConfigParser` |
+| database | `config/database.conf` | **仅 `[default]` 单表**，其它 section 静默忽略；禁止 `[database]` 段 | `DatabaseExtensions.loadDatabaseConfig` |
+| redis | `config/redis.conf` | **根级平铺**（`host`/`port`/`database`/…）；禁止 `[redis]` 段 | `RedisComponent.mergeWithFile` |
 
-**冻结声明**（写入 Core Spec）：
+共同约定：**文件名 = 命名空间**——`database.conf` → database 模块；`redis.conf` → redis 模块；`storage.conf` → storage 模块。
 
-> v1.0 Frozen：客户端类模块（database/redis/storage）配置统一为 `[[sources]]`，必须包含 `name="default"`；旧 `[default]` 格式不兼容，启动 fail-fast。
-
-#### database.conf
-
-```toml
-[[sources]]
-name = "default"
-driver = "POSTGRESQL"
-uri = "postgresql://postgres:password@localhost:5432/myapp"
-
-[[sources]]
-name = "analytics"
-driver = "MYSQL"
-uri = "mysql://root:password@localhost:3306/analytics"
-```
-
-#### redis.conf
-
-```toml
-[[sources]]
-name = "default"
-host = "127.0.0.1"
-port = 6379
-database = 0
-
-[[sources]]
-name = "session"
-host = "10.0.0.2"
-port = 6379
-database = 1
-```
-
-#### storage.conf
+#### storage.conf（`[[sources]]`）
 
 ```toml
 [[sources]]
@@ -74,25 +43,44 @@ accessKey = "LTAI5txxxx"
 secretKey = "xxxx"
 ```
 
-### 0.2 统一解析规则（冻结）
+#### database.conf（仅 `[default]`，1.0 不支持多数据源）
 
-所有客户端类模块统一走：
+```toml
+[default]
+driver = "POSTGRESQL"
+uri = "postgresql://postgres:password@localhost:5432/myapp"
+```
+
+#### redis.conf（根级平铺）
+
+```toml
+host = "127.0.0.1"
+port = 6379
+database = 0
+poolSize = 16
+```
+
+### 0.2 storage 解析规则（冻结）
+
+storage 走：
 
 ```kotlin
 val cfg = ConfigLoader.loadModuleConfig("storage", configPath, env, args)
 val sources = cfg?.get("sources") as? List<Map<String, Any?>>
 ```
 
-**fail-fast 规则**：
+**fail-fast 规则（仅 storage）**：
 
 | 条件 | 行为 |
 |------|------|
 | `sources` 缺失 | fail-fast：`"storage.conf: missing [[sources]]"` |
 | `sources` 为空列表 | fail-fast：`"storage.conf: [[sources]] is empty"` |
-| 元素缺少 `name` | fail-fast：`"storage.conf: source missing 'name'"` |
 | `name` 为空串 | fail-fast：`"storage.conf: source 'name' cannot be blank"` |
 | `name` 重复 | fail-fast：`"storage.conf: duplicate source name 'xxx'"` |
 | 无 `name = "default"` | fail-fast：`"storage.conf: missing source with name='default'"` |
+
+database / redis 各有自己的 fail-fast 规则：database 缺 `[default]` 抛；
+database `driver` 缺失或未知抛；redis 走 `RedisConfig.validate()`。
 
 ### 0.3 统一 API 约定（冻结）
 
@@ -105,11 +93,13 @@ val sources = cfg?.get("sources") as? List<Map<String, Any?>>
 
 三个模块统一命名模式：
 
-| 模块 | 默认客户端 | 管理器 |
-|------|----------|--------|
-| database | `ctx.get(Database::class)` | `ctx.get(DatabaseManager::class).get("analytics")` |
-| redis | `ctx.get(RedisClient::class)` | `ctx.get(RedisManager::class).get("session")` |
+| 模块 | 1.0 实际绑定到 ctx 的类型 | 多源管理器 |
+|------|--------------------------|-----------|
+| database | `ctx.get(DbContext::class)`、`ctx.get(DbSessionProvider::class)` | 无（1.0 不支持多数据源） |
+| redis | `ctx.get(RedisClient::class)`、`ctx.get(LockManager::class)` | 无（1.0 单实例） |
 | storage | `ctx.get(StorageOperator::class)` | `ctx.get(StorageManager::class).get("oss")` |
+
+> 不存在 `Database`、`DatabaseManager`、`RedisManager` 这些类型；只有 storage 提供 Manager。
 
 **Manager 行为冻结**：
 
@@ -1086,9 +1076,15 @@ interface StorageOperator {
 
 ---
 
-## 13. `[[sources]]` 统一配置迁移清单
+## 13. `[[sources]]` 统一配置迁移清单（**提案，1.0 未实施**）
 
-本次 neton-storage 模块引入的 `[[sources]]` 配置格式，需同步迁移 database 和 redis 模块。
+::: danger 未实施
+本节是把 `[[sources]]` 推广到 database/redis 的**规划稿**，1.0 **没有实现**：
+`DatabaseManager`、`RedisManager`、`Database` 等类型都不存在，database 仍读 `[default]`，
+redis 仍是根级平铺。以真实格式为准见 [0.1](#_0-1-v1-0-配置-sources-仅适用于-storage)。
+:::
+
+本次 neton-storage 模块引入的 `[[sources]]` 配置格式，未来可同步迁移 database 和 redis 模块。
 
 ### 13.1 需修改的文件
 

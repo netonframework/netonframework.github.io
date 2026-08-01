@@ -143,8 +143,8 @@ fun Neton.LaunchBuilder.redis(block: RedisConfig.() -> Unit = {}) {
 fun main(args: Array<String>) {
     Neton.run(args) {
         install(HttpComponent()) { port = 8080 }
-        install(SecurityComponent()) { }
-        install(RoutingComponent()) { }
+        install(SecurityComponent) { }   // object，不加括号
+        install(RoutingComponent) { }    // object，不加括号
         onStart {
             // KotlinApplication 作用域，可 get<T>()、getPort()
         }
@@ -200,7 +200,7 @@ fun main(args: Array<String>) {
 ### 3.3 端口与配置
 
 - 端口由各 HTTP 组件在 `defaultConfig()` / `block(config)` 中设置（如 `HttpConfig.port`），Adapter 内部持有；Core 不解析 `--port`（可由上层在创建 ctx 前解析并传入 config）。
-- 应用主配置：`ConfigLoader.loadApplicationConfig(configPath, environment)`、`ConfigLoader.loadComponentConfig(componentName)` 等，按约定路径加载 TOML；端口优先级为：命令行 > application.conf > 默认 8080。
+- 应用主配置：`ConfigLoader.loadApplicationConfig(configPath, environment, args)`；模块配置：`ConfigLoader.loadModuleConfig(moduleName, configPath, environment, args)`，按约定路径加载 TOML；端口优先级为：命令行/环境变量 > application.conf > 默认 8080。
 
 ---
 
@@ -787,7 +787,7 @@ object SecurityContext {
 | 启动 DSL | `Neton.run(args) { http { }; routing { }; onStart { } }` | 上手成本低 |
 | 组件安装 | `install(Component) { config }`，各模块提供 `http { }`、`redis { }` 等语法糖 | 按需组合，无强制依赖 |
 | 服务获取 | KSP 构造器注入或显式 `ctx.get(RedisClient::class)` | 无全局 locator |
-| 配置 | `ConfigLoader.loadComponentConfig("RedisComponent")` + `config/redis.conf` | 约定优于配置，DSL 可覆盖 |
+| 配置 | `ConfigLoader.loadModuleConfig("redis")` + `config/redis.conf` | 约定优于配置，DSL 可覆盖 |
 
 **不足**：`Neton.kt` 内 ServerTask / HttpServerWrapper 等启动路径较绕，协程封装层级多，新人阅读成本高。
 

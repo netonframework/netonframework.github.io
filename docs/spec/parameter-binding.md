@@ -130,9 +130,9 @@ fun create(@Body request: BindingUserRequest): String
 | 场景 | 推荐注解 | 说明 |
 |------|----------|------|
 | 路径名与参数名一致 | 无 | 约定推断 |
-| 路径名与参数名不一致 | `@PathVariable("id")` 或 `@Path("id")` | 二选一，建议保留 PathVariable 兼容 |
+| 路径名与参数名不一致 | `@PathVariable("id")` | 1.0 唯一可用注解；**不存在 `@Path`** |
 | Query key 与参数名一致 | 无 | 约定推断 |
-| Query key 与参数名不一致 | `@Query("q")` 或 `@QueryParam("q")` | 建议新增 `@Query` 短名 |
+| Query key 与参数名不一致 | `@Query("q")` 或 `@QueryParam("q")` | 两者均已提供 |
 | Body（单参数复杂类型） | 无 | 约定推断 |
 | Body（多 body / 歧义） | `@Body` | 显式 |
 | 表单字段 | `@FormParam("name")` | 显式 |

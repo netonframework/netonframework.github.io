@@ -272,7 +272,7 @@ interface HandlerArgs {
 - **编译时检查**: KSP代码生成确保编译时类型检查
 - **支持的绑定类型**:
   - `@PathVariable` - 路径参数
-  - `@RequestBody` - 请求体
+  - `@Body` - 请求体
   - `@CurrentUser` - 当前用户身份
   - `ContextObject` - 上下文对象注入
 
@@ -336,7 +336,7 @@ data class ErrorResponse(
 
 ### 6.2 配置来源（v1.1 冻结）
 
-- **禁止**：不得使用 `loadComponentConfig("HttpComponent")` 或单独 http.conf；HTTP 属于"运行时基础设施"，配置归属与 Core Config v1.1 一致。
+- **禁止**：不得为 HTTP 引入单独的 `http.conf` 或组件级配置加载（如 `loadModuleConfig("http")`）；HTTP 属于"运行时基础设施"，配置归属与 Core Config v1.1 一致，只读 `application.conf` 的 `[server]` / `[http]`。
 - **唯一文件来源**：**仅允许在 application.conf（及 application.&lt;env&gt;.conf）中配置 HTTP**，例如：
   - `[server]`：port 等（与 Core 5.1 推荐骨架一致）；
   - `[http]`：timeout、maxConnections、enableCompression 等。
@@ -544,7 +544,7 @@ class UserController {
 
     @Post("/users")
     suspend fun createUser(
-        @RequestBody user: UserCreateRequest,
+        @Body user: UserCreateRequest,
         @CurrentUser identity: Identity?
     ): UserResponse {
         // identity.id, identity.roles, identity.permissions 可用
@@ -558,7 +558,7 @@ class UserController {
     @Put("/users/{id}")
     suspend fun updateUser(
         @PathVariable("id") userId: Long,
-        @RequestBody updates: UserUpdateRequest,
+        @Body updates: UserUpdateRequest,
         context: HttpContext
     ): String {
         // 使用 context 访问 session、attributes 等

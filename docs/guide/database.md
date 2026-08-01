@@ -8,7 +8,7 @@ Neton 的数据库层遵循 **Entity = 纯数据，Table = 表级入口** 的设
 |------|------|------|
 | **Controller** | HTTP 端点 | 接收请求、参数校验、调用 Logic |
 | **Logic** | 业务聚合 | 手写，处理 JOIN、事务、缓存等业务用例 |
-| **Table** | 单表 CRUD | KSP 自动生成，提供 `get`/`save`/`where`/`destroy` 等操作 |
+| **Table** | 单表 CRUD | KSP 自动生成，提供 `get`/`insert`/`update`/`destroy`/`query` 等操作 |
 | **Entity** | 纯数据类 | `data class`，用 `@Serializable` + `@Table` 标注 |
 
 关键约束：
@@ -112,23 +112,23 @@ UserTable.updateBatch(users)
 
 ## 查询 DSL
 
-Neton 提供类型安全的查询 DSL，通过 `query { where { } }` 构建条件。`where` 块内使用 `ColumnRef` 与 `PredicateScope` 的 `all`、`and`、`or` 等：
+Neton 提供类型安全的查询 DSL，通过 `query { where { } }` 构建条件。`where` 块内使用 `KProperty1` 形式的属性引用（如 `User::status`）与 `PredicateScope` 的 `all`、`and`、`or` 等：
 
 ```kotlin
-import neton.database.dsl.ColumnRef
+import neton.database.dsl.*
 ```
 
 ### 基础查询
 
 ```kotlin
 // 等值查询
-val activeUsers = UserTable.query { where { ColumnRef("status") eq 1 } }.list()
+val activeUsers = UserTable.query { where { User::status eq 1 } }.list()
 
 // 比较查询
-val adults = UserTable.query { where { ColumnRef("age") gt 18 } }.list()
+val adults = UserTable.query { where { User::age gt 18 } }.list()
 
 // 模糊查询
-val matched = UserTable.query { where { ColumnRef("name") like "%Alice%" } }.list()
+val matched = UserTable.query { where { User::name like "%Alice%" } }.list()
 
 // 查询全部
 val all = UserTable.query { where { all() } }.list()
@@ -139,12 +139,12 @@ val all = UserTable.query { where { all() } }.list()
 ```kotlin
 // AND 组合
 val result = UserTable.query {
-    where { and(ColumnRef("status") eq 1, ColumnRef("age") gt 18) }
+    where { and(User::status eq 1, User::age gt 18) }
 }.list()
 
 // OR 组合
 val result = UserTable.query {
-    where { or(ColumnRef("name") eq "Alice", ColumnRef("name") eq "Bob") }
+    where { or(User::name eq "Alice", User::name eq "Bob") }
 }.list()
 ```
 
@@ -153,13 +153,13 @@ val result = UserTable.query {
 ```kotlin
 // 排序 + 分页（page 从 1 开始）
 val sorted = UserTable.query {
-    where { ColumnRef("status") eq 1 }
-    orderBy(ColumnRef("age").desc())
+    where { User::status eq 1 }
+    orderBy(User::age.desc())
     limitOffset(20, 0)
 }.list()
 
 // 分页（含 total、totalPages）
-val pageResult = UserTable.query { where { ColumnRef("status") eq 1 } }.page(1, 20)
+val pageResult = UserTable.query { where { User::status eq 1 } }.page(1, 20)
 // pageResult.items      -> List<User>
 // pageResult.total      -> 总记录数
 // pageResult.page       -> 当前页
@@ -171,16 +171,16 @@ val pageResult = UserTable.query { where { ColumnRef("status") eq 1 } }.page(1, 
 
 ```kotlin
 // 单条（等价于 list().firstOrNull()）
-val first = UserTable.query { where { ColumnRef("status") eq 1 }; limitOffset(1, 0) }.list().firstOrNull()
+val first = UserTable.query { where { User::status eq 1 }; limitOffset(1, 0) }.list().firstOrNull()
 
 // 条件查单条（便捷方法）
-val one = UserTable.oneWhere { ColumnRef("email") eq "alice@example.com" }
+val one = UserTable.oneWhere { User::email eq "alice@example.com" }
 
 // 条件是否存在
-val exists = UserTable.existsWhere { ColumnRef("email") eq "alice@example.com" }
+val exists = UserTable.existsWhere { User::email eq "alice@example.com" }
 
 // 计数
-val count = UserTable.query { where { ColumnRef("status") eq 1 } }.count()
+val count = UserTable.query { where { User::status eq 1 } }.count()
 ```
 
 ## 安装数据库组件
@@ -223,7 +223,7 @@ import neton.logging.Log
 @Log
 class UserController(
     private val log: Logger,
-    private val userLogic: UserLogic = UserLogic()
+    private val userLogic: UserLogic
 ) {
 
     @Get
@@ -264,7 +264,10 @@ data class UserWithRoles(
 ### 实现 Logic
 
 ```kotlin
+import neton.core.annotations.Logic
 import neton.database.api.DbContext
+
+@Logic
 class UserLogic(private val db: DbContext) : DbContext by db {
 
     suspend fun all(): List<User> =
@@ -311,7 +314,7 @@ class UserLogic(private val db: DbContext) : DbContext by db {
 ```kotlin
 @Controller("/api/users")
 class UserController(
-    private val userLogic: UserLogic = UserLogic()
+    private val userLogic: UserLogic
 ) {
     @Get
     suspend fun all(): List<User> = userLogic.all()
@@ -353,23 +356,14 @@ debug = true
 
 | 配置项 | 说明 | 示例 |
 |--------|------|------|
-| `driver` | 数据库驱动 | `"MEMORY"`、`"SQLITE"`、`"POSTGRES"` |
+| `driver` | 数据库驱动（合法值仅 `POSTGRESQL`/`MYSQL`/`SQLITE`/`MEMORY`，缺失或未知值启动即抛） | `"MEMORY"`、`"SQLITE"`、`"POSTGRESQL"` |
 | `uri` | 连接 URI | `"sqlite::memory:"`、`"postgres://localhost/mydb"` |
 | `debug` | 调试模式（打印 SQL） | `true` / `false` |
 
-支持多数据源配置，使用不同的 section 名称：
-
-```toml
-[default]
-driver = "SQLITE"
-uri = "sqlite:./data/main.db"
-debug = true
-
-[analytics]
-driver = "POSTGRES"
-uri = "postgres://localhost:5432/analytics"
-debug = false
-```
+::: warning 1.0 仅支持单数据源
+`config/database.conf` **只会读取 `[default]` 段**，其他 section（如 `[analytics]`）会被静默忽略。
+多数据源不在 1.0 范围内。同时禁止使用 `[database]` 段包裹配置。
+:::
 
 ## 表初始化
 

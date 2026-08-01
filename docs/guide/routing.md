@@ -337,8 +337,9 @@ DSL 路由支持以下方法：
 | `post(path) { ... }` | 注册 POST 路由 |
 | `put(path) { ... }` | 注册 PUT 路由 |
 | `delete(path) { ... }` | 注册 DELETE 路由 |
-| `patch(path) { ... }` | 注册 PATCH 路由 |
 | `group(name) { ... }` | 定义路由组 |
+
+DSL 层 1.0 只提供以上方法，**没有 `patch(path)`**；需要 PATCH 时请使用注解路由（`@Patch`）。
 
 ::: tip DSL 与注解的选择
 - **DSL 路由**：适合快速原型、简单微服务、无需 KSP 的场景

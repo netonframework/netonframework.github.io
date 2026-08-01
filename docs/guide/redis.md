@@ -30,34 +30,35 @@ fun main(args: Array<String>) {
 }
 ```
 
-安装后，框架自动创建 `RedisClient` 并绑定到上下文，业务代码通过 `ServiceFactory.getService(RedisClient::class)` 或 `ctx.getRedis()` 获取客户端。
+安装后，框架自动创建 `RedisClient` 并绑定到上下文，业务代码通过 `ctx.getRedis()`（或 `ctx.get(RedisClient::class)`）获取客户端。框架不提供 `ServiceFactory`。
 
 ---
 
 ## 二、Redis 配置
 
-在 `config/application.conf`（TOML 格式）中配置 Redis 连接信息：
+Redis 使用**独立配置文件** `config/redis.conf`（TOML 格式），
+遵循「文件名 = 命名空间」约定：键**根级平铺**，**禁止** `[redis]` 段。
 
 ```toml
-[redis]
-host = "localhost"
+# config/redis.conf
+host = "127.0.0.1"
 port = 6379
-db = 0
+database = 0
 keyPrefix = "neton"
 password = ""
-poolSize = 10
-timeout = 3000
+poolSize = 16
+timeout = 5000
 ```
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `host` | String | `"localhost"` | Redis 服务器地址 |
+| `host` | String | `"127.0.0.1"` | Redis 服务器地址 |
 | `port` | Int | `6379` | Redis 端口 |
-| `db` | Int | `0` | 数据库编号 |
+| `database` | Int | `0` | 数据库编号 |
 | `keyPrefix` | String | `"neton"` | 全局 key 前缀，所有模块共享 |
-| `password` | String | `""` | 认证密码，空则不认证 |
-| `poolSize` | Int | `10` | 连接池大小 |
-| `timeout` | Int | `3000` | 连接超时（毫秒） |
+| `password` | String | 无 | 认证密码，不配置则不认证 |
+| `poolSize` | Int | `16` | 连接池大小 |
+| `timeout` | Int | `5000` | 连接超时（毫秒），映射到 `RedisConfig.timeoutMs` |
 
 ### keyPrefix 的作用
 
@@ -89,7 +90,7 @@ val user = redis.get<User>("user:1")         // 泛型反序列化
 
 // remember：先读缓存，miss 则加载并写入
 val user = redis.remember<User>("user:1", ttl = 5.minutes) {
-    UserTable.findById(1)
+    UserTable.get(1)
 }
 
 // Hash

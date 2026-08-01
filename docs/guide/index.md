@@ -1,5 +1,10 @@
 # 用户指南
 
+::: info 版本对应声明
+本文档对应 **Neton 1.0.0-beta1**（Kotlin 2.4.0 / KSP 2.3.10）。
+若文档与代码不一致，**一律以 `neton/examples/` 下的可编译示例和框架源码为准**。
+:::
+
 欢迎阅读 Neton Framework 用户指南。
 
 Neton 是一个现代化的 Kotlin/Native Web 框架，基于 Kotlin Multiplatform 构建，编译为原生二进制文件，具备零反射、毫秒级启动、极低内存占用等特性。本指南将帮助你从零开始掌握 Neton 的核心功能，并构建高性能的 Web 应用。
