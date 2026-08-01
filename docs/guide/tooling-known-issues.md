@@ -14,4 +14,4 @@ Rules:
 - Keep Kotlin, KSP and Gradle versions pinned together and re-check the issue when upgrading them.
 - A reproducible non-zero build failure must be tracked separately and blocks release validation.
 
-Neton 1.0 remains on Kotlin 2.3.10; Kotlin 2.4 is outside the current stabilization scope.
+Neton 1.0 builds on Kotlin `2.4.0` with the KSP plugin pinned at `2.3.10` (see `gradle/libs.versions.toml`).

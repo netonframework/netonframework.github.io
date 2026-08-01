@@ -12,11 +12,14 @@ Neton 采用模块化架构设计，每个模块职责清晰、按需引入。�
 | `neton-logging` | 结构化日志系统：统一 Logger API、JSON 输出、异步写入、Sink 路由、traceId / spanId 传播、自动脱敏 | 是 |
 | `neton-http` | HTTP 能力：入站 Server Adapter，以及出站 `NetonHttpClient`、stream、SSE 与错误模型 | 是 |
 | `neton-routing` | 路由引擎：路由解析、路由组、目录约定分组、DSL 路由注册、Controller 扫描与绑定 | 是 |
-| `neton-security` | 安全模块：Authenticator（认证器）+ Guard（授权守卫）双层架构，支持 JWT / Session / Mock，注解驱动授权 | 否 |
+| `neton-security` | 安全模块：Authenticator（认证器）+ Guard（授权守卫）双层架构，支持 JWT / Mock（**Session 认证 1.0 不内置**），注解驱动授权 | 否 |
 | `neton-redis` | Redis 客户端抽象：连接管理、基础命令、分布式锁（`@Lock` / `LockManager`） | 否 |
 | `neton-cache` | 两级缓存：L1 本地内存 + L2 Redis，支持 `@Cacheable` / `@CachePut` / `@CacheEvict` 注解 | 否 |
-| `neton-database` | 数据库操作：Entity + Table 模式、类型安全 Query DSL、Repository 层、sqlx4k 驱动集成 | 否 |
-| `neton-ksp` | KSP 编译期代码生成器：处理 `@Controller`、`@NetonConfig`、`@Repository` 等注解，生成路由注册、参数绑定、配置 SPI 代码 | 否（推荐） |
+| `neton-database` | 数据库操作：Entity + Table 模式、类型安全 Query DSL、Logic 层、sqlx4k 驱动集成 | 否 |
+| `neton-storage` | 统一存储抽象：Local + S3 两种后端，`StorageOperator` / `StorageManager`，`[[sources]]` 多源配置 | 否 |
+| `neton-jobs` | 定时任务调度：`@Job` 注解 + `JobScheduler`，支持 cron / fixedRate 与 SINGLE_NODE / ALL_NODES | 否 |
+| `neton-ai` | AI 抽象层：generateText / streamText / tool loop / router / usage，OpenAI 兼容 + Anthropic | 否 |
+| `neton-ksp` | KSP 编译期代码生成器：处理 `@Controller`、`@Table`、`@Logic`、`@Job`、`@NetonConfig` 等注解，生成路由注册、参数绑定、Table、配置 SPI 代码 | 否（推荐） |
 | `neton-validation` | 参数验证：验证注解与编译期验证器生成 | 否 |
 
 ::: tip 最小依赖集
@@ -83,7 +86,6 @@ debug = true
 
 [server]
 port = 8080
-host = "0.0.0.0"
 
 [logging]
 level = "INFO"
@@ -147,7 +149,9 @@ Neton 通过 KSP（Kotlin Symbol Processing）在编译期完成代码生成，�
 |------|---------|
 | `@Controller` + `@Get` / `@Post` 等 | 路由注册代码、参数解析代码、Controller 实例化代码 |
 | `@NetonConfig` | 配置 SPI 注册代码（`ConfigRegistryProvider`） |
-| `@Repository` | 数据访问层代码 |
+| `@Table`（Entity） | Table 对象、EntityMeta、RowMapper、`update(id){ }` 扩展 |
+| `@Logic` | Logic 实例化与依赖注入代码 |
+| `@Job` | 定时任务注册代码 |
 | 验证注解 | 编译期验证器代码 |
 
 ### 构建配置

@@ -46,9 +46,12 @@ interface Cache<K, V> {
 
 ```kotlin
 interface CacheManager {
-    fun <K, V> getCache(name: String): Cache<K, V>
+    suspend fun <V : Any> getCache(name: String, serializer: KSerializer<V>): Cache<String, V>
     fun getCacheNames(): Set<String>
 }
+
+// 便捷扩展（reified，自动取 serializer）：
+suspend inline fun <reified V : Any> CacheManager.getCache(name: String): Cache<String, V>
 ```
 
 - 按 `name` 获取 Cache；每个 name 对应一套 L1+L2 的配置（来自 CacheConfig）。
@@ -247,7 +250,7 @@ suspend fun reloadAllUsers()
 
 ### 5.4 编程式 API
 
-- `cacheManager.getCache&lt;User, User&gt;("user").getOrPut(id) { userRepo.findById(id) }`
+- `cacheManager.getCache<User>("user").getOrPut(id) { UserTable.get(id) }`
 - 或由 KSP/字节码在 `@Cacheable` 方法外围生成等价 getOrPut + 调用。
 
 ### 5.5 Key 表达式（v1 冻结）
@@ -281,7 +284,7 @@ suspend fun reloadAllUsers()
 
 ```kotlin
 val ctx = context.getApplicationContext() ?: throw HttpException(500, "Cache annotations require NetonContext")
-val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "CacheManager not bound. Install cache { } to enable @Cacheable/@CachePut/@CacheEvict.")
+val cacheManager = ctx.getOrNull(neton.cache.CacheManager::class) ?: throw HttpException(500, "CacheManager not bound. Install cache { } to enable @Cacheable/@CachePut/@CacheEvict.")
 ```
 
 - 拿不到 NetonContext 或 CacheManager 时，**抛 HttpException 500**（与 validation registry 的 warn 规则相比更硬，避免静默回退导致行为不一致）。
@@ -293,6 +296,20 @@ val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpExcepti
 - 返回类型**允许 T?**（Cacheable 常见）。
 - **不支持**：Result&lt;T&gt;、Flow&lt;T&gt;、List&lt;T&gt; 等复杂泛型（除非实现验证过 serializer 可稳定获取）。
 - **Unit / Nothing**：**不允许**标注 @Cacheable / @CachePut（KSP 编译期报错）。
+
+**（v1 冻结）key 的来源约束**：
+
+- key 表达式在运行时只能读 **HandlerArgs**，而它只装 **path 与 query**。
+- 因此 body、header、cookie、表单字段，以及注入的框架类型（HttpContext / Identity / 上传文件）
+  **不能参与 key**——它们在 args 里取到 null，会让不同请求算出同一个 key 而错误命中。
+- 默认 key（`hash(所有参数)`）遇到上述参数时 **KSP 编译期报错**，要求显式写 `key = "..."`。
+- key 模板只支持 `{paramName}` 一级占位符，**不支持** `{user.id}` 这类嵌套路径；引用不到
+  path/query 参数时 **KSP 编译期报错**，不再静默解析成空串。
+- 占位符写的是**绑定名**，不是 Kotlin 参数名。`@PathVariable("id") userId` 在 args 里的键是
+  `id`，因此 key 要写 `{id}`；写 `{userId}` 会编译期报错并提示正确写法。
+- 这些注解只在 `@Controller` 的**路由方法**（带 `@Get`/`@Post` 等）上织入。标在 Logic/Service
+  上、或标在 Controller 里没有 HTTP 注解的辅助方法上，**KSP 编译期报错**——因为不会生成
+  RouteHandler，注解不可能生效。
 - 上述写进规范后，KSP 实现不再纠结边界情况。
 
 **（v1 冻结）key 默认 hash(args) 的稳定性**：
@@ -310,7 +327,7 @@ val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpExcepti
 ```kotlin
 // 伪代码：KSP 为 suspend fun getUser(id: Long): User? 生成（handler 内）
 val ctx = context.getApplicationContext() ?: throw HttpException(500, "Cache annotations require NetonContext")
-val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "CacheManager not bound. Install cache { } to enable @Cacheable.")
+val cacheManager = ctx.getOrNull(neton.cache.CacheManager::class) ?: throw HttpException(500, "CacheManager not bound. Install cache { } to enable @Cacheable.")
 val cache = cacheManager.getCache<User>("user")
 val key = if (keyTemplate.isEmpty()) stableHashKey(args) else resolveKeyTemplate(keyTemplate, args)  // 与 @Lock 同套解析
 val ttl = if (annotation.ttlMs > 0) annotation.ttlMs.toLong().milliseconds else null
@@ -326,7 +343,7 @@ return cache.getOrPut(key, ttl) { ctrl.getUser(id) }
 ```kotlin
 val result = ctrl.updateUser(id, req)  // 先执行业务
 val ctx = context.getApplicationContext() ?: throw HttpException(500, "...")
-val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "...")
+val cacheManager = ctx.getOrNull(neton.cache.CacheManager::class) ?: throw HttpException(500, "...")
 val cache = cacheManager.getCache<User>("user")
 val key = if (keyTemplate.isEmpty()) stableHashKey(args) else resolveKeyTemplate(keyTemplate, args)
 val ttl = if (annotation.ttlMs > 0) annotation.ttlMs.toLong().milliseconds else null
@@ -342,16 +359,17 @@ return result
 // 单 key
 ctrl.deleteUser(id)  // 先执行业务
 val ctx = context.getApplicationContext() ?: throw HttpException(500, "...")
-val cacheManager = ctx.get(neton.cache.CacheManager::class) ?: throw HttpException(500, "...")
-val cache = cacheManager.getCache<Any?>("user")  // 仅 delete/clear，类型可擦除
+val cacheManager = ctx.getOrNull(neton.cache.CacheManager::class) ?: throw HttpException(500, "...")
 val key = resolveKeyTemplate(keyTemplate, args)
-cache.delete(key)
+// evict 与值类型无关：被标注的方法常返回 Unit，拿不到可序列化的值类型。
+// getCache<Any?> 不成立（Any? 没有 serializer），走 CacheManager 的类型无关入口，
+// 它会清 L2 并清掉所有类型分片的 L1。
+cacheManager.evict("user", key)
 // return 原方法返回值（Unit 则 return Unit）
 
 // allEntries = true
 ctrl.reloadAllUsers()
-val cache = cacheManager.getCache<Any?>("user")
-cache.clear()  // L2 行为遵循 9.2（SCAN 优先、KEYS 过渡）
+cacheManager.evictAll("user")  // L2 行为遵循 9.2（SCAN 优先、KEYS 过渡）
 ```
 
 - **先执行方法**，再 delete 或 clear；若方法抛异常，不删缓存。**allEntries 时 clear() 的 L2 语义见 9.2**。

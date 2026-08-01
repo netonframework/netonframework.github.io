@@ -431,11 +431,11 @@ fun <A, B> select(c1: ColRef<*, A>, c2: ColRef<*, B>): TypedProjectedSelect2<A, 
 
 | 路径 | 场景 | DSL | 返回类型 |
 |------|------|-----|----------|
-| **路径 A**（Phase 3） | 单表 typed projection | `EntityQuery.select(T::a, T::b)` | `List&lt;Record2&lt;A, B&gt;&gt;` |
-| **路径 B**（Phase 4） | JOIN typed projection | `q.select(U.id, R.name)` | `List&lt;Record2&lt;A, B&gt;&gt;` |
+| **路径 A**（Phase 3，**1.0 未提供**） | 单表 typed projection | `EntityQuery.select(T::a, T::b)` | `List&lt;Record2&lt;A, B&gt;&gt;` |
+| **路径 B**（Phase 4，**1.0 未提供**） | JOIN typed projection | `q.select(U.id, R.name)` | `List&lt;Record2&lt;A, B&gt;&gt;` |
 | **逃生口** | JOIN + 自定义映射 | `q.selectRows(...).fetchRows()` | `List&lt;Row&gt;` |
 
-**说明**：Phase 4 JOIN 投影不退化为 `Row`。路径 B 是正式路径；`fetchRows()` / `pageRows()` 是逃生口，适合 `groupOneToMany` 等手动映射场景。
+**说明**：1.0 `EntityQuery` 仅提供 `select(vararg columnNames: String)` → `ProjectionQuery`（返回 `Row`）；路径 A/B 为后续阶段。Phase 4 JOIN 投影不退化为 `Row`。路径 B 是正式路径；`fetchRows()` / `pageRows()` 是逃生口，适合 `groupOneToMany` 等手动映射场景。
 
 ---
 

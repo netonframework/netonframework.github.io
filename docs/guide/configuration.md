@@ -39,7 +39,6 @@ debug = true
 
 [server]
 port = 8080
-host = "0.0.0.0"
 
 [logging]
 level = "INFO"
@@ -82,7 +81,10 @@ levels = "ALL"
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `port` | Int | `8080` | 监听端口 |
-| `host` | String | `"0.0.0.0"` | 绑定地址 |
+
+::: warning `server.host` 1.0 暂不支持
+监听地址在 1.0 中硬编码为 `0.0.0.0`（见 `KtorHttpAdapter`），配置 `server.host` **不会生效**。
+:::
 
 ### [logging] -- 日志
 

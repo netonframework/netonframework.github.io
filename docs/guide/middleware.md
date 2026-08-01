@@ -54,7 +54,7 @@ interface Authenticator {
 | MockAuthenticator | 返回固定用户，用于开发测试 |
 | AnonymousAuthenticator | 返回 null，允许匿名 |
 | JwtAuthenticator | 解析 JWT token（v1.1 完善中） |
-| SessionAuthenticator | 从 Session 读取用户（v1.1 完善中） |
+| ~~SessionAuthenticator~~ | **1.0 不内置**：`registerSessionAuthenticator` 直接抛错，需自行实现 Authenticator |
 
 ### 2.2 Guard（授权：你能做什么）
 
@@ -264,7 +264,7 @@ class OrderController {
 
     @Post("/orders")
     @RequireAuth
-    suspend fun createOrder(ctx: HttpContext, @RequestBody order: CreateOrderReq): Order {
+    suspend fun createOrder(ctx: HttpContext, @Body order: CreateOrderReq): Order {
         // 记录请求接收时间
         val startTime = ctx.getAttribute("requestTime") as? Long
 

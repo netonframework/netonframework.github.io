@@ -11,6 +11,7 @@
 - [Neton 1.0 Release Gate R0](./release-gate.md) — 原生 CI、release smoke 与发布基线
 - [Core SPI 最佳实践](./core-spi-best-practices.md) — SPI 层实现规范
 - [Config SPI 规范](./config-spi.md) — @NetonConfig 与配置扩展点
+- [Module Manifest 规范](./module-manifest.md) — `@Module` 与 KSP 生成的 `{Id}ModuleManifest`
 
 ## HTTP 与路由
 
@@ -32,7 +33,7 @@
 - [数据库规范 v1](./database.md) — Entity + Table 模式、Query DSL、强类型列引用、Typed Projection **(v1 冻结)**
 - [JOIN 查询规范](./database-join.md) — JOIN DSL、SelectBuilder、SelectAst、RecordN
 - [执行链与约束规范](./database-execution.md) — DbContext 统一执行门面、QueryInterceptor、事务
-- [Schema Migration](./database.md#12-schema-migration) — history 表、原子执行与 `application.kexe migrate` 边界 **(架构边界 / 必读)**
+- [Schema Migration](./database.md#_12-schema-migration) — history 表、原子执行与 `application.kexe migrate` 边界 **(架构边界 / 必读)**
 
 ## 缓存与 Redis
 
@@ -41,7 +42,7 @@
 
 ## 定时任务与存储
 
-- [定时任务规范](./jobs.md) — @Scheduled 注解、Cron 表达式、JobManager
+- [定时任务规范](./jobs.md) — `@Job` 注解、Cron / fixedRate 表达式、`JobScheduler`
 - [存储规范](./storage-spec.md) — 文件存储抽象、多后端适配
 
 ## 项目管理

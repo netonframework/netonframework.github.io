@@ -3,7 +3,7 @@
 > Status: Accepted, implementation in progress
 > Track: NETON-DB-SESSION-P0
 > Target: Neton 1.0
-> Kotlin baseline: 2.3.10
+> Kotlin baseline: 2.4.0 (KSP plugin 2.3.10)
 
 ## 1. Purpose
 

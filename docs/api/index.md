@@ -18,5 +18,8 @@
 | neton-redis | Redis 客户端、分布式锁 |
 | neton-cache | L1 + L2 缓存抽象 |
 | neton-database | Entity/Table/Store 适配、Query DSL |
-| neton-ksp | 编译期代码生成（Controller / Entity / Config） |
+| neton-storage | 统一存储抽象（Local + S3，`StorageOperator` / `StorageManager`） |
+| neton-jobs | 定时任务调度（`@Job` + `JobScheduler`，cron / fixedRate） |
+| neton-ai | AI 抽象层（generateText / streamText / tool loop / router / usage） |
+| neton-ksp | 编译期代码生成（Controller / Entity / Logic / Job / Config） |
 | neton-validation | 校验集成 |

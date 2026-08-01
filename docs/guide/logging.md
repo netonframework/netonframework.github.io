@@ -275,7 +275,7 @@ import neton.core.annotations.*
 import neton.core.http.*
 import neton.logging.Logger
 import neton.logging.Log
-import neton.database.dsl.ColumnRef
+import neton.database.dsl.*
 
 @Controller("/api/orders")
 @Log
@@ -287,7 +287,7 @@ class OrderController(private val log: Logger) {
     ): List<Order> {
         log.info("order.list", mapOf("status" to status))
         return if (status != null) {
-            OrderTable.query { where { ColumnRef("status") eq status } }.list()
+            OrderTable.query { where { Order::status eq status } }.list()
         } else {
             OrderTable.findAll()
         }
@@ -300,7 +300,7 @@ class OrderController(private val log: Logger) {
             "amount" to order.amount
         ))
         return try {
-            OrderTable.save(order)
+            OrderTable.insert(order)
         } catch (e: Exception) {
             log.error("order.create.failed", mapOf(
                 "customerId" to order.customerId,

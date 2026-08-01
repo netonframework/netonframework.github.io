@@ -8,7 +8,8 @@
 
 | 工具 | 版本要求 | 说明 |
 |------|---------|------|
-| Kotlin | 2.1.x | Neton 基于 Kotlin Multiplatform 构建 |
+| Kotlin | 2.4.0 | Neton 基于 Kotlin Multiplatform 构建（见 `gradle/libs.versions.toml`） |
+| KSP | 2.3.10 | KSP 插件版本，与 Kotlin 独立管理 |
 | Gradle | 8.x | 构建工具，推荐使用 Gradle Wrapper |
 | 操作系统 | macOS / Linux / Windows | 支持多平台原生编译 |
 
@@ -105,7 +106,6 @@ debug = true
 
 [server]
 port = 8080
-host = "0.0.0.0"
 
 [logging]
 level = "INFO"
@@ -116,7 +116,6 @@ level = "INFO"
 - `application.name` -- 应用名称，用于日志标识
 - `application.debug` -- 调试模式，开启后输出更详细的日志
 - `server.port` -- HTTP 监听端口
-- `server.host` -- 监听地址，`0.0.0.0` 表示监听所有网络接口
 - `logging.level` -- 日志级别：`DEBUG`、`INFO`、`WARN`、`ERROR`
 
 ## 第四步：编写主程序

@@ -600,7 +600,13 @@ fun <T : Any, V> Row.getOrNull(ref: TableRef<T>, prop: KProperty1<T, V>): V? {
 > 调用对应的 `Row.long()` / `Row.int()` / `Row.string()` 等方法。
 > SELECT 投影时，框架自动给列加 `{alias}_{columnName}` 别名以避免冲突。
 
-### 3.8 Typed select() API
+### 3.8 Typed select() API（**Phase 3 规划，1.0 未提供**）
+
+::: warning 1.0 现状
+`neton-database` 1.0 的 `EntityQuery` **只有** `fun select(vararg columnNames: String): ProjectionQuery`。
+下面的 `select(KProperty1...)` 与 `TypedProjection1..8` **尚未实现**（deferred to 1.1），
+照抄会编译不过。1.0 请用字符串投影 `select("id", "username")` + `ProjectionQuery.rows()`。
+:::
 
 ```kotlin
 // EntityQuery 新增 typed select（Phase 1 接口扩展）
@@ -1109,7 +1115,7 @@ class UserLogic(private val db: DbContext = dbContext()) : DbContext by db {
 | `SystemUserMeta.kt` | 1 | internal | `EntityMeta&lt;SystemUser&gt;` — 表名、列名、类型 |
 | `SystemUserRowMapper.kt` | 1 | internal | sqlx4k `RowMapper&lt;SystemUser&gt;` — ResultSet.Row → Entity |
 | `SystemUserTable.kt` | 1 | **public** | `Table&lt;SystemUser, Long&gt; by SqlxTableAdapter` — CRUD 操作 |
-| `SystemUserExtensions.kt` | 1 | public | `update(id){ }` + `save()` + `delete()` 扩展 |
+| `SystemUserExtensions.kt` | 1 | public | `update(id){ }` mutate 风格扩展（1.0 无 `save()`/`delete(entity)`） |
 | **`SystemUserTableDef.kt`** | **2** | **internal** | **`TableDef&lt;SystemUser&gt;` — KProperty → Column 精确映射** |
 | **`SystemUserEntityMapper.kt`** | **3** | **internal** | **`EntityMapper&lt;SystemUser&gt;` — Neton Row → Entity** |
 
