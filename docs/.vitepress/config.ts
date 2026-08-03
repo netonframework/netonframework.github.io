@@ -1,4 +1,64 @@
 import { defineConfig } from "vitepress";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HOSTNAME = "https://netonframework.github.io";
+const DOCS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+// locale 路径前缀 → hreflang 值。root locale（英文）没有前缀。
+// 增加语言时只改这里：路径用小写（zh-hans），hreflang 用 BCP 47 大小写（zh-Hans）。
+const LOCALES: Array<{ prefix: string; hreflang: string }> = [
+  { prefix: "", hreflang: "en" },
+  { prefix: "zh-hans", hreflang: "zh-Hans" },
+];
+
+/** 去掉 locale 前缀，得到各语言共用的相对路径，如 guide/cache.md */
+function stripLocale(page: string): string {
+  for (const { prefix } of LOCALES) {
+    if (prefix && page.startsWith(`${prefix}/`)) return page.slice(prefix.length + 1);
+  }
+  return page;
+}
+
+function sourceFileFor(prefix: string, sharedPath: string): string {
+  return join(DOCS_ROOT, prefix, sharedPath);
+}
+
+function urlFor(prefix: string, sharedPath: string): string {
+  const html = sharedPath.replace(/\.md$/, ".html").replace(/(^|\/)index\.html$/, "$1");
+  return `${HOSTNAME}/${prefix ? `${prefix}/` : ""}${html}`;
+}
+
+/** 目录下所有 .html 的相对路径 */
+function collectHtml(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  const walk = (current: string, prefix: string) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(join(current, entry.name), rel);
+      else if (entry.name.endsWith(".html")) out.push(rel);
+    }
+  };
+  walk(dir, "");
+  return out;
+}
+
+function redirectHtml(target: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Moved</title>
+<link rel="canonical" href="${HOSTNAME}${target}">
+<meta name="robots" content="noindex">
+<meta http-equiv="refresh" content="0; url=${target}">
+</head>
+<body>This page moved to <a href="${target}">${target}</a>.</body>
+</html>
+`;
+}
 
 // root locale = English（/guide/cache.html），中文走子路径（/zh-hans/guide/cache.html）。
 // spec/ 目前只有中文版，英文导航直接指向 /zh-hans/spec/ 并标注语言，不留死链。
@@ -147,6 +207,50 @@ export default defineConfig({
   title: "Neton Framework",
   base: "/",
   lastUpdated: true,
+
+  sitemap: {
+    hostname: HOSTNAME,
+  },
+
+  // 各语言版本互指 hreflang，否则搜索引擎会把它们当成重复内容。
+  // 只在对应语言的源文件真实存在时才发 alternate——指向 404 比不指更糟。
+  transformHead({ page }) {
+    const shared = stripLocale(page);
+    const tags: Array<[string, Record<string, string>]> = [];
+
+    for (const { prefix, hreflang } of LOCALES) {
+      if (!existsSync(sourceFileFor(prefix, shared))) continue;
+      tags.push(["link", { rel: "alternate", hreflang, href: urlFor(prefix, shared) }]);
+    }
+    // 语言都不匹配时的兜底，指向 root locale
+    if (existsSync(sourceFileFor("", shared))) {
+      tags.push(["link", { rel: "alternate", hreflang: "x-default", href: urlFor("", shared) }]);
+    }
+    return tags;
+  },
+
+  // spec/ 和 api/ 原本在根路径（中文），改 i18n 后整体搬进 /zh-hans/，老地址会 404。
+  // GitHub Pages 没有服务端跳转，只能生成跳转桩页：canonical 交代权重归属，
+  // meta refresh 负责把人送过去。等这些目录有了英文版，真实页面会占住路径，桩页自动不再生成。
+  buildEnd(siteConfig) {
+    const movedRoots = ["spec", "api"];
+    let written = 0;
+
+    for (const { prefix } of LOCALES) {
+      if (!prefix) continue;
+      for (const root of movedRoots) {
+        for (const rel of collectHtml(join(siteConfig.outDir, prefix, root))) {
+          const from = join(siteConfig.outDir, root, rel);
+          if (existsSync(from)) continue; // 已有真实页面，不覆盖
+          const target = `/${prefix}/${root}/${rel}`;
+          mkdirSync(dirname(from), { recursive: true });
+          writeFileSync(from, redirectHtml(target), "utf-8");
+          written += 1;
+        }
+      }
+    }
+    if (written > 0) console.log(`  generated ${written} redirect stubs for moved paths`);
+  },
 
   markdown: {
     lineNumbers: true,
