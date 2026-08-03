@@ -1,51 +1,58 @@
-# 用户指南
+# Guide
 
-::: info 版本对应声明
-本文档对应 **Neton 1.0.0-beta1**（Kotlin 2.4.0 / KSP 2.3.10）。
-若文档与代码不一致，**一律以 `neton/examples/` 下的可编译示例和框架源码为准**。
+::: info Version
+This documentation covers **Neton 1.0.0-beta1** (Kotlin 2.4.0 / KSP 2.3.10).
+Where the documentation and the code disagree, **the compilable examples under
+`neton/examples/` and the framework sources are authoritative**.
 :::
 
-欢迎阅读 Neton Framework 用户指南。
+Welcome to the Neton Framework guide.
 
-Neton 是一个现代化的 Kotlin/Native Web 框架，基于 Kotlin Multiplatform 构建，编译为原生二进制文件，具备零反射、毫秒级启动、极低内存占用等特性。本指南将帮助你从零开始掌握 Neton 的核心功能，并构建高性能的 Web 应用。
+Neton is a modern Kotlin/Native web framework built on Kotlin Multiplatform. It compiles to a
+native binary and uses no reflection, which gives it millisecond startup and a small memory
+footprint. This guide takes you from an empty directory to a working, high-performance service.
 
-## 文档体系
+## How the documentation is organised
 
-Neton 文档分为两个部分：
+| Type | Audience | What it covers |
+|---|---|---|
+| **Guide** (this section) | Application developers | Practice-oriented: tutorials, code samples and recommended patterns |
+| **[Specifications](/zh-hans/spec/)** (Chinese) | Framework contributors and advanced users | Design-oriented: frozen API definitions, architecture and SPI contracts |
 
-| 文档类型 | 目标读者 | 内容特点 |
-|---------|---------|---------|
-| **用户指南**（本部分） | 应用开发者 | 面向实践，包含教程、代码示例、最佳实践，引导你快速上手并高效开发 |
-| **[规范文档](/spec/)** | 框架贡献者 / 深度用户 | 面向设计，包含 API 冻结定义、架构设计、SPI 规范，定义框架的内部契约与演进方向 |
+If this is your first time with Neton, start here. Reach for the specifications when you need the
+design rationale behind a feature or the exact frozen contract of an API.
 
-如果你是第一次接触 Neton，建议从用户指南开始阅读；如果你需要了解某个功能的底层设计细节或 API 冻结定义，可以参阅对应的规范文档。
+::: tip Translation status
+The guide is available in English. The specifications and API reference are currently
+Chinese-only; translations are in progress.
+:::
 
-## 目录导航
+## Contents
 
-### 入门
+### Getting started
 
-- [快速开始](./quick-start.md) -- 从零搭建第一个 Neton 应用，5 分钟运行 Hello World
-- [项目结构](./project-structure.md) -- 了解 Neton 的模块划分、目录约定与配置文件
+- [Quick start](./quick-start.md) — build and run your first Neton application
+- [Project structure](./project-structure.md) — module layout, directory conventions and config files
 
-### 核心功能
+### Core features
 
-- [路由与控制器](./routing.md) -- Controller 注解、HTTP 方法、路由组、DSL 路由
-- [参数绑定](./parameter-binding.md) -- 约定优于配置的参数推断，Path / Query / Body / Header / Cookie 绑定
-- [配置管理](./configuration.md) -- TOML 配置文件、环境覆盖、@NetonConfig SPI 扩展
-- [日志系统](./logging.md) -- 结构化日志、Sink 路由、异步写入、Trace 上下文
+- [Routing and controllers](./routing.md) — controller annotations, HTTP methods, route groups, DSL routes
+- [Parameter binding](./parameter-binding.md) — inference by convention, plus path / query / body / header / cookie binding
+- [Configuration](./configuration.md) — TOML files, environment overrides, the `@NetonConfig` SPI
+- [Logging](./logging.md) — structured logs, sink routing, asynchronous writes, trace context
 
-### 安全与认证
+### Security
 
-- [安全指南](./security.md) -- Authenticator + Guard 架构、JWT 认证、@RequireAuth / @AllowAnonymous 授权
+- [Security guide](./security.md) — the Authenticator + Guard architecture, JWT authentication, `@RequireAuth` / `@AllowAnonymous`
 
-### 数据与缓存
+### Data and caching
 
-- [数据库操作](./database.md) -- Entity + Table 模式、类型安全 Query DSL、Repository 层
-- [缓存](./cache.md) -- L1 + L2 两级缓存、@Cacheable / @CachePut / @CacheEvict 注解
-- [Redis 与分布式锁](./redis.md) -- Redis 客户端、@Lock 分布式锁
+- [Database](./database.md) — the entity + table model, the type-safe query DSL, the logic layer
+- [Cache](./cache.md) — two-tier L1 + L2 caching, `@Cacheable` / `@CachePut` / `@CacheEvict`
+- [Redis and distributed locks](./redis.md) — the Redis client and the `@Lock` annotation
 
-### 进阶
+### Advanced
 
-- [中间件机制](./middleware.md) -- 请求管道、自定义中间件
-- [部署与跨平台](./deployment.md) -- 构建发布、跨平台编译目标
-- [工具链已知问题](./tooling-known-issues.md) -- Kotlin/Native、KSP 与 Gradle 的已知构建噪音
+- [Middleware](./middleware.md) — the request pipeline and custom middleware
+- [Deployment and targets](./deployment.md) — release builds and cross-platform compilation
+- [Toolchain known issues](./tooling-known-issues.md) — known build noise from Kotlin/Native, KSP and Gradle
