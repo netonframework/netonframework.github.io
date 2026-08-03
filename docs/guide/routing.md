@@ -1,19 +1,20 @@
-# 路由与控制器
+# Routing and controllers
 
-本章介绍 Neton 的路由系统，包括 Controller 注解路由、HTTP 方法注解、路由组与挂载、以及 DSL 路由。
+This chapter covers Neton's routing system: annotated controllers, HTTP method annotations, route
+groups and mounting, and the routing DSL.
 
-## 基本概念
+## Two ways to define routes
 
-Neton 提供两种方式定义路由：
+1. **Annotated routes** (recommended) — `@Controller` plus HTTP method annotations, with KSP
+   generating the routing code at compile time
+2. **DSL routes** — registered by hand inside a `routing { }` block, which suits small services
 
-1. **注解路由**（推荐） -- 使用 `@Controller` + HTTP 方法注解，配合 KSP 在编译期自动生成路由代码
-2. **DSL 路由** -- 在 `routing { }` 块中使用 DSL 语法手动注册路由，适合简单场景
+## Annotated routes
 
-## 注解路由
+### A basic controller
 
-### 基础控制器
-
-使用 `@Controller` 注解定义控制器类，指定基础路径。使用 `@Get`、`@Post` 等注解标记处理方法：
+Annotate a class with `@Controller` to give it a base path, then mark handlers with `@Get`,
+`@Post` and friends:
 
 ```kotlin
 @Controller("/simple")
@@ -22,12 +23,12 @@ class SimpleController {
     fun hello(): String {
         return "Hello from SimpleController!"
     }
-    
+
     @Get("/user/{id}")
     fun getUser(@PathVariable("id") userId: Int): String {
         return "User ID: $userId"
     }
-    
+
     @Post("/user")
     fun createUser(@Body user: CreateUserRequest): String {
         return "Created: ${user.name}, ${user.email}"
@@ -35,14 +36,14 @@ class SimpleController {
 }
 ```
 
-在上面的示例中：
+In that example:
 
-- `@Controller("/simple")` 定义了控制器的基础路径为 `/simple`
-- `@Get("/hello")` 注册 `GET /simple/hello` 路由
-- `@Get("/user/{id}")` 注册带路径参数的路由，`{id}` 是路径占位符
-- `@Post("/user")` 注册 `POST /simple/user` 路由，`@Body` 表示从请求体反序列化参数
+- `@Controller("/simple")` sets the controller's base path
+- `@Get("/hello")` registers `GET /simple/hello`
+- `@Get("/user/{id}")` registers a route with a path parameter, where `{id}` is the placeholder
+- `@Post("/user")` registers `POST /simple/user`, and `@Body` deserializes the request body
 
-请求体数据类需要添加 `@Serializable` 注解：
+Request body classes must be `@Serializable`:
 
 ```kotlin
 @Serializable
@@ -53,9 +54,7 @@ data class CreateUserRequest(
 )
 ```
 
-### 多路径参数
-
-控制器方法可以接收多个路径参数：
+### Multiple path parameters
 
 ```kotlin
 @Controller("/simple")
@@ -65,30 +64,30 @@ class SimpleController {
         @PathVariable("userId") userId: Int,
         @PathVariable("postId") postId: Int
     ): String {
-        return "用户 $userId 的帖子 $postId"
+        return "Post $postId of user $userId"
     }
 }
 ```
 
-### 上下文对象注入
+### Injecting context objects
 
-控制器方法可以直接注入框架提供的上下文对象，无需注解：
+Framework context objects are injected by type, without an annotation:
 
 ```kotlin
 @Controller("/simple")
 class SimpleController {
     @Get("/request-info")
     fun getRequestInfo(request: HttpRequest): String {
-        return "请求方法: ${request.method}, 路径: ${request.path}"
+        return "method: ${request.method}, path: ${request.path}"
     }
 }
 ```
 
-支持自动注入的类型包括 `HttpContext`、`HttpRequest`、`HttpResponse`。
+`HttpContext`, `HttpRequest` and `HttpResponse` are all injectable this way.
 
-### 认证用户注入
+### Injecting the authenticated user
 
-使用 `@CurrentUser` 注解或直接声明 `Identity` 类型参数注入当前认证用户信息：
+Use `@CurrentUser`, or simply declare an `Identity` parameter:
 
 ```kotlin
 @Controller("/simple")
@@ -96,33 +95,34 @@ class SimpleController {
     @Get("/profile")
     @RequireAuth
     fun getProfile(@CurrentUser identity: Identity): String {
-        return "当前用户: ${identity.id}, 角色: ${identity.roles}"
+        return "user: ${identity.id}, roles: ${identity.roles}"
     }
 
     @Get("/visitor")
     @AllowAnonymous
     fun visitor(identity: Identity?): String {
-        // Identity 类型自动注入，无需 @CurrentUser
-        return identity?.id ?: "未认证用户"
+        // an Identity parameter is injected automatically; @CurrentUser is optional
+        return identity?.id ?: "anonymous"
     }
 }
 ```
 
-## HTTP 方法注解
+A non-nullable `Identity` parameter throws `UnauthorizedException` (HTTP 401) when the request is
+unauthenticated, rather than failing with a null pointer.
 
-Neton 支持所有标准 HTTP 方法，每种方法对应一个注解：
+## HTTP method annotations
 
-| 注解 | HTTP 方法 | 典型用途 |
-|------|----------|---------|
-| `@Get` | GET | 查询资源 |
-| `@Post` | POST | 创建资源 |
-| `@Put` | PUT | 完整更新资源 |
-| `@Patch` | PATCH | 部分更新资源 |
-| `@Delete` | DELETE | 删除资源 |
-| `@Head` | HEAD | 获取资源元信息（不返回实体） |
-| `@Options` | OPTIONS | 获取资源支持的方法 |
+| Annotation | Method | Typical use |
+|---|---|---|
+| `@Get` | GET | Read a resource |
+| `@Post` | POST | Create a resource |
+| `@Put` | PUT | Replace a resource |
+| `@Patch` | PATCH | Partially update a resource |
+| `@Delete` | DELETE | Delete a resource |
+| `@Head` | HEAD | Fetch metadata without a body |
+| `@Options` | OPTIONS | Report the methods a resource supports |
 
-以下是一个完整的 RESTful API 控制器示例：
+A full REST controller:
 
 ```kotlin
 @Controller("/api/products")
@@ -130,67 +130,68 @@ class HttpMethodController {
 
     @Get("/")
     fun getProducts(): String {
-        return "GET /api/products - 获取所有产品列表"
+        return "GET /api/products - list all products"
     }
 
     @Get("/{id}")
     fun getProduct(): String {
-        return "GET /api/products/{id} - 获取指定产品详情"
+        return "GET /api/products/{id} - product detail"
     }
 
     @Post("/")
     fun createProduct(): String {
-        return "POST /api/products - 创建新产品"
+        return "POST /api/products - create a product"
     }
 
     @Put("/{id}")
     fun updateProduct(): String {
-        return "PUT /api/products/{id} - 完整更新产品信息"
+        return "PUT /api/products/{id} - replace a product"
     }
 
     @Patch("/{id}")
     fun patchProduct(): String {
-        return "PATCH /api/products/{id} - 部分更新产品信息"
+        return "PATCH /api/products/{id} - partially update a product"
     }
 
     @Delete("/{id}")
     fun deleteProduct(): String {
-        return "DELETE /api/products/{id} - 删除指定产品"
+        return "DELETE /api/products/{id} - delete a product"
     }
 
     @Head("/{id}")
     fun headProduct(): String {
-        return "HEAD /api/products/{id} - 获取产品元信息"
+        return "HEAD /api/products/{id} - product metadata"
     }
 
     @Options("/")
     fun optionsProducts(): String {
-        return "OPTIONS /api/products - 支持的方法: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
+        return "OPTIONS /api/products - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
     }
 }
 ```
 
-## 文件上传路由
+## File uploads
 
-控制器参数使用 `UploadFile`、`List&lt;UploadFile&gt;` 或 `UploadFiles` 类型即可接收上传文件。KSP 按**参数名匹配表单 fieldName** 自动绑定：
+Declare a parameter of type `UploadFile`, `List<UploadFile>` or `UploadFiles`. KSP binds it by
+**matching the parameter name against the form field name**:
 
 ```kotlin
 @Controller("/api/files")
 class FileController {
 
-    // 参数名 "avatar" 匹配表单 fieldName "avatar"
+    // parameter "avatar" matches form field "avatar"
     @Post("/avatar")
     suspend fun upload(avatar: UploadFile): Map<String, Any> {
         return mapOf("filename" to avatar.filename, "size" to avatar.size)
     }
 
-    // 参数名 "photos" 匹配表单 fieldName "photos"
+    // parameter "photos" matches form field "photos"
     @Post("/batch")
     suspend fun batchUpload(photos: List<UploadFile>): Map<String, Any> {
         return mapOf("count" to photos.size)
     }
 
-    // UploadFiles 注入完整结构化视图，可按 fieldName 查询
+    // UploadFiles gives the whole structured view, queryable by field name
     @Post("/mixed")
     suspend fun mixedUpload(files: UploadFiles): Map<String, Any> {
         val avatar = files.require("avatar")
@@ -200,17 +201,17 @@ class FileController {
 }
 ```
 
-KSP 会自动识别 `UploadFile` / `List&lt;UploadFile&gt;` / `UploadFiles` 参数类型，从 `multipart/form-data` 请求中解析文件。
+KSP recognises these types and parses the files out of the `multipart/form-data` request.
 
 ---
 
-## 路由组与挂载
+## Route groups and mounting
 
-路由组用于将控制器按照业务模块进行分组，并为每组分配 URL 前缀。
+Route groups organise controllers by area and give each area a URL prefix.
 
-### 配置路由组
+### Declaring groups
 
-在 `config/routing.conf` 中定义路由组：
+In `config/routing.conf`:
 
 ```toml
 [[groups]]
@@ -224,29 +225,29 @@ group = "app"
 mount = "/app"
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `group` | String | 路由组标识 |
-| `mount` | String | URL 前缀 |
-| `requireAuth` | Boolean | 该组是否默认要求认证（默认 false） |
-| `allowAnonymous` | List&lt;String&gt; | 白名单路径，即使 requireAuth=true 也允许匿名（默认空） |
+| Field | Type | Meaning |
+|---|---|---|
+| `group` | String | The group identifier |
+| `mount` | String | The URL prefix |
+| `requireAuth` | Boolean | Whether the group requires authentication by default (default `false`) |
+| `allowAnonymous` | List&lt;String&gt; | Paths that stay anonymous even when `requireAuth` is true (default empty) |
 
-### 目录约定
+### Directory convention
 
-路由组与控制器的包路径存在对应关系。KSP 根据控制器所在的包名自动识别其所属路由组：
+A controller's package determines its group; KSP resolves this at compile time:
 
 ```
 controller/
-├── HomeController.kt           # 默认组，路由: /
-├── SimpleController.kt         # 默认组，路由: /simple/...
+├── HomeController.kt           # default group, routes at /
+├── SimpleController.kt         # default group, routes at /simple/...
 ├── admin/
-│   ├── IndexController.kt      # admin 组，路由: /admin/index/...
-│   └── AdminHomeController.kt  # admin 组，路由: /admin/...
+│   ├── IndexController.kt      # admin group, routes at /admin/index/...
+│   └── AdminHomeController.kt  # admin group, routes at /admin/...
 └── app/
-    └── IndexController.kt      # app 组，路由: /app/index/...
+    └── IndexController.kt      # app group, routes at /app/index/...
 ```
 
-例如，以下控制器位于 `controller.admin` 包下：
+For a controller in `controller.admin`:
 
 ```kotlin
 package controller.admin
@@ -267,37 +268,35 @@ class AdminIndexController {
 }
 ```
 
-由于 `admin` 组的 `mount` 配置为 `/admin`，该控制器的最终路由为：
+Since the `admin` group mounts at `/admin`, the resulting routes are:
 
-- `GET /admin/index` -- 需要认证
-- `GET /admin/index/public` -- 允许匿名访问
-- `GET /admin/index/dashboard` -- 需要认证
+- `GET /admin/index` — authenticated
+- `GET /admin/index/public` — anonymous
+- `GET /admin/index/dashboard` — authenticated
 
-### 安全注解
+### Security annotations
 
-路由组中的控制器可以使用安全注解控制访问权限：
+- `@RequireAuth` — on a class or method; requires authentication
+- `@AllowAnonymous` — on a class or method; overrides the requirement (highest precedence)
+- `@Permission("system:user:edit")` — on a class or method; requires a permission
+- `@CurrentUser` — on a parameter; injects the current `Identity` (optional for `Identity`-typed parameters)
 
-- `@RequireAuth` -- 标记在类或方法上，要求认证
-- `@AllowAnonymous` -- 标记在类或方法上，覆盖认证要求，允许匿名访问（优先级最高）
-- `@Permission("system:user:edit")` -- 标记在类或方法上，要求指定权限
-- `@CurrentUser` -- 标记在方法参数上，注入当前 Identity（Identity 类型参数可省略此注解）
+### Modular groups
 
-### 模块化路由组
-
-对于更复杂的项目，可以按业务模块组织控制器：
+Larger projects can organise controllers by business module:
 
 ```
 module/
 └── payment/
     └── controller/
-        ├── IndexController.kt          # 默认组: /payment/index
+        ├── IndexController.kt          # default group: /payment/index
         └── admin/
-            └── IndexController.kt      # admin 组: /admin/payment/index
+            └── IndexController.kt      # admin group: /admin/payment/index
 ```
 
-## DSL 路由
+## DSL routes
 
-对于不使用 KSP 的简单项目，可以在 `routing { }` 块中使用 DSL 语法直接定义路由：
+For projects that do not use KSP, register routes directly:
 
 ```kotlin
 fun main(args: Array<String>) {
@@ -311,17 +310,17 @@ fun main(args: Array<String>) {
             }
 
             get("/users") {
-                "用户列表"
+                "user list"
             }
 
             post("/api/data") { ctx ->
-                // 通过 ctx 访问请求上下文
-                "数据已创建"
+                // ctx gives access to the request context
+                "created"
             }
 
             group("admin") {
                 get("/dashboard") { ctx ->
-                    "管理后台"
+                    "admin dashboard"
                 }
             }
         }
@@ -329,28 +328,27 @@ fun main(args: Array<String>) {
 }
 ```
 
-DSL 路由支持以下方法：
+| Method | Registers |
+|---|---|
+| `get(path) { ... }` | a GET route |
+| `post(path) { ... }` | a POST route |
+| `put(path) { ... }` | a PUT route |
+| `delete(path) { ... }` | a DELETE route |
+| `group(name) { ... }` | a route group |
 
-| 方法 | 说明 |
-|------|------|
-| `get(path) { ... }` | 注册 GET 路由 |
-| `post(path) { ... }` | 注册 POST 路由 |
-| `put(path) { ... }` | 注册 PUT 路由 |
-| `delete(path) { ... }` | 注册 DELETE 路由 |
-| `group(name) { ... }` | 定义路由组 |
+The 1.0 DSL provides only these. There is **no `patch(path)`** — use the `@Patch` annotation when
+you need PATCH.
 
-DSL 层 1.0 只提供以上方法，**没有 `patch(path)`**；需要 PATCH 时请使用注解路由（`@Patch`）。
+::: tip Choosing between them
+- **DSL** — quick prototypes, small services, anywhere you would rather not run KSP
+- **Annotations** — larger projects; clearer controller structure, automatic parameter binding, security annotations and other higher-level features
 
-::: tip DSL 与注解的选择
-- **DSL 路由**：适合快速原型、简单微服务、无需 KSP 的场景
-- **注解路由**：适合大型项目，控制器结构更清晰，支持参数自动绑定、安全注解等高级功能
-
-两种方式可以在同一项目中混合使用。
+The two can be mixed in one project.
 :::
 
-## 协程支持
+## Coroutines
 
-控制器方法支持 `suspend` 修饰符，可以在方法内调用挂起函数：
+Handlers may be `suspend` functions:
 
 ```kotlin
 @Controller("/api")
@@ -358,15 +356,14 @@ class AsyncController {
 
     @Get("/data")
     suspend fun fetchData(): String {
-        // 可以调用挂起函数
         val result = someAsyncOperation()
         return result
     }
 }
 ```
 
-## 进一步阅读
+## Further reading
 
-- [参数绑定](./parameter-binding.md) -- 深入了解路径参数、查询参数、请求体等绑定规则
-- [安全指南](./security.md) -- Authenticator + Guard 认证授权体系
-- [路由规范 v1](/spec/routing) -- 路由系统的设计规范与冻结定义
+- [Parameter binding](./parameter-binding.md) — path, query and body binding rules in depth
+- [Security guide](./security.md) — the Authenticator + Guard architecture
+- [Routing specification](/zh-hans/spec/routing) (Chinese) — the frozen design contract

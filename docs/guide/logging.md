@@ -1,19 +1,17 @@
-# 日志指南
+# Logging
 
-Neton 提供统一的结构化日志 API，所有模块和业务代码通过 `Logger` 接口输出日志。日志以 JSON 格式输出，支持异步写入、多目标路由和请求链路追踪上下文自动注入。
+Neton provides one structured logging API. Every module and every handler writes through the
+`Logger` interface, output is JSON, and asynchronous writes, multi-sink routing and request trace
+context all come for free.
 
-## 核心理念
+## Principles
 
-Neton 日志系统的设计遵循以下原则：
+- **Structure first** — business data belongs in fields; `msg` is only an event name
+- **No `println`** — everything goes through `Logger`
+- **Compile-time injection** — annotate with `@Log` and take a `Logger` constructor parameter; KSP wires it
+- **Automatic context** — trace and span IDs are injected by the framework, not passed by hand
 
-- **结构化优先**：业务数据放在 Fields 中，`msg` 仅作为事件摘要
-- **禁止 println**：所有日志输出必须通过 Logger 接口，禁止直接使用 `println`
-- **编译期注入**：通过 `@Log` 注解 + 构造函数注入获取 Logger，由 KSP 自动处理
-- **上下文自动注入**：traceId、spanId 等链路信息由框架自动注入，业务层无需手动传递
-
-## Logger API
-
-`Logger` 接口提供五个日志级别的方法：
+## The Logger API
 
 ```kotlin
 interface Logger {
@@ -25,25 +23,26 @@ interface Logger {
 }
 ```
 
-其中 `Fields` 是 `Map&lt;String, Any?&gt;` 的类型别名：
+`Fields` is an alias:
 
 ```kotlin
 typealias Fields = Map<String, Any?>
 ```
 
-### 日志级别说明
+### Levels
 
-| 级别 | 用途 | cause 参数 |
-|------|------|-----------|
-| `trace` | 最详细的跟踪信息，通常仅开发时使用 | 不支持 |
-| `debug` | 调试信息，排查问题时使用 | 不支持 |
-| `info` | 正常运行的关键事件 | 不支持 |
-| `warn` | 警告，可能存在问题但不影响运行 | 可选 |
-| `error` | 错误，需要关注和处理 | 建议必传 |
+| Level | Use for | `cause` |
+|---|---|---|
+| `trace` | The most detailed tracing, usually development only | not accepted |
+| `debug` | Diagnostic detail while investigating | not accepted |
+| `info` | Notable events during normal operation | not accepted |
+| `warn` | Something looks wrong but the request continues | optional |
+| `error` | A failure that needs attention | strongly recommended |
 
-## 获取 Logger
+## Obtaining a Logger
 
-通过 `@Log` 注解标注类，并在构造函数中声明 `Logger` 参数。KSP 会在编译期自动生成注入代码：
+Annotate the class with `@Log` and declare a `Logger` constructor parameter. KSP generates the
+injection:
 
 ```kotlin
 import neton.logging.Logger
@@ -68,30 +67,32 @@ class UserController(private val log: Logger) {
 }
 ```
 
-构造函数参数名可以是 `log` 或 `logger`，KSP 会识别并注入通过 `LoggerFactory.get("完全限定类名")` 创建的 Logger 实例。
+The parameter may be named `log` or `logger`. KSP injects an instance created through
+`LoggerFactory.get("<fully qualified class name>")`.
 
-**重要**：业务层禁止直接调用 `LoggerFactory.get()`，必须通过 `@Log` 注解 + 构造注入方式获取 Logger。
+**Do not call `LoggerFactory.get()` from application code.** Use `@Log` with constructor injection.
 
-## 结构化日志规则
+## Writing structured logs
 
-### msg 是事件摘要
+### `msg` names the event
 
-`msg` 参数应该是一个简短的事件标识符，采用点分命名法。不要在 msg 中拼接业务数据：
+Keep `msg` a short dotted identifier. Never interpolate data into it:
 
 ```kotlin
-// 正确：msg 是事件标识，数据在 fields 中
+// good — msg identifies the event, data lives in fields
 log.info("user.get", mapOf("userId" to id))
 log.info("order.created", mapOf("orderId" to order.id, "amount" to order.total))
-log.error("payment.failed", mapOf("orderId" to orderId, "reason" to "余额不足"), cause = ex)
+log.error("payment.failed", mapOf("orderId" to orderId, "reason" to "insufficient balance"), cause = ex)
 
-// 错误：业务数据拼进了 msg
-log.info("Getting user $id")              // 不要这样做
-log.info("Order ${order.id} created")     // 不要这样做
+// bad — data interpolated into msg
+log.info("Getting user $id")
+log.info("Order ${order.id} created")
 ```
 
-### Fields 承载业务数据
+Interpolated messages cannot be grouped or counted, which is the main reason to log structurally at
+all.
 
-所有需要记录的业务数据都放在 `Fields`（即 `Map&lt;String, Any?&gt;`）中：
+### Fields carry the data
 
 ```kotlin
 log.info("http.request", mapOf(
@@ -113,24 +114,25 @@ log.error("db.query.failed", mapOf(
 ), cause = exception)
 ```
 
-### error 级别必须传 cause
-
-当记录错误日志时，应始终传入异常对象，以便保留完整的堆栈信息：
+### Always pass `cause` on error
 
 ```kotlin
 try {
-    // 业务操作
+    // work
 } catch (e: Exception) {
     log.error("user.update.failed", mapOf(
         "userId" to userId,
         "operation" to "update"
-    ), cause = e)  // 必须传 cause
+    ), cause = e)
 }
 ```
 
-## 日志配置
+Without it the stack trace is lost, and an error record without a stack trace rarely tells you
+enough.
 
-日志配置在 `config/application.conf` 的 `[logging]` 节中：
+## Configuration
+
+Logging is configured under `[logging]` in `config/application.conf`:
 
 ```toml
 [logging]
@@ -160,70 +162,68 @@ file = "logs/all.log"
 levels = "ALL"
 ```
 
-### 全局级别
+### Global level
 
-`level` 设置全局最低日志级别。低于此级别的日志不会被处理：
-
-| 级别 | 包含 |
-|------|------|
+| `level` | Records emitted |
+|---|---|
 | `"TRACE"` | TRACE, DEBUG, INFO, WARN, ERROR |
 | `"DEBUG"` | DEBUG, INFO, WARN, ERROR |
 | `"INFO"` | INFO, WARN, ERROR |
 | `"WARN"` | WARN, ERROR |
 | `"ERROR"` | ERROR |
 
-### 异步日志
+### Asynchronous writes
 
-生产环境建议开启异步日志，避免 I/O 阻塞业务线程：
+Enable these in production so that I/O does not block request handling:
 
-| 配置项 | 说明 |
-|--------|------|
-| `enabled` | 是否启用异步模式 |
-| `queueSize` | 异步队列容量，队列满时日志会被丢弃并警告 |
-| `flushEveryMs` | 定时刷新间隔（毫秒），即使批次未满也会刷新 |
-| `flushBatchSize` | 达到此数量时立即刷新 |
-| `shutdownFlushTimeoutMs` | 应用关闭时等待日志刷新的超时时间 |
+| Option | Meaning |
+|---|---|
+| `enabled` | Turn on asynchronous mode |
+| `queueSize` | Queue capacity; records are dropped with a warning when it is full |
+| `flushEveryMs` | Flush on this interval even when a batch is not full |
+| `flushBatchSize` | Flush as soon as this many records are queued |
+| `shutdownFlushTimeoutMs` | How long shutdown waits for the queue to drain |
 
-### Sink 路由
+### Sink routing
 
-每个 sink 定义一条日志输出规则：
+Each sink is one output rule:
 
-- `name`：sink 名称，用于标识
-- `file`：输出文件路径
-- `levels`：匹配的日志级别，逗号分隔（如 `"ERROR,WARN"`）或 `"ALL"`
-- `route`：可选，匹配日志消息前缀（如 `"http.access"` 只捕获 HTTP 访问日志）
+- `name` — the sink's name
+- `file` — output path
+- `levels` — comma-separated levels (`"ERROR,WARN"`) or `"ALL"`
+- `route` — optional message prefix match; `"http.access"` captures only access logs
 
-一条日志可以同时匹配多个 sink，实现多路输出。例如上述配置中，一条 ERROR 级别的日志会同时写入 `error.log` 和 `all.log`。
+One record can match several sinks. With the configuration above, an ERROR record is written to
+both `error.log` and `all.log`.
 
-## 链路追踪上下文
+## Trace context
 
-Neton 的 Logger 会自动注入请求级别的追踪上下文信息，无需业务代码手动传递：
+The logger injects request-scoped tracing automatically:
 
 ```kotlin
 data class LogContext(
-    val traceId: String,       // 链路追踪 ID
-    val spanId: String?,       // 跨度 ID
-    val requestId: String?,    // 请求 ID
-    val userId: String?        // 当前用户 ID
+    val traceId: String,       // trace identifier
+    val spanId: String?,       // span identifier
+    val requestId: String?,    // request identifier
+    val userId: String?        // the current user
 )
 ```
 
-当 HTTP 请求进入时，框架会自动设置 `LogContext`。在该请求的整个处理链路中，所有通过 Logger 输出的日志都会自动包含这些上下文字段，便于日志聚合和问题排查。
-
-业务代码无需关心 traceId 的传递：
+`LogContext` is populated when an HTTP request arrives, and every record written during that
+request carries these fields — which is what lets you reconstruct one request across modules.
 
 ```kotlin
 @Get("/{id}")
 suspend fun get(id: Long): User? {
-    // traceId、spanId 会自动注入到日志输出中
+    // traceId and spanId are added automatically
     log.info("user.get", mapOf("userId" to id))
     return UserTable.get(id)
 }
 ```
 
-## JSON 输出格式
+## JSON output
 
-日志以单行 JSON 格式输出，便于日志采集系统解析：
+Records are single-line JSON, ready for a collector:
 
 ```json
 {
@@ -238,37 +238,36 @@ suspend fun get(id: Long): User? {
 }
 ```
 
-字段说明：
+| Field | Source | Meaning |
+|---|---|---|
+| `ts` | generated | UTC timestamp, ISO 8601 |
+| `level` | the call | TRACE / DEBUG / INFO / WARN / ERROR |
+| `msg` | first argument | The event name |
+| `traceId` | LogContext | Trace identifier, injected |
+| `spanId` | LogContext | Span identifier, injected |
+| `requestId` | LogContext | Request identifier, injected |
+| `userId` | LogContext | Current user, injected |
+| everything else | Fields | Your data, flattened into the top level |
+| `error` | cause | Exception message (warn and error only) |
+| `stackTrace` | cause | Exception stack trace (warn and error only) |
 
-| 字段 | 来源 | 说明 |
-|------|------|------|
-| `ts` | 自动生成 | UTC 时间戳，ISO 8601 格式 |
-| `level` | 日志级别 | TRACE / DEBUG / INFO / WARN / ERROR |
-| `msg` | 第一个参数 | 事件摘要标识 |
-| `traceId` | LogContext | 链路追踪 ID，自动注入 |
-| `spanId` | LogContext | 跨度 ID，自动注入 |
-| `requestId` | LogContext | 请求 ID，自动注入 |
-| `userId` | LogContext | 当前用户 ID，自动注入 |
-| 其他字段 | Fields | 业务数据，直接展开到 JSON 顶层 |
-| `error` | cause | 异常消息（仅 warn/error 级别） |
-| `stackTrace` | cause | 异常堆栈（仅 warn/error 级别） |
+### Redaction
 
-### 敏感信息过滤
+Fields whose keys look sensitive are replaced with `[REDACTED]`, so passwords and tokens do not
+reach the log files.
 
-Logger 会自动对敏感字段进行脱敏处理。匹配敏感 key 名称的字段值会被替换为 `[REDACTED]`，防止密码、Token 等信息泄露到日志中。
+## Rules at a glance
 
-## 使用规范速查
+| Rule | Detail |
+|---|---|
+| No `println` | Everything goes through `Logger` |
+| No data in `msg` | `log.info("user.get", ...)`, not `log.info("Getting user $id")` |
+| Data in fields | `mapOf("userId" to id, "name" to name)` |
+| `cause` on error | `log.error("xxx", fields, cause = ex)` |
+| `@Log` for injection | Never call `LoggerFactory.get()` directly |
+| Dotted event names | `"user.get"`, `"order.created"`, `"http.access"` |
 
-| 规则 | 说明 |
-|------|------|
-| 禁止 `println` | 所有输出必须通过 Logger |
-| msg 不拼业务数据 | `log.info("user.get", ...)` 而非 `log.info("Getting user $id")` |
-| 业务数据放 Fields | `mapOf("userId" to id, "name" to name)` |
-| error 必传 cause | `log.error("xxx", fields, cause = ex)` |
-| 用 @Log 获取 Logger | 禁止直接调用 `LoggerFactory.get()` |
-| 结构化 key 命名 | 点分法：`"user.get"`、`"order.created"`、`"http.access"` |
-
-## 完整示例
+## A complete example
 
 ```kotlin
 import neton.core.annotations.*
@@ -318,7 +317,7 @@ class OrderController(private val log: Logger) {
 }
 ```
 
-## 相关文档
+## Related
 
-- [日志规格说明](/spec/logging) -- 日志模块完整设计规格
-- [配置指南](/guide/configuration) -- 日志配置在 application.conf 中的详细说明
+- [Logging specification](/zh-hans/spec/logging) (Chinese) — the full module design
+- [Configuration](./configuration.md) — logging settings in `application.conf`

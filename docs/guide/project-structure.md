@@ -1,83 +1,86 @@
-# 项目结构
+# Project structure
 
-本章介绍 Neton 框架的模块划分、标准目录布局、配置文件约定以及 KSP 代码生成机制。理解这些内容有助于你更好地组织和管理 Neton 项目。
+This chapter covers Neton's module layout, the standard directory conventions, the configuration
+files and the KSP code generation step.
 
-## 模块概览
+## Modules
 
-Neton 采用模块化架构设计，每个模块职责清晰、按需引入。下表列出了所有核心模块：
+Neton is modular: each module has a clear responsibility and is pulled in only when needed.
 
-| 模块名 | 功能描述 | 必需 |
-|--------|---------|------|
-| `neton-core` | 框架核心：启动流程、组件模型（`NetonComponent`）、运行时容器、配置加载、HTTP 抽象（`HttpContext`、`HttpRequest`、`HttpResponse`）、安全上下文 | 是 |
-| `neton-logging` | 结构化日志系统：统一 Logger API、JSON 输出、异步写入、Sink 路由、traceId / spanId 传播、自动脱敏 | 是 |
-| `neton-http` | HTTP 能力：入站 Server Adapter，以及出站 `NetonHttpClient`、stream、SSE 与错误模型 | 是 |
-| `neton-routing` | 路由引擎：路由解析、路由组、目录约定分组、DSL 路由注册、Controller 扫描与绑定 | 是 |
-| `neton-security` | 安全模块：Authenticator（认证器）+ Guard（授权守卫）双层架构，支持 JWT / Mock（**Session 认证 1.0 不内置**），注解驱动授权 | 否 |
-| `neton-redis` | Redis 客户端抽象：连接管理、基础命令、分布式锁（`@Lock` / `LockManager`） | 否 |
-| `neton-cache` | 两级缓存：L1 本地内存 + L2 Redis，支持 `@Cacheable` / `@CachePut` / `@CacheEvict` 注解 | 否 |
-| `neton-database` | 数据库操作：Entity + Table 模式、类型安全 Query DSL、Logic 层、sqlx4k 驱动集成 | 否 |
-| `neton-storage` | 统一存储抽象：Local + S3 两种后端，`StorageOperator` / `StorageManager`，`[[sources]]` 多源配置 | 否 |
-| `neton-jobs` | 定时任务调度：`@Job` 注解 + `JobScheduler`，支持 cron / fixedRate 与 SINGLE_NODE / ALL_NODES | 否 |
-| `neton-ai` | AI 抽象层：generateText / streamText / tool loop / router / usage，OpenAI 兼容 + Anthropic | 否 |
-| `neton-ksp` | KSP 编译期代码生成器：处理 `@Controller`、`@Table`、`@Logic`、`@Job`、`@NetonConfig` 等注解，生成路由注册、参数绑定、Table、配置 SPI 代码 | 否（推荐） |
-| `neton-validation` | 参数验证：验证注解与编译期验证器生成 | 否 |
+| Module | What it provides | Required |
+|---|---|---|
+| `neton-core` | Framework core: startup, the component model (`NetonComponent`), the runtime container, configuration loading, HTTP abstractions (`HttpContext`, `HttpRequest`, `HttpResponse`) and the security context | Yes |
+| `neton-logging` | Structured logging: one Logger API, JSON output, asynchronous writes, sink routing, traceId / spanId propagation, automatic redaction | Yes |
+| `neton-http` | HTTP: the inbound server adapter plus the outbound `NetonHttpClient`, streaming, SSE and the error model | Yes |
+| `neton-routing` | Routing: route resolution, route groups, directory-based grouping, DSL registration, controller binding | Yes |
+| `neton-security` | Security: the two-layer Authenticator + Guard architecture with JWT and mock authenticators (**session authentication is not built in for 1.0**) and annotation-driven authorization | No |
+| `neton-redis` | Redis client: connection management, core commands, distributed locks (`@Lock` / `LockManager`) | No |
+| `neton-cache` | Two-tier caching: L1 in-process plus L2 Redis, with `@Cacheable` / `@CachePut` / `@CacheEvict` | No |
+| `neton-database` | Database access: the entity + table model, a type-safe query DSL, the logic layer, sqlx4k driver integration | No |
+| `neton-storage` | Storage abstraction: local and S3 backends, `StorageOperator` / `StorageManager`, multi-source `[[sources]]` configuration | No |
+| `neton-jobs` | Scheduling: `@Job` plus `JobScheduler`, supporting cron / fixedRate and SINGLE_NODE / ALL_NODES | No |
+| `neton-ai` | AI abstraction: generateText / streamText / tool loop / router / usage, OpenAI-compatible and Anthropic | No |
+| `neton-ksp` | Compile-time code generation for `@Controller`, `@Table`, `@Logic`, `@Job`, `@NetonConfig` and friends — routes, parameter binding, tables and the config SPI | No (recommended) |
+| `neton-validation` | Validation annotations and compile-time validator generation | No |
 
-::: tip 最小依赖集
-一个最简 Neton 应用只需 `neton-core` + `neton-logging` + `neton-http` + `neton-routing` 四个模块即可运行。其余模块按业务需求选择性引入。
+::: tip Minimum set
+A minimal Neton application needs only `neton-core`, `neton-logging`, `neton-http` and
+`neton-routing`. Add the rest as your requirements demand.
 :::
 
-## 标准目录布局
+## Standard layout
 
-Neton 项目遵循 Kotlin Multiplatform 的目录结构，同时增加了框架特有的约定：
+Neton projects follow the Kotlin Multiplatform layout with a few framework conventions on top:
 
 ```
 my-neton-app/
-├── build.gradle.kts                  # 构建脚本
-├── settings.gradle.kts               # 项目设置
-├── config/                           # 配置文件目录
-│   ├── application.conf              # 主配置文件（TOML 格式）
-│   ├── application.dev.conf          # 开发环境覆盖配置（可选）
-│   ├── application.prod.conf         # 生产环境覆盖配置（可选）
-│   └── routing.conf                  # 路由组配置（可选）
+├── build.gradle.kts                  # build script
+├── settings.gradle.kts               # project settings
+├── config/                           # configuration directory
+│   ├── application.conf              # main configuration (TOML)
+│   ├── application.dev.conf          # development overrides (optional)
+│   ├── application.prod.conf         # production overrides (optional)
+│   └── routing.conf                  # route group configuration (optional)
 ├── src/
 │   ├── commonMain/
 │   │   └── kotlin/
-│   │       ├── Main.kt               # 应用入口
-│   │       ├── controller/           # 控制器目录
+│   │       ├── Main.kt               # entry point
+│   │       ├── controller/           # controllers
 │   │       │   ├── HomeController.kt
-│   │       │   ├── admin/            # admin 路由组控制器
+│   │       │   ├── admin/            # controllers in the "admin" route group
 │   │       │   │   └── AdminController.kt
-│   │       │   └── app/              # app 路由组控制器
+│   │       │   └── app/              # controllers in the "app" route group
 │   │       │       └── AppController.kt
-│   │       ├── config/               # 业务配置类
+│   │       ├── config/               # application config classes
 │   │       │   └── AppSecurityConfig.kt
-│   │       ├── model/                # 数据模型
-│   │       └── module/               # 业务模块（可选）
+│   │       ├── model/                # data models
+│   │       └── module/               # business modules (optional)
 │   │           └── payment/
 │   │               └── controller/
 │   └── macosArm64Main/
-│       └── kotlin/                   # 平台特定代码
+│       └── kotlin/                   # platform-specific code
 └── build/
     └── generated/
-        └── ksp/                      # KSP 生成的代码（自动）
+        └── ksp/                      # KSP output (generated)
 ```
 
-### 控制器目录约定
+### Controller directory convention
 
-Neton 的路由组与目录结构存在对应关系：
+Route groups map onto the package structure:
 
-- `controller/` 下的控制器属于默认路由组
-- `controller/admin/` 下的控制器属于 `admin` 路由组（配合 `routing.conf` 中的 mount 配置）
-- `controller/app/` 下的控制器属于 `app` 路由组
-- `module/<模块名>/controller/` 支持模块化组织
+- controllers directly under `controller/` belong to the default group
+- controllers under `controller/admin/` belong to the `admin` group (mounted through `routing.conf`)
+- controllers under `controller/app/` belong to the `app` group
+- `module/<name>/controller/` supports modular organisation
 
-KSP 在编译期会扫描控制器的包路径，自动识别其所属的路由组并生成对应的路由注册代码。
+At compile time KSP reads each controller's package path, resolves its route group and generates
+the matching registration code.
 
-## 配置文件
+## Configuration files
 
 ### application.conf
 
-主配置文件，采用 TOML 格式，放置在 `config/` 目录下。Neton 在启动时自动加载。
+The main configuration file. TOML, placed in `config/`, loaded automatically at startup.
 
 ```toml
 [application]
@@ -109,16 +112,16 @@ file = "logs/error.log"
 levels = "ERROR,WARN"
 ```
 
-配置优先级（从高到低）：
+Precedence, highest first:
 
-1. 命令行参数 / 环境变量
-2. 环境特定配置 `application.&lt;env&gt;.conf`
-3. 主配置文件 `application.conf`
-4. 框架默认值
+1. command-line arguments and environment variables
+2. environment-specific `application.<env>.conf`
+3. the main `application.conf`
+4. framework defaults
 
 ### routing.conf
 
-路由组配置文件，定义路由组名称与挂载前缀：
+Declares route groups and the prefix each is mounted at:
 
 ```toml
 [[groups]]
@@ -130,33 +133,33 @@ group = "app"
 mount = "/app"
 ```
 
-每个路由组通过 `mount` 字段指定 URL 前缀。例如 `admin` 组下的 `/index` 控制器，最终路由路径为 `/admin/index`。
+The `mount` field supplies the URL prefix. An `/index` route in the `admin` group is served at
+`/admin/index`.
 
-## KSP 代码生成
+## KSP code generation
 
-Neton 通过 KSP（Kotlin Symbol Processing）在编译期完成代码生成，实现零反射、零运行时扫描。
+Neton generates code at compile time with KSP (Kotlin Symbol Processing), which is what lets it
+avoid reflection and runtime scanning entirely.
 
-### 工作原理
+### How it works
 
-1. 开发者编写带有注解（如 `@Controller`、`@Get`、`@NetonConfig`）的源代码
-2. 编译时 KSP 处理器扫描这些注解
-3. 自动生成路由注册、参数绑定、配置 SPI 等代码到 `build/generated/ksp/` 目录
-4. 生成的代码与手写代码一起编译为原生二进制
+1. You write annotated code (`@Controller`, `@Get`, `@NetonConfig`, …)
+2. During compilation the KSP processors read those annotations
+3. Route registration, parameter binding, config SPI and other code is written to `build/generated/ksp/`
+4. The generated code is compiled into the native binary alongside your own
 
-### 生成内容
+### What gets generated
 
-| 注解 | 生成内容 |
-|------|---------|
-| `@Controller` + `@Get` / `@Post` 等 | 路由注册代码、参数解析代码、Controller 实例化代码 |
-| `@NetonConfig` | 配置 SPI 注册代码（`ConfigRegistryProvider`） |
-| `@Table`（Entity） | Table 对象、EntityMeta、RowMapper、`update(id){ }` 扩展 |
-| `@Logic` | Logic 实例化与依赖注入代码 |
-| `@Job` | 定时任务注册代码 |
-| 验证注解 | 编译期验证器代码 |
+| Annotation | Generated output |
+|---|---|
+| `@Controller` with `@Get` / `@Post` / … | Route registration, argument binding, controller instantiation |
+| `@NetonConfig` | Config SPI registration (`ConfigRegistryProvider`) |
+| `@Table` (entity) | The table object, `EntityMeta`, the row mapper and the `update(id) { }` extension |
+| `@Logic` | Logic instantiation and dependency wiring |
+| `@Job` | Scheduled job registration |
+| Validation annotations | Compile-time validators |
 
-### 构建配置
-
-要启用 KSP，需要在 `build.gradle.kts` 中添加：
+### Build configuration
 
 ```kotlin
 plugins {
@@ -167,24 +170,25 @@ dependencies {
     add("kspMacosArm64", project(":neton-ksp"))
 }
 
-// 确保 KSP 在编译之前执行
+// make sure KSP runs before compilation
 tasks.named("compileKotlinMacosArm64").configure {
     dependsOn(tasks.named("kspKotlinMacosArm64"))
 }
 
-// 将生成的代码加入源码集
+// add the generated code to the source set
 kotlin.sourceSets.named("macosArm64Main") {
     kotlin.srcDir("build/generated/ksp/macosArm64/macosArm64Main/kotlin")
 }
 ```
 
-::: info 不使用 KSP
-如果不使用 KSP，你仍然可以使用 DSL 方式手动注册路由。参见 [路由与控制器 - DSL 路由](./routing.md#dsl-路由)。
+::: info Without KSP
+You can still register routes by hand with the DSL. See
+[Routing and controllers](./routing.md).
 :::
 
-## 进一步阅读
+## Further reading
 
-- [快速开始](./quick-start.md) -- 创建第一个 Neton 项目
-- [路由与控制器](./routing.md) -- 控制器注解与路由组详解
-- [Core 规范 v1](/spec/core) -- 框架核心架构的设计规范
-- [Config SPI 规范](/spec/config-spi) -- @NetonConfig 与配置扩展点的规范定义
+- [Quick start](./quick-start.md) — create your first Neton project
+- [Routing and controllers](./routing.md) — controller annotations and route groups in depth
+- [Core specification](/zh-hans/spec/core) (Chinese) — the design contract for the framework core
+- [Config SPI specification](/zh-hans/spec/config-spi) (Chinese) — `@NetonConfig` and configuration extension points

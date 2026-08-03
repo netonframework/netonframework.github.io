@@ -1,14 +1,16 @@
-# 部署与跨平台指南
+# Deployment and targets
 
-> 本指南介绍 Neton 应用的构建、运行、配置注入、跨平台支持以及生产环境部署方案。Neton 基于 Kotlin/Native 编译为原生二进制，具备极小体积、毫秒级启动和低内存占用等特性，非常适合容器化和边缘计算场景。
+> This guide covers building, running, injecting configuration, cross-platform support and
+> production deployment. Neton compiles to a native binary through Kotlin/Native — small, fast to
+> start and light on memory, which suits containers and edge deployments.
 
 ---
 
-## 一、构建原生二进制
+## 1. Building a native binary
 
-### 1.1 构建命令
+### 1.1 Commands
 
-以 helloworld 示例为例：
+Taking the helloworld example:
 
 ```bash
 # macOS ARM64
@@ -28,7 +30,7 @@
 ./gradlew :examples:helloworld:linkReleaseExecutableMingwX64
 ```
 
-构建产物位于：
+Output lands in:
 
 ```
 build/bin/macosArm64/releaseExecutable/helloworld.kexe     # macOS ARM64
@@ -37,93 +39,82 @@ build/bin/linuxArm64/releaseExecutable/helloworld.kexe     # Linux ARM64
 build/bin/mingwX64/releaseExecutable/helloworld.exe        # Windows x64
 ```
 
-### 1.2 二进制特性
+### 1.2 What you get
 
-| 指标 | 数值 | 说明 |
-|------|------|------|
-| **文件大小** | ~3.5 MB | 无 JVM、无运行时依赖，单文件部署 |
-| **启动时间** | ~3 ms | 毫秒级冷启动，适合 Serverless 和快速扩缩容 |
-| **内存占用** | ~20 MB | 空载运行时的基础内存，远低于 JVM 应用 |
+| Metric | Value | Notes |
+|---|---|---|
+| **Size** | ~3.5 MB | No JVM, no runtime dependencies, a single file |
+| **Startup** | ~3 ms | Cold start in milliseconds, which suits serverless and rapid scaling |
+| **Memory** | ~20 MB | Idle resident memory, far below an equivalent JVM service |
 
-与 JVM 应用的对比：
+For comparison:
 
 ```
-JVM 应用：~200MB 内存、~3s 启动、~30MB jar + JRE
-Neton (Native)：  ~20MB 内存、~3ms 启动、~3.5MB 单文件
+JVM service:     ~200 MB memory, ~3 s startup, ~30 MB jar plus a JRE
+Neton (native):  ~20 MB memory,  ~3 ms startup, ~3.5 MB single file
 ```
 
 ---
 
-## 二、启动参数与配置注入
+## 2. Arguments and configuration
 
-### 2.1 启动参数
+### 2.1 Command-line arguments
 
 ```bash
-# 直接运行
 ./helloworld.kexe
 
-# 指定端口
 ./helloworld.kexe --server.port=9090
 
-# 指定运行环境（加载对应的环境配置）
+# select the environment, loading the matching config file
 ./helloworld.kexe --env=prod
 
-# 组合使用
 ./helloworld.kexe --server.port=9090 --env=prod
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--server.port=&lt;N&gt;` | HTTP 监听端口（对应 `application.conf` 的 `[server] port`） |
-| `--env=&lt;name&gt;` | 运行环境名称，用于加载 `application.&lt;env&gt;.conf` |
+| Argument | Meaning |
+|---|---|
+| `--server.port=<N>` | HTTP listen port, matching `[server] port` in `application.conf` |
+| `--env=<name>` | Environment name, selecting `application.<env>.conf` |
 
-### 2.2 环境变量覆盖
-
-Neton 支持通过环境变量覆盖配置：
+### 2.2 Environment variables
 
 ```bash
-# 通过环境变量设置端口
 NETON_SERVER__PORT=8081 ./helloworld.kexe
 
-# 通过环境变量设置运行环境
 NETON_ENV=prod ./helloworld.kexe
 ```
 
-### 2.3 配置注入优先级
-
-Neton 的配置系统采用分层覆盖策略，优先级从高到低：
+### 2.3 Precedence
 
 ```
-CLI 参数（--server.port=9090）
-  > 环境变量（NETON_SERVER__PORT=9090）
-    > 环境配置文件（application.prod.conf）
-      > 基础配置文件（application.conf）
-        > 代码默认值（DSL defaultConfig）
+CLI arguments (--server.port=9090)
+  > environment variables (NETON_SERVER__PORT=9090)
+    > environment file (application.prod.conf)
+      > base file (application.conf)
+        > code defaults (the DSL)
 ```
 
-**示例**：
+For example:
 
 ```
-application.conf 中 port = 8080
-application.prod.conf 中 port = 80
-环境变量 NETON_SERVER__PORT=9090
-CLI 参数 --server.port=3000
+application.conf       port = 8080
+application.prod.conf  port = 80
+NETON_SERVER__PORT     9090
+--server.port          3000
 
-最终生效：port = 3000（CLI 最高优先级）
+effective: port = 3000
 ```
 
-### 2.4 配置文件结构
-
-配置文件位于 `config/` 目录，使用 TOML 格式：
+### 2.4 File layout
 
 ```
 config/
-  application.conf           # 基础配置（所有环境共享）
-  application.dev.conf       # 开发环境覆盖配置
-  application.prod.conf      # 生产环境覆盖配置
+  application.conf           # shared by every environment
+  application.dev.conf       # development overrides
+  application.prod.conf      # production overrides
 ```
 
-基础配置示例（`config/application.conf`）：
+`config/application.conf`:
 
 ```toml
 [application]
@@ -132,18 +123,12 @@ debug = true
 
 [server]
 port = 8080
-host = "0.0.0.0"
 
 [logging]
 level = "DEBUG"
-
-[redis]
-host = "localhost"
-port = 6379
-keyPrefix = "neton"
 ```
 
-生产环境覆盖（`config/application.prod.conf`）：
+`config/application.prod.conf`:
 
 ```toml
 [application]
@@ -154,19 +139,23 @@ port = 80
 
 [logging]
 level = "INFO"
-
-[redis]
-host = "redis.internal"
-password = "secret"
 ```
+
+::: warning Two things this file cannot do
+`server.host` is **not supported** in 1.0 — the bind address is hard-coded to `0.0.0.0`.
+
+Redis is **not** configured here. It reads its own `config/redis.conf` with keys at the root level
+and no `[redis]` section, following the "filename = namespace" convention. The same applies to
+`database.conf`, `routing.conf` and `cache.conf`.
+:::
 
 ---
 
-## 三、结构化日志（生产环境）
+## 3. Structured logging in production
 
-Neton 默认输出 JSON 格式的结构化日志，天然适配各类日志采集平台。
+Logs are JSON by default, which every collection platform can ingest.
 
-### 3.1 日志输出格式
+### 3.1 Format
 
 ```json
 {
@@ -183,9 +172,9 @@ Neton 默认输出 JSON 格式的结构化日志，天然适配各类日志采�
 }
 ```
 
-### 3.2 生产日志配置
+### 3.2 Recommended production configuration
 
-建议的生产环境日志配置，将访问日志、错误日志、全量日志分文件存储：
+Separate access, error and full logs:
 
 ```toml
 [logging]
@@ -198,48 +187,47 @@ flushEveryMs = 200
 flushBatchSize = 64
 shutdownFlushTimeoutMs = 2000
 
-# 访问日志
+# access log
 [[logging.sinks]]
 name = "access"
 file = "logs/access.log"
 levels = "INFO"
 route = "http.access"
 
-# 错误日志
+# errors
 [[logging.sinks]]
 name = "error"
 file = "logs/error.log"
 levels = "ERROR,WARN"
 
-# 全量日志
+# everything
 [[logging.sinks]]
 name = "all"
 file = "logs/all.log"
 levels = "ALL"
 ```
 
-### 3.3 日志采集
+### 3.3 Collection
 
-- **日志采集**：采集 JSON 日志文件，可按 `traceId` 过滤串联请求链路。
-- **stdout 模式**：容器化部署时也可将日志输出到 stdout，由容器平台统一采集。
+- Ingest the JSON files and filter by `traceId` to reconstruct one request.
+- In containers you can equally write to stdout and let the platform collect it.
 
 ---
 
-## 四、跨平台支持
+## 4. Platform support
 
-### 4.1 当前支持状态
+### 4.1 Current status
 
-| 平台 | 目标名称 | 状态 | 说明 |
-|------|---------|------|------|
-| **macOS ARM64** | `macosArm64` | 完全支持 | Apple Silicon（M1/M2/M3/M4） |
-| **Linux x64** | `linuxX64` | 完全支持 | x86_64 架构服务器 |
-| **Linux ARM64** | `linuxArm64` | 完全支持 | ARM 架构服务器（AWS Graviton、树莓派等） |
-| **Windows x64** | `mingwX64` | 完全支持 | x86_64 架构，基于 MinGW |
-| **Windows ARM64** | — | 不支持 | Kotlin/Native 尚未提供 `mingwArm64` 目标 |
+| Platform | Target | Status | Notes |
+|---|---|---|---|
+| **macOS ARM64** | `macosArm64` | Supported | Apple Silicon (M1/M2/M3/M4) |
+| **macOS x64** | `macosX64` | Supported except `neton-database` | Its driver, sqlx4k, publishes no `macosX64` artifact |
+| **Linux x64** | `linuxX64` | Supported | x86_64 servers |
+| **Linux ARM64** | `linuxArm64` | Supported | ARM servers: AWS Graviton, Raspberry Pi |
+| **Windows x64** | `mingwX64` | Supported | x86_64 via MinGW |
+| **Windows ARM64** | — | Not supported | Kotlin/Native provides no `mingwArm64` target |
 
-### 4.2 多目标构建配置
-
-Neton 已内置全部 4 个目标平台的支持，Gradle 配置示例：
+### 4.2 Multi-target builds
 
 ```kotlin
 kotlin {
@@ -258,78 +246,64 @@ kotlin {
 }
 ```
 
-各平台的构建命令：
-
 ```bash
-# macOS ARM64
 ./gradlew linkReleaseExecutableMacosArm64
-
-# Linux x64
 ./gradlew linkReleaseExecutableLinuxX64
-
-# Linux ARM64
 ./gradlew linkReleaseExecutableLinuxArm64
-
-# Windows x64
 ./gradlew linkReleaseExecutableMingwX64
 ```
 
-::: tip 在 macOS 上交叉编译 Linux 二进制（2026-07 起支持）
-安装 Linux GCC 交叉工具链后即可在 macOS 直接产出 Linux 可执行文件（无需 Linux 主机）：
+::: tip Cross-compiling Linux binaries on macOS
+Install a Linux GCC cross toolchain and you can produce Linux executables from macOS without a
+Linux host:
 
 ```bash
 brew tap messense/macos-cross-toolchains
 brew install x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
 
-./gradlew linkReleaseExecutableLinuxX64      # 直接在 macOS 上出 Linux x64 kexe
+./gradlew linkReleaseExecutableLinuxX64      # a Linux x64 kexe, built on macOS
 ```
 
-自定义工具链路径可通过环境变量 `NETON_LINUX_X64_CC` / `NETON_LINUX_X64_AR` /
-`NETON_LINUX_ARM64_CC` / `NETON_LINUX_ARM64_AR`，或对应的 Gradle 属性
-`neton.linuxX64.cc` 等注入（见 neton 仓 README「Cross-compiling Linux on macOS」）。
+Custom toolchain paths can be injected through `NETON_LINUX_X64_CC` / `NETON_LINUX_X64_AR` /
+`NETON_LINUX_ARM64_CC` / `NETON_LINUX_ARM64_AR`, or the equivalent Gradle properties such as
+`neton.linuxX64.cc`. See "Cross-compiling Linux on macOS" in the neton repository README.
 
-⚠️ 交叉编译只验证链接：发布前必须在目标 Linux 架构上运行产物并跑运行期 smoke。
-Windows 二进制仍需 Windows 主机或 MinGW 工具链；macOS 二进制需在 macOS 上构建。
+⚠️ Cross-compilation only verifies linking. Before releasing you must run the artifact on the
+target Linux architecture and smoke-test it. Windows binaries still need a Windows host or a MinGW
+toolchain, and macOS binaries must be built on macOS.
 :::
 
 ---
 
-## 五、Docker 部署
+## 5. Docker
 
-Neton 编译为无依赖的原生二进制，可以使用 `scratch`（空镜像）作为基础镜像，镜像体积极小。
+Because the binary has no dependencies, `scratch` works as the base image.
 
 ### 5.1 Dockerfile
 
 ```dockerfile
-# 多阶段构建（可选）：在构建机上编译
+# optional multi-stage build
 # FROM gradle:8.14-jdk21 AS build
 # WORKDIR /app
 # COPY . .
 # RUN ./gradlew :examples:helloworld:linkReleaseExecutableLinuxX64
 
-# 最终镜像：从空镜像开始
 FROM scratch
 
-# 复制原生二进制
 COPY build/bin/linuxX64/releaseExecutable/app /app
 
-# 复制配置文件
 COPY config/ /config/
 
-# 暴露端口
 EXPOSE 8080
 
-# 启动命令
 ENTRYPOINT ["/app", "--env=prod"]
 ```
 
-### 5.2 构建与运行
+### 5.2 Build and run
 
 ```bash
-# 构建 Docker 镜像
 docker build -t my-neton-app:latest .
 
-# 运行容器
 docker run -d \
   --name my-app \
   -p 8080:8080 \
@@ -337,20 +311,20 @@ docker run -d \
   my-neton-app:latest
 ```
 
-### 5.3 镜像大小对比
+### 5.3 Image size
 
 ```
-Neton (scratch + 原生二进制)：~4 MB
-Go 应用 (scratch)：           ~10-20 MB
-Java 应用 (eclipse-temurin)：  ~300-400 MB
-Node.js 应用 (node:alpine)：   ~150-200 MB
+Neton (scratch + native binary):  ~4 MB
+Go (scratch):                     ~10-20 MB
+Java (eclipse-temurin):           ~300-400 MB
+Node.js (node:alpine):            ~150-200 MB
 ```
 
 ---
 
-## 六、Kubernetes 部署
+## 6. Kubernetes
 
-### 6.1 Deployment 模板
+### 6.1 Deployment
 
 ```yaml
 apiVersion: apps/v1
@@ -412,28 +386,24 @@ spec:
   type: ClusterIP
 ```
 
-### 6.2 资源配置说明
+### 6.2 Resource sizing
 
-得益于 Neton 的低资源占用，Kubernetes 资源配额可以设置得非常低：
+| Resource | Suggested | Reasoning |
+|---|---|---|
+| **memory requests** | 32Mi | Baseline usage is around 20 MB |
+| **memory limits** | 128Mi | Headroom for working data and traffic spikes |
+| **cpu requests** | 50m | Idle CPU usage is negligible |
+| **cpu limits** | 500m | Adjust to your workload |
 
-| 资源 | 建议值 | 说明 |
-|------|--------|------|
-| **memory requests** | 32Mi | 基础内存占用约 20MB |
-| **memory limits** | 128Mi | 预留业务数据和突发流量的余量 |
-| **cpu requests** | 50m | 空闲时 CPU 占用极低 |
-| **cpu limits** | 500m | 根据业务负载调整 |
+### 6.3 What this buys you
 
-### 6.3 关键特性
-
-- **极速启动**：~3ms 启动时间意味着 Pod 几乎瞬间就绪，`initialDelaySeconds` 可设为 1 秒。
-- **快速扩缩容**：配合 HPA（Horizontal Pod Autoscaler），Neton 应用可在秒级完成扩缩容，非常适合突发流量场景。
-- **低资源成本**：单节点可部署更多 Pod，显著降低集群资源成本。
+- **Fast start** — a ~3 ms startup means pods are ready almost immediately, so `initialDelaySeconds: 1` is realistic.
+- **Fast scaling** — with an HPA, scaling completes in seconds, which suits bursty traffic.
+- **Density** — more pods per node, and a smaller cluster bill.
 
 ---
 
-## 七、健康检查端点
-
-建议为生产应用注册 `/health` 健康检查端点，供 Kubernetes、负载均衡器和监控系统探测：
+## 7. Health checks
 
 ```kotlin
 @Controller
@@ -447,7 +417,7 @@ class HealthController {
 }
 ```
 
-更完善的健康检查可以包含依赖组件的状态：
+A fuller check can report dependency status:
 
 ```kotlin
 @Get("/health")
@@ -467,29 +437,28 @@ suspend fun health(ctx: HttpContext): String {
 
 ---
 
-## 八、生产部署清单
+## 8. Production checklist
 
-部署到生产环境前，建议检查以下事项：
-
-| 项目 | 建议 |
-|------|------|
-| **构建模式** | 使用 Release 构建（`linkReleaseExecutable*`），Debug 构建包含调试符号，体积更大 |
-| **运行环境** | 通过 `--env=prod` 或 `NETON_ENV=prod` 指定，加载生产配置 |
-| **日志级别** | 生产环境设为 INFO 或 WARN，关闭 DEBUG |
-| **异步日志** | 启用 `[logging.async]`，减少 IO 对请求延迟的影响 |
-| **Redis 密码** | 生产环境 Redis 必须设置密码 |
-| **健康检查** | 注册 `/health` 端点，配置存活和就绪探针 |
-| **资源限制** | Kubernetes 中设置 memory/cpu limits，防止资源泄漏 |
-| **配置隔离** | 敏感配置（密码、密钥）通过环境变量或 Kubernetes Secret 注入，不写入配置文件 |
-| **数据库迁移** | 部署新 binary 后先 `./application.kexe migrate up` 再启动——启动流程检测到 pending migration 会**拒绝启动**（启动绝不自动迁移）；迁移 SQL 编译进 binary（每模块 Gradle task 生成 Kotlin 常量），运行期不读 .sql 文件 |
-| **进程替换** | `systemctl restart` 可能留下未退出的旧进程占用端口导致新进程循环 crash；SOP：stop → 确认进程退出（必要时 pkill）→ 替换 binary → start |
-| **EnvironmentFile** | 通过 `getenv` 直读的密钥（如钱包卡加密 key）不走配置文件加载链，systemd unit 必须配置 `EnvironmentFile=` 才会进入进程环境 |
+| Item | Recommendation |
+|---|---|
+| **Build mode** | Use release builds (`linkReleaseExecutable*`); debug builds carry symbols and are larger |
+| **Environment** | Select it with `--env=prod` or `NETON_ENV=prod` |
+| **Log level** | INFO or WARN in production; turn DEBUG off |
+| **Async logging** | Enable `[logging.async]` so I/O does not add request latency |
+| **Redis password** | Always set one in production |
+| **Health endpoint** | Register `/health` and wire the liveness and readiness probes |
+| **Resource limits** | Set memory and CPU limits in Kubernetes |
+| **Secrets** | Inject passwords and keys through environment variables or Kubernetes secrets, never config files |
+| **Rate limits** | Re-check every `@RateLimit` after upgrading to 1.0.0-beta1 — the annotation was not enforced in earlier builds |
+| **Migrations** | Run `./application.kexe migrate up` after deploying a new binary and before starting it. Startup **refuses to run** with pending migrations and never migrates automatically. Migration SQL is compiled into the binary, so no `.sql` files are read at runtime |
+| **Process replacement** | `systemctl restart` can leave an old process holding the port, sending the new one into a crash loop. The safe sequence is stop → confirm the process exited (`pkill` if needed) → replace the binary → start |
+| **EnvironmentFile** | Secrets read directly with `getenv` bypass the configuration chain, so the systemd unit must set `EnvironmentFile=` for them to reach the process |
 
 ---
 
-## 九、相关文档
+## 9. Related
 
-- [核心架构](../spec/core.md) -- Neton 的整体架构设计与启动流程
-- [HTTP 规范](../spec/http.md) -- HTTP 适配器、请求处理流程
-- [日志规范](../spec/logging.md) -- 结构化日志、Multi-Sink、异步写入
-- [项目路线图](../spec/roadmap.md) -- 跨平台支持等未来计划
+- [Core specification](/zh-hans/spec/core) (Chinese) — overall architecture and the startup sequence
+- [HTTP specification](/zh-hans/spec/http) (Chinese) — the HTTP adapter and request flow
+- [Logging specification](/zh-hans/spec/logging) (Chinese) — structured logging, multi-sink, async writes
+- [Roadmap](/zh-hans/spec/roadmap) (Chinese) — planned platform work

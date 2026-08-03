@@ -1,36 +1,70 @@
-# 缓存指南
+# Cache
 
-> 本指南介绍 Neton 的统一缓存体系。Neton 提供 L1 + L2 透明分层缓存，以及基于注解的声明式缓存 API，让你用最少的代码实现高性能的数据缓存。
-
----
-
-## 一、架构概览：L1 + L2 透明分层
-
-Neton 缓存采用两级透明分层架构，业务代码无需关心数据存储在哪一层，只需关心「读/写/失效」语义：
-
-```
-请求 → Cache.get(key)
-         ├── L1 命中 → 直接返回（零网络开销）
-         ├── L1 miss → L2 命中 → 回填 L1 → 返回
-         └── L2 miss → 返回 null（或由 getOrPut 触发 loader 回源）
-```
-
-| 层级 | 实现 | 特点 |
-|------|------|------|
-| **L1（本地缓存）** | 进程内 LRU + TTL | 零网络、极低延迟；受进程内存限制，可配置 maxSize |
-| **L2（远程缓存）** | Redis（neton-redis） | 跨进程共享；二进制序列化（默认 ProtoBuf），高吞吐 |
-
-**关键规则**：
-
-- L1 TTL 不会长于 L2 TTL，避免「幽灵缓存」（L1 命中但 L2 已过期）。
-- 写操作默认采用 **Cache-aside** 策略：写 DB 后失效缓存（evict），下次读时自动回填。
-- 进程内同一 key 的并发 `getOrPut` 自动 **singleflight**（只执行一次 loader），避免缓存击穿。
+> Neton ships a two-tier cache: a transparent L1 + L2 hierarchy plus declarative annotations, so
+> that caching costs you very little code.
 
 ---
 
-## 二、缓存接口（编程式 API）
+## 1. Architecture: transparent L1 + L2
 
-`Cache` 接口提供五个核心操作：
+Application code never has to know which tier holds a value. It only deals in read / write /
+invalidate:
+
+```
+request → Cache.get(key)
+           ├── L1 hit  → return immediately (no network)
+           ├── L1 miss → L2 hit → backfill L1 → return
+           └── L2 miss → return null (or getOrPut runs the loader)
+```
+
+| Tier | Implementation | Characteristics |
+|---|---|---|
+| **L1 (local)** | In-process LRU + TTL | No network, very low latency; bounded by process memory, sized with `maxSize` |
+| **L2 (remote)** | Redis (`neton-redis`) | Shared across processes; binary serialization (ProtoBuf by default), high throughput |
+
+Key rules:
+
+- The L1 TTL is never longer than the L2 TTL, which avoids "ghost" entries that hit L1 after L2 has expired.
+- Writes follow **cache-aside** by default: update the database, evict the entry, let the next read backfill it.
+- Concurrent `getOrPut` calls for the same key in one process are **singleflighted** — the loader runs once — which prevents a cache stampede.
+
+---
+
+## 2. Installation
+
+The cache is not available until you install it, and its L2 tier is Redis, so `redis { }` must be
+installed first:
+
+```kotlin
+Neton.run(args) {
+    redis { }
+    cache {
+        cache("users") {
+            ttl = 5.minutes
+            maxSize = 10_000
+        }
+    }
+}
+```
+
+Installing `cache { }` without `redis { }` fails at startup rather than silently degrading to an
+L1-only cache, which would behave differently on every instance.
+
+Caches can equally be declared in `config/cache.conf`:
+
+```toml
+[caches.users]
+ttlMs = 300000
+maxSize = 10000
+enableL1 = true
+```
+
+Values given in the DSL win over the file. Unknown codecs, non-numeric `ttlMs` / `maxSize` and
+non-boolean flags are rejected at startup instead of being replaced by defaults.
+
+---
+
+## 3. The programmatic API
 
 ```kotlin
 interface Cache<K, V> {
@@ -42,212 +76,185 @@ interface Cache<K, V> {
 }
 ```
 
-| 方法 | 说明 |
-|------|------|
-| `get(key)` | 先查 L1，miss 查 L2，再 miss 返回 null |
-| `put(key, value, ttl)` | 写入 L2 并回填 L1 |
-| `delete(key)` | 删除 L2 和 L1 中对应的 key |
-| `clear()` | 清空该缓存实例的全部条目（L1 + L2） |
-| `getOrPut(key, ttl, loader)` | Cache-aside 核心方法：miss 时执行 loader 回源，结果非 null 则回填 L2 + L1 |
-
-### 编程式使用示例
+| Method | Behaviour |
+|---|---|
+| `get(key)` | Check L1, then L2, then return null |
+| `put(key, value, ttl)` | Write to L2 and backfill L1 |
+| `delete(key)` | Remove the key from both L2 and L1 |
+| `clear()` | Drop every entry of this cache instance (L1 + L2) |
+| `getOrPut(key, ttl, loader)` | The cache-aside primitive: on a miss run `loader`, and backfill L2 + L1 when the result is non-null |
 
 ```kotlin
-// 获取 CacheManager
 val cacheManager = ctx.get(CacheManager::class)
-
-// 获取名为 "users" 的缓存实例
 val userCache = cacheManager.getCache<User>("users")
 
-// 读取缓存，miss 时从数据库加载
+// read through to the database on a miss
 val user = userCache.getOrPut("user:$id") {
     UserTable.get(id)
 }
 
-// 手动写入缓存
 userCache.put("user:$id", updatedUser, ttl = 5.minutes)
-
-// 删除缓存
 userCache.delete("user:$id")
+```
+
+`CacheManager` also exposes type-agnostic eviction, which matters because L1 is sharded per value
+type while L2 is keyed by cache name only:
+
+```kotlin
+cacheManager.evict("users", "user:$id")
+cacheManager.evictAll("users")
 ```
 
 ---
 
-## 三、缓存配置
+## 4. Cache configuration
 
-每个缓存实例（按 name 区分）可独立配置：
+Each named cache instance is configured independently:
 
-| 配置项 | 类型 | 说明 |
-|--------|------|------|
-| `name` | String | 缓存名，对应 `getCache(name)`，用于命名空间 |
-| `ttl` | Duration | 默认过期时间 |
-| `nullTtl` | Duration? | 空值缓存 TTL，null 表示不缓存空值（防止缓存穿透） |
-| `maxSize` | Int? | L1 最大条目数（LRU 淘汰），null 表示不限（仅 TTL 淘汰） |
-| `enableL1` | Boolean | 是否启用 L1 本地缓存，默认 true |
+| Option | Type | Meaning |
+|---|---|---|
+| `name` | String | The cache name passed to `getCache(name)`; acts as a namespace |
+| `ttl` | Duration | Default expiry |
+| `nullTtl` | Duration? | TTL for cached empty results; `null` means empty results are not cached (guards against cache penetration) |
+| `maxSize` | Int? | Maximum L1 entries before LRU eviction; `<= 0` means unbounded, so only the TTL evicts |
+| `enableL1` | Boolean | Whether the local tier is used; defaults to `true` |
 
-### Key 的完整结构
+### Full key structure
 
-业务只需关心 key 模板（如 `"id:123"`），框架自动拼接完整的 Redis key：
+You supply the key fragment (`"id:123"`); the framework assembles the Redis key:
 
 ```
 RedisConfig.keyPrefix + ":" + "cache" + ":" + cacheName + ":" + keyPart
 
-示例：neton:cache:users:id:123
+example: neton:cache:users:id:123
 ```
 
-- `keyPrefix` 来自 Redis 全局配置（默认 `"neton"`）
-- `cache` 为缓存模块固定命名空间
-- `cacheName` 为缓存实例名称
-- `keyPart` 为业务 key（由模板或参数哈希生成）
+- `keyPrefix` comes from the global Redis configuration (`"neton"` by default)
+- `cache` is the fixed namespace of the cache module
+- `cacheName` is the cache instance name
+- `keyPart` is your key, from a template or a parameter hash
 
 ---
 
-## 四、注解驱动缓存
+## 5. Annotation-driven caching
 
-Neton 提供三个缓存注解，覆盖「读/写/删」三种场景。注解由 KSP 在编译期织入，零反射、零运行时扫描。
+Three annotations cover read, write and invalidate. KSP weaves them at compile time — no
+reflection, no runtime scanning.
 
-### 4.1 @Cacheable -- 读缓存 + 回源 + 回填
+::: warning Where these annotations work
+They are woven into **`@Controller` route handlers only**, because the weaving point is the
+generated route handler. Placing them on a Logic or service class — or on a plain helper method
+inside a controller — is a **compile error**, not a silent no-op. To cache inside a Logic class,
+call `CacheManager` directly.
+:::
 
-最常用的注解。语义等价于 `getOrPut`：命中直接返回，miss 则执行方法体并回填缓存。
+### 5.1 @Cacheable — read, load, backfill
+
+Equivalent to `getOrPut`: return the cached value on a hit, otherwise run the method body and
+backfill.
 
 ```kotlin
+@Get("/users/{id}")
 @Cacheable(name = "users", key = "{id}", ttlMs = 300_000)
 suspend fun getUser(id: Long): User? = UserTable.get(id)
 ```
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `name` | String | 缓存名，对应 CacheConfig |
-| `key` | String | key 模板，`{paramName}` 从方法参数取值；空则用参数哈希 |
-| `ttlMs` | Long | TTL（毫秒），0 表示使用 CacheConfig 的默认 TTL |
+| Parameter | Type | Meaning |
+|---|---|---|
+| `name` | String | The cache name, matching a `CacheConfig` |
+| `key` | String | Key template; `{paramName}` reads a handler argument. Empty means "hash the arguments" |
+| `ttlMs` | Long | TTL in milliseconds; `0` uses the cache's configured default |
 
-**行为说明**：
+- **Hit** — the cached value is returned and the method body never runs.
+- **Miss** — the body runs as the loader; a non-null result is cached.
+- **Exception** — nothing is cached, and singleflight waiters observe the same exception.
 
-- **缓存命中**：直接返回缓存值，不执行方法体。
-- **缓存 miss**：执行方法体（作为 loader），非 null 结果写入缓存。
-- **异常处理**：方法抛异常时不写入缓存，singleflight 等待方共享同一异常。
-
-### 4.2 @CachePut -- 先执行业务，再更新缓存
-
-用于更新场景。**先执行方法体**，成功后将返回值写入缓存。
+### 5.2 @CachePut — run first, then update the cache
 
 ```kotlin
-@CachePut(name = "users", key = "{user.id}")
-suspend fun updateUser(user: User): User {
+@Put("/users/{id}")
+@CachePut(name = "users", key = "{id}")
+suspend fun updateUser(id: Long, @Body user: User): User {
     UserTable.update(user)
     return user
 }
 ```
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `name` | String | 缓存名 |
-| `key` | String | key 模板 |
-| `ttlMs` | Long | TTL（毫秒），0 表示使用默认 |
+| Parameter | Type | Meaning |
+|---|---|---|
+| `name` | String | The cache name |
+| `key` | String | Key template |
+| `ttlMs` | Long | TTL in milliseconds; `0` uses the default |
 
-**行为说明**：
+- The method **always** runs; the cache is not consulted first.
+- On a normal return the result is written with `put(key, result, ttl)`.
+- If the method throws, nothing is written.
 
-- 方法**始终执行**（不检查缓存是否已有值）。
-- 方法正常返回后，用返回值执行 `put(key, result, ttl)`。
-- 方法抛异常时，不执行 put。
-
-### 4.3 @CacheEvict -- 失效缓存条目
-
-用于删除场景。**先执行方法体**，成功后删除对应缓存。
+### 5.3 @CacheEvict — invalidate
 
 ```kotlin
+@Delete("/users/{id}")
 @CacheEvict(name = "users", key = "{id}")
 suspend fun deleteUser(id: Long) {
     UserTable.destroy(id)
 }
 ```
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `name` | String | 缓存名 |
-| `key` | String | key 模板 |
-| `allEntries` | Boolean | 为 true 时清空该缓存所有条目（默认 false） |
+| Parameter | Type | Meaning |
+|---|---|---|
+| `name` | String | The cache name |
+| `key` | String | Key template |
+| `allEntries` | Boolean | When true, clear the whole cache (default `false`) |
 
-**行为说明**：
-
-- 方法正常返回后，`allEntries=false` 时执行 `delete(key)`，`allEntries=true` 时执行 `clear()`。
-- 方法抛异常时，不删除缓存。
-
-清空所有条目示例：
+- On a normal return this calls `delete(key)`, or `clear()` when `allEntries = true`.
+- If the method throws, nothing is evicted.
 
 ```kotlin
 @CacheEvict(name = "users", allEntries = true)
-suspend fun reloadAllUsers() {
-    // 重新加载所有用户数据
-}
+suspend fun reloadAllUsers() { /* ... */ }
 ```
 
 ---
 
-## 五、完整示例
+## 6. Key template rules
 
-以下展示一个典型的用户服务缓存方案：
+These rules are enforced at compile time, because a key that cannot distinguish two requests
+produces a wrong cache hit rather than an error.
 
-```kotlin
-@Controller
-class UserController {
-
-    /**
-     * 查询用户：优先读缓存，miss 时查数据库并回填。
-     * 缓存 5 分钟（300 秒）。
-     */
-    @Get("/users/{id}")
-    @Cacheable(name = "users", key = "{id}", ttlMs = 300_000)
-    suspend fun getUser(@PathVariable id: Long): User? {
-        return UserTable.get(id)
-    }
-
-    /**
-     * 更新用户：先执行更新，成功后刷新缓存。
-     */
-    @Put("/users/{id}")
-    @CachePut(name = "users", key = "{id}")
-    suspend fun updateUser(
-        @PathVariable id: Long,
-        @Body user: User
-    ): User {
-        UserTable.update(user)
-        return user
-    }
-
-    /**
-     * 删除用户：先执行删除，成功后失效缓存。
-     */
-    @Delete("/users/{id}")
-    @CacheEvict(name = "users", key = "{id}")
-    suspend fun deleteUser(@PathVariable id: Long) {
-        UserTable.destroy(id)
-    }
-}
-```
-
-### Key 模板规则
-
-- `{paramName}`：从方法参数按名称取值，如 `{id}` 取参数 `id` 的值。
-- 空字符串：使用方法参数列表的稳定哈希作为 key。
-- 与 `@Lock` 注解使用相同的模板解析机制，心智统一。
-- v1 不支持 SpEL 或复杂表达式。
+- `{paramName}` reads a handler argument by name; an empty template hashes the arguments instead.
+- **Only path and query values can appear in a key.** The key is computed from `HandlerArgs`,
+  which carries nothing else. Body, header, cookie, form and injected parameters (`HttpContext`,
+  `Identity`, uploads) resolve to `null`, so including them would make two different requests share
+  one key. A default key over such a parameter is rejected; supply an explicit `key` instead.
+- **Use the binding name, not the Kotlin parameter name.** With
+  `@PathVariable("id") userId: Long` the runtime key is `id`, so write `{id}`. Writing `{userId}`
+  is a compile error that tells you the correct name.
+- Only one level of nesting is supported. `{user.id}` is rejected — it would silently resolve to an
+  empty string.
+- The same template syntax is used by `@Lock`, so there is one rule to remember.
+- SpEL and general expressions are not supported in v1.
 
 ---
 
-## 六、注意事项
+## 7. Notes
 
-1. **返回值约束**：`@Cacheable` 和 `@CachePut` 标注的方法，其返回类型必须是 `@Serializable` 的（用于二进制序列化存入 Redis）。允许 `T?` 类型。不支持 `Unit`、`Nothing`、`Flow&lt;T&gt;` 等类型。
+1. **Return types.** `@Cacheable` and `@CachePut` require a `@Serializable` return type, since the
+   value is serialized into Redis. `T?` is allowed. `Unit`, `Nothing` and `Flow<T>` are rejected at
+   compile time — there is nothing to store.
 
-2. **序列化**：L2 缓存默认使用 ProtoBuf 二进制序列化（性能优先），不默认 JSON。如需调试可在 CacheConfig 中显式切换为 JSON（仅限调试环境）。
+2. **Serialization.** L2 uses ProtoBuf by default for throughput. You can switch a cache to JSON in
+   its configuration for debugging.
 
-3. **空值缓存**：通过 `nullTtl` 配置可缓存空结果（较短 TTL），防止缓存穿透。
+3. **Empty results.** Set `nullTtl` to cache empty results under a short TTL, which guards against
+   cache penetration.
 
-4. **分布式锁与缓存的区别**：缓存使用进程内 singleflight 防止击穿，不引入 Redis 锁。如需跨进程互斥，请使用 `@Lock` 注解（见 [Redis 与分布式锁指南](./redis.md)）。
+4. **Caching is not locking.** Stampede protection uses in-process singleflight and takes no Redis
+   lock. For cross-process mutual exclusion use `@Lock` — see
+   [Redis and distributed locks](./redis.md).
 
 ---
 
-## 七、相关文档
+## 8. Related
 
-- [缓存规范](../spec/cache.md) -- 缓存底座的完整技术规范（L1/L2、序列化、TTL、singleflight、注解式缓存等）
-- [Redis 与分布式锁指南](./redis.md) -- Redis 组件安装与分布式锁使用
+- [Cache specification](/zh-hans/spec/cache) (Chinese) — the full technical contract: tiers, serialization, TTL, singleflight, annotation weaving
+- [Redis and distributed locks](./redis.md) — installing Redis and using distributed locks
