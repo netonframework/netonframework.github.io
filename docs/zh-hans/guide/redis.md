@@ -274,5 +274,4 @@ lockManager.withLock(
 
 ## 七、相关文档
 
-- [Redis 规范](/zh-hans/spec/redis) -- Redis 组件的完整架构设计、API 定义与分布式锁规范
 - [缓存指南](./cache.md) -- 缓存体系的使用指南

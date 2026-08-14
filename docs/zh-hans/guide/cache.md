@@ -298,5 +298,4 @@ class UserController {
 
 ## 八、相关文档
 
-- [缓存规范](/zh-hans/spec/cache) -- 缓存底座的完整技术规范（L1/L2、序列化、TTL、singleflight、注解式缓存等）
 - [Redis 与分布式锁指南](./redis.md) -- Redis 组件安装与分布式锁使用

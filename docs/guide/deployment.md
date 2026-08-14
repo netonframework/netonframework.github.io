@@ -453,12 +453,3 @@ suspend fun health(ctx: HttpContext): String {
 | **Migrations** | Run `./application.kexe migrate up` after deploying a new binary and before starting it. Startup **refuses to run** with pending migrations and never migrates automatically. Migration SQL is compiled into the binary, so no `.sql` files are read at runtime |
 | **Process replacement** | `systemctl restart` can leave an old process holding the port, sending the new one into a crash loop. The safe sequence is stop → confirm the process exited (`pkill` if needed) → replace the binary → start |
 | **EnvironmentFile** | Secrets read directly with `getenv` bypass the configuration chain, so the systemd unit must set `EnvironmentFile=` for them to reach the process |
-
----
-
-## 9. Related
-
-- [Core specification](/zh-hans/spec/core) (Chinese) — overall architecture and the startup sequence
-- [HTTP specification](/zh-hans/spec/http) (Chinese) — the HTTP adapter and request flow
-- [Logging specification](/zh-hans/spec/logging) (Chinese) — structured logging, multi-sink, async writes
-- [Roadmap](/zh-hans/spec/roadmap) (Chinese) — planned platform work

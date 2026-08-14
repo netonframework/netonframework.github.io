@@ -8,12 +8,6 @@ hero:
     - theme: brand
       text: Quick start
       link: /guide/quick-start
-    - theme: alt
-      text: Specifications (中文)
-      link: /zh-hans/spec/
-    - theme: alt
-      text: Roadmap (中文)
-      link: /zh-hans/spec/roadmap
 
 features:
   - title: Native performance
@@ -34,9 +28,4 @@ features:
 This documentation covers **Neton 1.0.0-beta1** (Kotlin 2.4.0 / KSP 2.3.10).
 
 Where the documentation and the code disagree, **the compilable examples under `neton/examples/` and the framework sources are authoritative**. Please open an issue so the docs can be corrected.
-:::
-
-::: tip Translation status
-The guide is available in English. The specifications and API reference are currently
-Chinese-only — see [规范文档](/zh-hans/spec/). Translations are in progress.
 :::

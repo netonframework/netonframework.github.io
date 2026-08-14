@@ -369,4 +369,3 @@ class AsyncController {
 
 - [参数绑定](./parameter-binding.md) -- 深入了解路径参数、查询参数、请求体等绑定规则
 - [安全指南](./security.md) -- Authenticator + Guard 认证授权体系
-- [路由规范 v1](/zh-hans/spec/routing) -- 路由系统的设计规范与冻结定义

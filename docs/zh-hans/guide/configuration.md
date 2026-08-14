@@ -315,8 +315,3 @@ val hasRedis = ConfigLoader.hasConfig(config, "redis.host")
 2. **环境差异用环境文件**：`application.dev.conf` 开发配置，`application.prod.conf` 生产配置
 3. **模块配置独立**：数据库配置放 `database.conf`，路由放 `routing.conf`，避免主配置文件过大
 4. **CLI 参数用于临时调试**：`--application.debug=true` 临时开启调试，不修改文件
-
-## 相关文档
-
-- [Config SPI 设计规范](/zh-hans/spec/config-spi) -- 配置扩展点的完整设计
-- [核心规格](/zh-hans/spec/core) -- Core 模块完整规格

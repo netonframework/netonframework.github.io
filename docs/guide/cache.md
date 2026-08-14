@@ -256,5 +256,4 @@ produces a wrong cache hit rather than an error.
 
 ## 8. Related
 
-- [Cache specification](/zh-hans/spec/cache) (Chinese) — the full technical contract: tiers, serialization, TTL, singleflight, annotation weaving
 - [Redis and distributed locks](./redis.md) — installing Redis and using distributed locks

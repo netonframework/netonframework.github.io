@@ -419,9 +419,3 @@ Migration is built into `neton-database`; the separate `neton-migrate` CLI was r
 - **Startup never migrates.** When a pending migration is detected the application refuses to start
   and lists what is outstanding, telling you to run `migrate up` first.
 - Modules declare `@Module(migrations = true)`; KSP checks that the flag matches the SQL directory.
-
-## Related
-
-- [Database specification](/zh-hans/spec/database) (Chinese) — the entity/table model, query DSL and architecture
-- [JOIN specification](/zh-hans/spec/database-join) (Chinese) — typed column references, typed projection, the JOIN AST
-- [Execution specification](/zh-hans/spec/database-execution) (Chinese) — the `DbContext` facade, `QueryInterceptor`, transactions

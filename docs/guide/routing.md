@@ -366,4 +366,3 @@ class AsyncController {
 
 - [Parameter binding](./parameter-binding.md) — path, query and body binding rules in depth
 - [Security guide](./security.md) — the Authenticator + Guard architecture
-- [Routing specification](/zh-hans/spec/routing) (Chinese) — the frozen design contract

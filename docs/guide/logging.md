@@ -319,5 +319,4 @@ class OrderController(private val log: Logger) {
 
 ## Related
 
-- [Logging specification](/zh-hans/spec/logging) (Chinese) — the full module design
 - [Configuration](./configuration.md) — logging settings in `application.conf`

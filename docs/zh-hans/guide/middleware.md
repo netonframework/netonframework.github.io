@@ -354,12 +354,3 @@ Neton v1 的中间件能力（安全、限流、日志、追踪）内建于请�
 1. **HttpContext.attributes**：在管道各阶段传递数据。
 2. **@NetonConfig**：在启动阶段注入全局配置。
 3. **Guard**：实现自定义授权逻辑。
-
----
-
-## 九、相关文档
-
-- [安全规范](/zh-hans/spec/security) -- Authenticator / Guard / 注解的完整技术规范
-- [日志规范](/zh-hans/spec/logging) -- 结构化日志、TraceId、访问日志字段的冻结规范
-- [HTTP 规范](/zh-hans/spec/http) -- HttpContext / 请求处理流程 / 响应语义
-- [Config SPI 规范](/zh-hans/spec/config-spi) -- @NetonConfig 的分层架构与使用规则
