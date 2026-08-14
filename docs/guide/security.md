@@ -360,6 +360,5 @@ anything from an internal package to sign a request.
 
 ## Related
 
-- [Security specification](/zh-hans/spec/security) (Chinese) — the full design, including the JWT authenticator and `@CurrentUser`
 - [Routing and controllers](./routing.md) — route groups and mounting
 - [Middleware](./middleware.md) — where security sits in the request pipeline

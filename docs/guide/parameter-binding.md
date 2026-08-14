@@ -369,4 +369,3 @@ fun search(keyword: String, page: Int = 1, size: Int = 10) =
 
 - [Routing and controllers](./routing.md) — controllers and route groups
 - [Security guide](./security.md) — `@CurrentUser` and the identity model
-- [Parameter binding specification](/zh-hans/spec/parameter-binding) (Chinese) — the frozen design contract

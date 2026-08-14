@@ -366,5 +366,4 @@ neton-security: Identity { userId: UserId }  （桥接 override val id = userId.
 
 ## 相关文档
 
-- [安全规范](/zh-hans/spec/security) -- 安全模块完整设计规范（含 JWT 认证器、@CurrentUser 设计）
 - [路由指南](/zh-hans/guide/routing) -- 路由组与 mount 配置

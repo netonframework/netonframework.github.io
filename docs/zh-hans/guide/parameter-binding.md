@@ -395,4 +395,3 @@ fun search(keyword: String, page: Int = 1, size: Int = 10) =
 
 - [路由与控制器](./routing.md) -- 控制器定义与路由组配置
 - [安全指南](./security.md) -- @CurrentUser 与 Identity 认证体系
-- [参数绑定规范 v1](/zh-hans/spec/parameter-binding) -- 参数绑定的设计规范与冻结定义

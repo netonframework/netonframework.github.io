@@ -483,12 +483,3 @@ suspend fun health(ctx: HttpContext): String {
 | **数据库迁移** | 部署新 binary 后先 `./application.kexe migrate up` 再启动——启动流程检测到 pending migration 会**拒绝启动**（启动绝不自动迁移）；迁移 SQL 编译进 binary（每模块 Gradle task 生成 Kotlin 常量），运行期不读 .sql 文件 |
 | **进程替换** | `systemctl restart` 可能留下未退出的旧进程占用端口导致新进程循环 crash；SOP：stop → 确认进程退出（必要时 pkill）→ 替换 binary → start |
 | **EnvironmentFile** | 通过 `getenv` 直读的密钥（如钱包卡加密 key）不走配置文件加载链，systemd unit 必须配置 `EnvironmentFile=` 才会进入进程环境 |
-
----
-
-## 九、相关文档
-
-- [核心架构](/zh-hans/spec/core) -- Neton 的整体架构设计与启动流程
-- [HTTP 规范](/zh-hans/spec/http) -- HTTP 适配器、请求处理流程
-- [日志规范](/zh-hans/spec/logging) -- 结构化日志、Multi-Sink、异步写入
-- [项目路线图](/zh-hans/spec/roadmap) -- 跨平台支持等未来计划

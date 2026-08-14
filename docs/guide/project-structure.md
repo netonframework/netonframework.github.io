@@ -190,5 +190,3 @@ You can still register routes by hand with the DSL. See
 
 - [Quick start](./quick-start.md) — create your first Neton project
 - [Routing and controllers](./routing.md) — controller annotations and route groups in depth
-- [Core specification](/zh-hans/spec/core) (Chinese) — the design contract for the framework core
-- [Config SPI specification](/zh-hans/spec/config-spi) (Chinese) — `@NetonConfig` and configuration extension points

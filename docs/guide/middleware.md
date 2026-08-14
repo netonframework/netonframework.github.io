@@ -340,12 +340,3 @@ Until then, custom pipeline logic has three good homes:
 1. **`HttpContext.attributes`** — pass data between stages.
 2. **`@NetonConfig`** — inject global configuration at startup.
 3. **`Guard`** — implement custom authorization.
-
----
-
-## 9. Related
-
-- [Security specification](/zh-hans/spec/security) (Chinese) — the full Authenticator / Guard / annotation contract
-- [Logging specification](/zh-hans/spec/logging) (Chinese) — structured logs, trace IDs and the frozen access-log fields
-- [HTTP specification](/zh-hans/spec/http) (Chinese) — `HttpContext`, the request flow and response semantics
-- [Config SPI specification](/zh-hans/spec/config-spi) (Chinese) — `@NetonConfig` layering and usage rules

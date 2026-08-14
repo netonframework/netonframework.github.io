@@ -186,5 +186,3 @@ kotlin.sourceSets.named("macosArm64Main") {
 
 - [快速开始](./quick-start.md) -- 创建第一个 Neton 项目
 - [路由与控制器](./routing.md) -- 控制器注解与路由组详解
-- [Core 规范 v1](/zh-hans/spec/core) -- 框架核心架构的设计规范
-- [Config SPI 规范](/zh-hans/spec/config-spi) -- @NetonConfig 与配置扩展点的规范定义

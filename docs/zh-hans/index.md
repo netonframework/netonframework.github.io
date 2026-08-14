@@ -7,13 +7,7 @@ hero:
   actions:
     - theme: brand
       text: 快速开始
-      link: /guide/quick-start
-    - theme: alt
-      text: 规范文档
-      link: /spec/
-    - theme: alt
-      text: 项目路线图
-      link: /spec/roadmap
+      link: /zh-hans/guide/quick-start
 
 features:
   - title: Kotlin/Native 原生性能

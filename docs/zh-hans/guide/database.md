@@ -422,12 +422,6 @@ db.transaction {
 }
 ```
 
-## 相关文档
-
-- [数据库规范](/zh-hans/spec/database) -- Entity/Table 模型、Query DSL、架构实现
-- [JOIN 查询规范](/zh-hans/spec/database-join) -- 强类型列引用、Typed Projection、JOIN AST
-- [执行链与约束规范](/zh-hans/spec/database-execution) -- DbContext 统一执行门面、QueryInterceptor、事务
-
 ## 数据库迁移（migration）
 
 迁移能力内建于 neton-database（2026-06 起，独立的 neton-migrate CLI 已废弃）：

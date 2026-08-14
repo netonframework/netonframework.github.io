@@ -320,8 +320,3 @@ must be supplied through the DSL.
 2. **Use environment files for environment differences.** `application.dev.conf`, `application.prod.conf`.
 3. **Keep module configuration separate.** Database settings in `database.conf`, routing in `routing.conf`, so the main file stays readable.
 4. **Use CLI arguments for one-off debugging.** `--application.debug=true` avoids editing a file.
-
-## Related
-
-- [Config SPI specification](/zh-hans/spec/config-spi) (Chinese) — the full design of configuration extension points
-- [Core specification](/zh-hans/spec/core) (Chinese) — the framework core

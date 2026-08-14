@@ -320,5 +320,4 @@ class OrderController(private val log: Logger) {
 
 ## 相关文档
 
-- [日志规格说明](/zh-hans/spec/logging) -- 日志模块完整设计规格
 - [配置指南](/zh-hans/guide/configuration) -- 日志配置在 application.conf 中的详细说明

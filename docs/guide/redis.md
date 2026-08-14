@@ -273,5 +273,4 @@ explicit `@Lock`.
 
 ## 7. Related
 
-- [Redis specification](/zh-hans/spec/redis) (Chinese) — the full architecture, API definitions and the lock contract
 - [Cache](./cache.md) — the caching guide

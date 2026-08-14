@@ -12,21 +12,6 @@ Neton is a modern Kotlin/Native web framework built on Kotlin Multiplatform. It 
 native binary and uses no reflection, which gives it millisecond startup and a small memory
 footprint. This guide takes you from an empty directory to a working, high-performance service.
 
-## How the documentation is organised
-
-| Type | Audience | What it covers |
-|---|---|---|
-| **Guide** (this section) | Application developers | Practice-oriented: tutorials, code samples and recommended patterns |
-| **[Specifications](/zh-hans/spec/)** (Chinese) | Framework contributors and advanced users | Design-oriented: frozen API definitions, architecture and SPI contracts |
-
-If this is your first time with Neton, start here. Reach for the specifications when you need the
-design rationale behind a feature or the exact frozen contract of an API.
-
-::: tip Translation status
-The guide is available in English. The specifications and API reference are currently
-Chinese-only; translations are in progress.
-:::
-
 ## Contents
 
 ### Getting started

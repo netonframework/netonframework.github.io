@@ -1,5 +1,5 @@
 import { defineConfig } from "vitepress";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,38 +30,7 @@ function urlFor(prefix: string, sharedPath: string): string {
   return `${HOSTNAME}/${prefix ? `${prefix}/` : ""}${html}`;
 }
 
-/** 目录下所有 .html 的相对路径 */
-function collectHtml(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  const out: string[] = [];
-  const walk = (current: string, prefix: string) => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) walk(join(current, entry.name), rel);
-      else if (entry.name.endsWith(".html")) out.push(rel);
-    }
-  };
-  walk(dir, "");
-  return out;
-}
-
-function redirectHtml(target: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Moved</title>
-<link rel="canonical" href="${HOSTNAME}${target}">
-<meta name="robots" content="noindex">
-<meta http-equiv="refresh" content="0; url=${target}">
-</head>
-<body>This page moved to <a href="${target}">${target}</a>.</body>
-</html>
-`;
-}
-
 // root locale = English（/guide/cache.html），中文走子路径（/zh-hans/guide/cache.html）。
-// spec/ 目前只有中文版，英文导航直接指向 /zh-hans/spec/ 并标注语言，不留死链。
 
 const enGuideSidebar = [
   {
@@ -143,70 +112,12 @@ const zhGuideSidebar = [
   },
 ];
 
-const zhSpecSidebar = [
-  {
-    text: "框架规范",
-    items: [
-      { text: "规范概览", link: "/zh-hans/spec/" },
-      { text: "路线图", link: "/zh-hans/spec/roadmap" },
-    ],
-  },
-  {
-    text: "Core",
-    items: [
-      { text: "Core 规范 v1", link: "/zh-hans/spec/core" },
-      { text: "Core SPI 最佳实践", link: "/zh-hans/spec/core-spi-best-practices" },
-      { text: "Config SPI 规范", link: "/zh-hans/spec/config-spi" },
-    ],
-  },
-  {
-    text: "HTTP",
-    items: [{ text: "HTTP 规范 v1", link: "/zh-hans/spec/http" }],
-  },
-  {
-    text: "路由与参数",
-    items: [
-      { text: "路由规范 v1", link: "/zh-hans/spec/routing" },
-      { text: "参数绑定规范 v1", link: "/zh-hans/spec/parameter-binding" },
-    ],
-  },
-  {
-    text: "安全",
-    items: [{ text: "安全规范 v1", link: "/zh-hans/spec/security" }],
-  },
-  {
-    text: "日志",
-    items: [{ text: "日志规范 v1", link: "/zh-hans/spec/logging" }],
-  },
-  {
-    text: "数据库",
-    items: [
-      { text: "数据库规范 v1", link: "/zh-hans/spec/database" },
-      { text: "JOIN 查询规范", link: "/zh-hans/spec/database-join" },
-      { text: "执行链与约束规范", link: "/zh-hans/spec/database-execution" },
-      { text: "会话与事务契约", link: "/zh-hans/spec/database-session" },
-    ],
-  },
-  {
-    text: "缓存与 Redis",
-    items: [
-      { text: "缓存规范 v1", link: "/zh-hans/spec/cache" },
-      { text: "Redis 规范 v1", link: "/zh-hans/spec/redis" },
-    ],
-  },
-  {
-    text: "定时任务与存储",
-    items: [
-      { text: "定时任务规范", link: "/zh-hans/spec/jobs" },
-      { text: "存储规范", link: "/zh-hans/spec/storage-spec" },
-    ],
-  },
-];
-
 export default defineConfig({
   title: "Neton Framework",
   base: "/",
   lastUpdated: true,
+  // Internal contracts stay in the repository but are not published until all locales are ready.
+  srcExclude: ["zh-hans/spec/**", "zh-hans/api/**"],
 
   sitemap: {
     hostname: HOSTNAME,
@@ -229,29 +140,6 @@ export default defineConfig({
     return tags;
   },
 
-  // spec/ 和 api/ 原本在根路径（中文），改 i18n 后整体搬进 /zh-hans/，老地址会 404。
-  // GitHub Pages 没有服务端跳转，只能生成跳转桩页：canonical 交代权重归属，
-  // meta refresh 负责把人送过去。等这些目录有了英文版，真实页面会占住路径，桩页自动不再生成。
-  buildEnd(siteConfig) {
-    const movedRoots = ["spec", "api"];
-    let written = 0;
-
-    for (const { prefix } of LOCALES) {
-      if (!prefix) continue;
-      for (const root of movedRoots) {
-        for (const rel of collectHtml(join(siteConfig.outDir, prefix, root))) {
-          const from = join(siteConfig.outDir, root, rel);
-          if (existsSync(from)) continue; // 已有真实页面，不覆盖
-          const target = `/${prefix}/${root}/${rel}`;
-          mkdirSync(dirname(from), { recursive: true });
-          writeFileSync(from, redirectHtml(target), "utf-8");
-          written += 1;
-        }
-      }
-    }
-    if (written > 0) console.log(`  generated ${written} redirect stubs for moved paths`);
-  },
-
   markdown: {
     lineNumbers: true,
   },
@@ -269,14 +157,11 @@ export default defineConfig({
     root: {
       label: "English",
       lang: "en-US",
-      description:
-        "Kotlin Multiplatform backend framework — guide and specifications",
+      description: "Kotlin Multiplatform backend framework and user guide",
       themeConfig: {
         nav: [
           { text: "Home", link: "/" },
           { text: "Guide", link: "/guide/" },
-          { text: "Specs (中文)", link: "/zh-hans/spec/" },
-          { text: "API (中文)", link: "/zh-hans/api/" },
         ],
         sidebar: {
           "/guide/": enGuideSidebar,
@@ -293,21 +178,14 @@ export default defineConfig({
       label: "简体中文",
       lang: "zh-Hans",
       link: "/zh-hans/",
-      description: "Neton 框架设计规范与用户指南",
+      description: "Neton 框架用户指南",
       themeConfig: {
         nav: [
           { text: "首页", link: "/zh-hans/" },
           { text: "用户指南", link: "/zh-hans/guide/" },
-          { text: "规范文档", link: "/zh-hans/spec/" },
-          { text: "API 参考", link: "/zh-hans/api/" },
-          {
-            text: "更多",
-            items: [{ text: "路线图", link: "/zh-hans/spec/roadmap" }],
-          },
         ],
         sidebar: {
           "/zh-hans/guide/": zhGuideSidebar,
-          "/zh-hans/spec/": zhSpecSidebar,
         },
         footer: {
           message: "Neton Framework 文档",
