@@ -111,7 +111,7 @@ ctx.get(DomainEventBus::class).register(
 
 - **监听者必须幂等**。投递是至少一次：崩溃恢复、超时重领都可能让同一条被投递两次。
 - 应用要装配持久化设施（`DomainEventStore` 实现 + `DomainEventCodec`）。有 `RETRYABLE` 监听者却没装配，**启动直接失败**并指名是哪个监听者——不会静默降级。
-- 目前的参考实现在 `neton-application-module-infra`（PostgreSQL outbox 表 + 投递任务）。运维面（终态失败查询、积压指标、清理任务）尚在补齐，**资金关键链路暂时优先用 `SYNC`**。
+- 参考实现在 `neton-application-module-infra`：PostgreSQL outbox 表、投递任务、运维接口（`/infra/domain-event`：分页、详情、`stats`、重投、丢弃）、每日清理任务、`infra.conf` 的 `[domain_events]` 配置段。投递任务在积压或出现终态失败时以 `event.backlog` 记 warn。
 
 ---
 

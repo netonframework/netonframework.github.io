@@ -5,7 +5,7 @@
 > **状态**：
 > - **框架契约：冻结**。`DomainEvent` / `DomainEventListener` / `DomainEventBus` / `DomainEventStore` / `DomainEventCodec` 在 neton-core，语义见二至六节；框架不选载体、不依赖数据库、不依赖序列化库。
 > - **PostgreSQL 存储契约：冻结**。参考实现在应用层 infra，由真实 PostgreSQL 契约测试守着（9.1）。
-> - **`RETRYABLE` 生产就绪：待运维面**。第八节列出的运维缺口补齐之前，**不得用于资金关键链路**；这是应用层的事，不再影响框架契约。
+> - **`RETRYABLE` 生产就绪：运维面已建立**（第八节）。参考实现具备终态失败出口、积压指标与告警、清理任务、配置接入，且全部在真实 PostgreSQL 上验证。可用于资金链路，前提仍是**监听者幂等**。
 >
 > **v1 范围**：三种投递模式（`SYNC` / `BEST_EFFORT` / `RETRYABLE`）；框架绑定总线 + 装配期封印；事务性 outbox 端口 + 可见性超时回收；**不做** 跨进程广播、事件溯源、投递顺序保证、恰好一次、事件版本演进。
 
@@ -256,21 +256,36 @@ UPDATE ... SET status = 2 WHERE id = :id AND status = 1 AND claim_token = :token
 
 ---
 
-## 八、已知缺口
+## 八、运维面（参考实现，应用层）
 
-语义已经正确，但运维面尚未建立。生产使用前建议补齐：
+语义正确只是前半段，「失败了有人看得见、看见了有办法处置」是后半段。以下全部在 `neton-application-module-infra`，不在框架。
 
-| 缺口 | 后果 |
+| 能力 | 落地 |
 |---|---|
-| **终态失败无出口** | `status = 3` 的记录没有查询接口、没有指标、没有告警。规范说「等待人工介入」，但人看不见。 |
-| **已投递记录不清理** | `status = 2` 无限累积，表持续增长。需要保留期 + 清理任务。 |
-| **无积压指标** | 待投递深度是 outbox 最关键的健康信号，目前没有暴露。 |
-| **无 codec 参考实现** | 应用必须手写 `DomainEventCodec`。从 `@Serializable` 事件由 KSP 生成是自然的下一步。 |
-| **投递参数不可配置** | `DispatchConfig`（批量、重试上限、退避、可见性超时）只能在代码里改，未接入配置文件。 |
+| **终态失败出口** | `GET /infra/domain-event/page?status=3` 查、`GET /get/{id}` 看载荷与错误、`POST /requeue/{id}` 重投、`POST /discard/{id}` 丢弃。权限 `infra:domain-event:query` / `infra:domain-event:manage` |
+| **积压指标** | `GET /infra/domain-event/stats`：各状态计数、最老待投递年龄、最老投递中年龄。投递任务每轮读一次，超阈值以 `event.backlog` 记 warn——终态失败 > 0、待投递超 `backlog_warn_pending`、最老年龄超 `backlog_warn_age_ms` |
+| **清理** | `DomainEventCleanupJob`，`@Job(cron = "17 3 * * *", SINGLE_NODE)`，分批删除已投递 / 已丢弃且超过 `retention_days` 的行 |
+| **配置** | `infra.conf` 的 `[domain_events]` 段：`batch_size` / `max_attempts` / `base_backoff_ms` / `max_backoff_ms` / `visibility_timeout_ms` / `retention_days` / `backlog_warn_pending` / `backlog_warn_age_ms`。类型不对直接抛，不回退 |
 
-在补齐之前，`RETRYABLE` 适合用于失败可容忍、且有独立对账手段的副作用；对账依赖投递本身的场景应优先 `SYNC`。
+### 8.1 状态 4：已丢弃
 
----
+在原来的 0–3 之外增加 `4 = 已丢弃（人工）`。丢弃不删行——保留审计，随已投递记录一起被清理任务回收。领取语句只看 0 和滞留的 1，天然忽略 4。
+
+### 8.2 重投与丢弃的状态约束
+
+| 操作 | 允许的起点 | 理由 |
+|---|---|---|
+| 重投 | 仅终态失败（3） | 待投递 / 投递中本来就在流转，重投只会制造重复；已投递 / 已丢弃重投是业务决定，不该藏在按钮后面 |
+| 丢弃 | 待投递（0）或终态失败（3） | 投递中（1）可能正被某节点执行，丢弃与执行并发让状态不可解释，等它落定 |
+
+重投时 `attempts` 归零（重新享受完整重试预算）、`claim_token` 清空（旧领取者的令牌不能复活）。
+
+### 8.3 仍未做的
+
+| 缺口 | 说明 |
+|---|---|
+| **KSP 生成 codec** | 应用仍须手写 `DomainEventCodec`。生成器可放 `neton-ksp`，但生成物必须落应用。 |
+| **指标导出** | `stats` 只有 HTTP 接口与日志告警，未接 Prometheus 之类的拉取端点。 |
 
 ## 九、参考实现
 
@@ -305,6 +320,10 @@ UPDATE ... SET status = 2 WHERE id = :id AND status = 1 AND claim_token = :token
 | A 超时被 B 重领后，A 迟到的 `markDelivered` / `markFailed` 均作废（双向） | 6.4 fencing |
 | 同一令牌落定后再落定被拒 | CAS 同时看状态与令牌 |
 | 终态不被到期领取也不被滞留回收；重试尊重 `next_attempt_at` 并累加 `attempts` | 6.3 状态机 |
+| `stats` 各状态计数与年龄正确 | 8 积压指标 |
+| 重投只接受终态失败，归零 `attempts`、清空令牌，重投后能被再领 | 8.2 |
+| 丢弃接受 0/3、拒绝 1，已丢弃不被领取 | 8.1 / 8.2 |
+| 清理只删 2/4 且超保留期，分批 | 8 清理 |
 
 变异验证过：去掉 `claim_token` 校验 → fencing 三个用例失败；去掉 `SKIP LOCKED` → 并发不重叠用例 3/3 稳定失败。这套测试是真门禁。
 
@@ -415,12 +434,12 @@ AND NOT EXISTS (
 
 | 阶段 | 内容 | 解决什么 |
 |---|---|---|
-| **P1 运维面** | 终态失败查询接口 + 积压深度指标 + 告警；已投递记录清理任务（`SINGLE_NODE`）；`DispatchConfig` 接入配置文件；KSP 生成 `DomainEventCodec` | 让 `RETRYABLE` 能上生产（见第八节） |
+| **P1 运维面** ✅ | 终态失败查询与处置接口、积压指标与告警、清理任务、配置接入——已落地（第八节）。KSP 生成 codec 顺延 | `RETRYABLE` 可上生产 |
 | **P2 延迟与顺序** | Redis pub/sub 唤醒（纯优化，失效退回轮询）；`ordering_key` + SQL 谓词保序 | 投递延迟从 10s 降到亚秒；支持有序场景 |
 | **P3 广播** | `RedisClient` 补 pub/sub / Streams；新增广播投递模式；节点身份与消费者组 | 补上 Spring Cloud Bus 覆盖的那一类场景 |
 | **P4 跨服务** | Relay 抽象：投递器与传输解耦；对外传输实现（Kafka / NATS / HTTP）；事件版本与 schema 演进 | 支撑分布式架构，且业务代码不改 |
 
-顺序不可颠倒：**P1 之前不要用 `RETRYABLE` 承载关键业务**——语义已经正确，但失败了没人看得见。
+P1 已完成，`RETRYABLE` 可承载关键业务；剩余阶段是能力扩展，不是正确性前提。
 
 ---
 
