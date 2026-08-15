@@ -1,8 +1,11 @@
-# Neton 领域事件规范 v1（收敛中）
+# Neton 领域事件规范 v1（框架契约冻结）
 
 > **定位**：模块间解耦的进程内事件总线。事件由**发生方所在模块**定义，消费方订阅；发生方不需要认识任何消费方。需要脱离主流程的监听者可声明持久化投递，由事务性 outbox 落库后异步重试。
 >
-> **状态**：**v1 语义收敛中，尚未冻结**。`DomainEvent` / `DomainEventListener` / `DomainEventBus` / `DomainEventStore` 四个抽象在 neton-core，落地实现在应用层；框架不选载体、不依赖数据库、不依赖序列化库。冻结条件见第八节——运维面补齐、且有真实 PostgreSQL 多节点竞争测试之前，**`RETRYABLE` 不得用于资金关键链路**。
+> **状态**：
+> - **框架契约：冻结**。`DomainEvent` / `DomainEventListener` / `DomainEventBus` / `DomainEventStore` / `DomainEventCodec` 在 neton-core，语义见二至六节；框架不选载体、不依赖数据库、不依赖序列化库。
+> - **PostgreSQL 存储契约：冻结**。参考实现在应用层 infra，由真实 PostgreSQL 契约测试守着（9.1）。
+> - **`RETRYABLE` 生产就绪：待运维面**。第八节列出的运维缺口补齐之前，**不得用于资金关键链路**；这是应用层的事，不再影响框架契约。
 >
 > **v1 范围**：三种投递模式（`SYNC` / `BEST_EFFORT` / `RETRYABLE`）；框架绑定总线 + 装配期封印；事务性 outbox 端口 + 可见性超时回收；**不做** 跨进程广播、事件溯源、投递顺序保证、恰好一次、事件版本演进。
 
