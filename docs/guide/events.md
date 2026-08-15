@@ -133,9 +133,10 @@ otherwise `SYNC`.**
 - The application must wire persistence (a `DomainEventStore` implementation plus a
   `DomainEventCodec`). A `RETRYABLE` listener with no store **fails startup** and names the
   listener — it does not silently degrade.
-- The reference implementation lives in `neton-application-module-infra` (a PostgreSQL outbox
-  table and a dispatch job). Its operational surface — terminal-failure inspection, backlog metrics,
-  cleanup — is still being completed, so **prefer `SYNC` for money-critical flows for now**.
+- The reference implementation lives in `neton-application-module-infra`: a PostgreSQL outbox
+  table, the dispatch job, an admin surface under `/infra/domain-event` (paging, detail, `stats`,
+  requeue, discard), a daily cleanup job, and a `[domain_events]` section in `infra.conf`. The
+  dispatch job logs `event.backlog` at warn when work piles up or terminal failures appear.
 
 ---
 
