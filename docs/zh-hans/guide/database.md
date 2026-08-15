@@ -422,6 +422,13 @@ db.transaction {
 }
 ```
 
+嵌套的 `transaction { }` 会加入外层事务。`db.inTransaction()` 返回当前协程是否处在事务内，
+让「必须在事务里执行」的代码（比如领域事件的 outbox 写入）能直接断言，而不是悄悄提前提交：
+
+```kotlin
+check(db.inTransaction()) { "必须在 db.transaction { } 里调用" }
+```
+
 ## 数据库迁移（migration）
 
 迁移能力内建于 neton-database（2026-06 起，独立的 neton-migrate CLI 已废弃）：

@@ -32,6 +32,7 @@ Neton 是一个现代化的 Kotlin/Native Web 框架，基于 Kotlin Multiplatfo
 - [数据库操作](./database.md) -- Entity + Table 模式、类型安全 Query DSL、Repository 层
 - [缓存](./cache.md) -- L1 + L2 两级缓存、@Cacheable / @CachePut / @CacheEvict 注解
 - [Redis 与分布式锁](./redis.md) -- Redis 客户端、@Lock 分布式锁
+- [领域事件](./events.md) -- 用事件总线解耦模块，SYNC / BEST_EFFORT / RETRYABLE 三种投递模式
 
 ### 进阶
 

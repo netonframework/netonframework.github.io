@@ -60,6 +60,7 @@ const enGuideSidebar = [
       { text: "Database", link: "/guide/database" },
       { text: "Cache", link: "/guide/cache" },
       { text: "Redis and distributed locks", link: "/guide/redis" },
+      { text: "Domain events", link: "/guide/events" },
     ],
   },
   {
@@ -100,6 +101,7 @@ const zhGuideSidebar = [
       { text: "数据库操作", link: "/zh-hans/guide/database" },
       { text: "缓存", link: "/zh-hans/guide/cache" },
       { text: "Redis 与分布式锁", link: "/zh-hans/guide/redis" },
+      { text: "领域事件", link: "/zh-hans/guide/events" },
     ],
   },
   {
