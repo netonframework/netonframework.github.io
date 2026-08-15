@@ -310,7 +310,7 @@ UPDATE ... SET status = 2 WHERE id = :id AND status = 1 AND claim_token = :token
 3. **`finally` 里 `DROP DATABASE` 并关连接**，用例失败也照做（验证过）。随机库名让并行 job 互不干扰。
 4. 库名替换保留 URI 的查询参数（`?sslmode=…`），远程测试库也能用。
 
-**关闭标准**：真实 PostgreSQL 上 `postgresContractTest` 全绿，且变异验证证明能抓回归——**已满足**。CI job `outbox-postgres-contract` 也已配置（起临时 PG、建 `CREATEDB` 角色、跑该任务、`always()` 断言无残留），但尚未在 GitHub Actions 上执行过；它是应用工程的运维事项，不是框架设计层面的冻结条件。
+**关闭标准**：真实 PostgreSQL 上 `postgresContractTest` 全绿，且变异验证证明能抓回归——**已满足**。CI job `outbox-postgres-contract` 已配置（起临时 PG、建 `CREATEDB` 角色、跑该任务、`always()` 断言无残留）；它是应用工程的运维事项，不作为框架冻结条件。
 
 用例：
 
@@ -459,7 +459,7 @@ P1 已完成，`RETRYABLE` 可承载关键业务；剩余阶段是能力扩展�
 
 判据：**一段代码若删掉后框架仍能运行、只是某个应用少了一种投递方式，它就属于应用层。**
 
-当前状态已核对符合：框架仓库里只有 `neton-core/event/` 三个契约文件 + `Neton.kt` 的绑定/封印两行 + 契约测试；`PostgresDomainEventStore`、`DomainEventDispatcher`、`DomainEventDispatchJob`、V008–V010 全部在 `neton-application-module-infra`。真实 PostgreSQL 双节点竞争测试同样落在 infra，通过 CI 的 PostgreSQL service 验证，不进框架。
+当前状态已核对符合：框架仓库里只有 `neton-core/event/` 三个契约文件 + `Neton.kt` 的绑定/封印两行 + 契约测试；`PostgresDomainEventStore`、`DomainEventDispatcher`、`DomainEventDispatchJob`、V008–V010 全部在 `neton-application-module-infra`。真实 PostgreSQL 并发领取与 fencing 契约测试位于 infra；CI job 已配置但不作为框架冻结条件。
 
 ## 十二、收尾状态
 
@@ -467,7 +467,7 @@ P1 已完成，`RETRYABLE` 可承载关键业务；剩余阶段是能力扩展�
 
 - 每条契约有对应测试；存储与运维行为在真实 PostgreSQL 上验证（9.1，13 例）
 - 关键门禁经变异验证：去掉 `claim_token` 校验、去掉 `SKIP LOCKED`、回退空错误回调，对应测试均稳定失败
-- 三方评审（作者、GPT、Claude）多轮收敛后无未决 P0/P1
+- 评审完成，无未决 P0/P1
 
 后续变更应视为**演进**（第十节路线图），不再是收敛。修改二至六节的语义须重新走评审并更新版本号。
 
