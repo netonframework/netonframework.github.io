@@ -35,6 +35,7 @@ footprint. This guide takes you from an empty directory to a working, high-perfo
 - [Database](./database.md) — the entity + table model, the type-safe query DSL, the logic layer
 - [Cache](./cache.md) — two-tier L1 + L2 caching, `@Cacheable` / `@CachePut` / `@CacheEvict`
 - [Redis and distributed locks](./redis.md) — the Redis client and the `@Lock` annotation
+- [Domain events](./events.md) — decoupling modules with the event bus; `SYNC` / `BEST_EFFORT` / `RETRYABLE`
 
 ### Advanced
 

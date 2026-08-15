@@ -406,6 +406,14 @@ db.transaction {
 }
 ```
 
+Nested `transaction { }` calls join the outer transaction. `db.inTransaction()` reports whether
+the current coroutine is inside one, which lets code that must run transactionally — the domain
+event outbox, for instance — fail fast instead of committing early:
+
+```kotlin
+check(db.inTransaction()) { "must be called inside db.transaction { }" }
+```
+
 ## Migrations
 
 Migration is built into `neton-database`; the separate `neton-migrate` CLI was retired in June 2026.

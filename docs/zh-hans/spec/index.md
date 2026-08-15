@@ -40,6 +40,10 @@
 - [缓存规范 v1](./cache.md) — L1 + L2 缓存抽象、@Cacheable / @CachePut / @CacheEvict **(设计冻结)**
 - [Redis 规范 v1](./redis.md) — Redis 客户端抽象、@Lock 注解与 LockManager
 
+## 领域事件
+
+- [领域事件规范 v1](./event.md) — 三种投递模式、事务性 outbox、claim 令牌、装配期封印 **(收敛中，RETRYABLE 未冻结)**
+
 ## 定时任务与存储
 
 - [定时任务规范](./jobs.md) — `@Job` 注解、Cron / fixedRate 表达式、`JobScheduler`
