@@ -280,12 +280,14 @@ UPDATE ... SET status = 2 WHERE id = :id AND status = 1 AND claim_token = :token
 
 重投时 `attempts` 归零（重新享受完整重试预算）、`claim_token` 清空（旧领取者的令牌不能复活）。
 
-### 8.3 仍未做的
+### 8.3 非阻塞的后续项
 
-| 缺口 | 说明 |
-|---|---|
-| **KSP 生成 codec** | 应用仍须手写 `DomainEventCodec`。生成器可放 `neton-ksp`，但生成物必须落应用。 |
-| **指标导出** | `stats` 只有 HTTP 接口与日志告警，未接 Prometheus 之类的拉取端点。 |
+以下两项**不影响正确性与生产就绪**，是便利性扩展。记录在这里是为了划清边界：它们不是"未完成"，是"未选择做"。
+
+| 项 | 现状 | 边界条件 |
+|---|---|---|
+| **KSP 生成 codec** | 应用手写 `DomainEventCodec`，按事件类型分派 `Json.encodeToString` / `decodeFromString`。几十行，一次性工作 | 生成器可放 `neton-ksp`；生成物（codec 实现与事件类型表）**必须落在应用项目**，框架内不得出现事件注册表（见十一节）。要做时以 `@Serializable` + `DomainEvent` 双标记为发现条件 |
+| **指标导出** | `stats` 通过 HTTP 接口与 `event.backlog` 日志告警暴露 | 接 Prometheus 等拉取端点属于应用监控栈的选择，与事件总线无关；`DomainEventStats` 的字段已是导出所需的全部 |
 
 ## 九、参考实现
 
@@ -459,7 +461,17 @@ P1 已完成，`RETRYABLE` 可承载关键业务；剩余阶段是能力扩展�
 
 当前状态已核对符合：框架仓库里只有 `neton-core/event/` 三个契约文件 + `Neton.kt` 的绑定/封印两行 + 契约测试；`PostgresDomainEventStore`、`DomainEventDispatcher`、`DomainEventDispatchJob`、V008–V010 全部在 `neton-application-module-infra`。真实 PostgreSQL 双节点竞争测试同样落在 infra，通过 CI 的 PostgreSQL service 验证，不进框架。
 
-## 十二、相关规范
+## 十二、收尾状态
+
+本规范所述的框架契约、PostgreSQL 存储契约与参考实现的运维面，均已达到可依赖的健壮性：
+
+- 每条契约有对应测试；存储与运维行为在真实 PostgreSQL 上验证（9.1，13 例）
+- 关键门禁经变异验证：去掉 `claim_token` 校验、去掉 `SKIP LOCKED`、回退空错误回调，对应测试均稳定失败
+- 三方评审（作者、GPT、Claude）多轮收敛后无未决 P0/P1
+
+后续变更应视为**演进**（第十节路线图），不再是收敛。修改二至六节的语义须重新走评审并更新版本号。
+
+## 十三、相关规范
 
 - [Core 规范](./core.md) —— 组件模型与启动流程
 - [数据库会话与事务契约](./database-session.md) —— `append` 依赖的事务语义
