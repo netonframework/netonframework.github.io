@@ -118,6 +118,12 @@ bind(NetonContext) → bind(DomainEventBus) → 组件 init → 模块 init → 
 
 由框架保证它一定存在，这个失败模式就不存在了。应用侧因此**必须用 `ctx.get(DomainEventBus::class)` 而不是 `getOrNull`**，发布方持有的字段**必须非可空**——空总线本身已经是无副作用的空操作，不需要再用 `null` 表达一次。
 
+### 5.1.1 框架绑定的总线必须带错误记录
+
+`BEST_EFFORT` 的契约是「异常被吞掉**并记录**」。`DomainEventBus` 构造器的 `onError` 有一个空实现默认值——那是给单元测试用的，框架绑定时**必须**注入真实回调，否则契约里的"记录"在运行时不存在。
+
+框架绑定早于 Logger 就绪，因此回调在**调用时**才通过 `CoreLog` 取 Logger，并以 `event.listener.failed` 结构化记录（字段：`listener`、`event`、`mode`，附异常）。这条由装配级测试 `EventBusAssemblyTest` 守着：完整走 `Neton.run`，注册一个抛异常的 `BEST_EFFORT` 监听者，断言日志里出现该记录。变异验证过：回调换回默认空实现，测试即红。
+
 ### 5.2 seal()
 
 在 `validateRuntimeGraph` 之后、`ctx.freeze()` 之前调用，做两件事：

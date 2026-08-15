@@ -120,7 +120,7 @@ Registration is startup-only. The framework seals the bus after module initialis
 | Mode | When | On failure | Use when |
 |---|---|---|---|
 | `SYNC` | Synchronously, inside the publisher's transaction | Exception propagates; the publisher's transaction rolls back | The side effect must **succeed or fail together** with the main flow. Payment succeeded → wallet credited: both or neither |
-| `BEST_EFFORT` | Synchronously, inside the publisher's transaction | Exception swallowed and reported; publisher and other listeners unaffected | Nice-to-have work that must not take the main flow down. Updating a counter |
+| `BEST_EFFORT` | Synchronously, inside the publisher's transaction | Exception swallowed and logged as `event.listener.failed` at warn; publisher and other listeners unaffected | Nice-to-have work that must not take the main flow down. Updating a counter |
 | `RETRYABLE` | Persisted in the transaction, delivered asynchronously after commit | Exponential backoff; terminal failure after the retry limit | The side effect **calls an external system** — a callback, an SMS. Doing that in the main transaction holds locks longer and turns remote flakiness into local failures |
 
 `SYNC` is the default. Rule of thumb: **network call inside the listener → `RETRYABLE`;
