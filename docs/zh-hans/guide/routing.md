@@ -11,6 +11,24 @@ Neton 提供两种方式定义路由：
 
 ## 注解路由
 
+KSP 会把应用里全部 `@Controller` 汇聚成一个生成对象 `neton.core.generated.GeneratedInitializer`。
+**必须显式传给框架**，它不会自己生效：
+
+```kotlin
+import neton.core.generated.GeneratedInitializer
+
+fun main(args: Array<String>) {
+    Neton.run(args) {
+        http { port = 8080 }
+        routing { }
+        modules(GeneratedInitializer)   // 注册全部 @Controller 路由
+    }
+}
+```
+
+漏了这一行，启动会打 `routing.no_routes` 告警，所有控制器接口都是 404。用模块清单组织的应用
+本来就用 `modules(...)` 传模块，把 `GeneratedInitializer` 一并传入即可覆盖应用自身声明的控制器。
+
 ### 基础控制器
 
 使用 `@Controller` 注解定义控制器类，指定基础路径。使用 `@Get`、`@Post` 等注解标记处理方法：
