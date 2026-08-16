@@ -74,26 +74,31 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation(project(":neton-core"))
-                implementation(project(":neton-logging"))
-                implementation(project(":neton-routing"))
-                implementation(project(":neton-http"))
-                implementation(libs.kotlinx.coroutines.core)
+                implementation("com.netonstream:neton:1.0.0-beta1")
             }
         }
     }
 }
 ```
 
-核心依赖说明：
+`com.netonstream:neton` 是**唯一带版本号的坐标**。它拉进一个可运行服务所需的四个模块——
+`neton-core`、`neton-logging`、`neton-http`、`neton-routing`——并把其余所有 Neton 模块钉在同一个
+发布版本上，所以追加其它模块**不写版本**：
 
-| 依赖模块 | 功能 |
-|---------|------|
-| `neton-core` | 框架核心：启动流程、组件模型、配置加载 |
-| `neton-logging` | 结构化日志系统 |
-| `neton-routing` | 路由引擎与 DSL |
-| `neton-http` | HTTP 服务器适配层 |
-| `kotlinx-coroutines-core` | Kotlin 协程支持 |
+```kotlin
+implementation("com.netonstream:neton-database")   // 自动对齐到 1.0.0-beta1
+implementation("com.netonstream:neton-redis")
+implementation("com.netonstream:neton-cache")
+```
+
+| 坐标 | 说明 |
+|---|---|
+| `neton` | 入口：core + logging + http + routing，附带其余模块的版本约束 |
+| `neton-<模块>` | 可选模块——`database`、`redis`、`cache`、`security`、`storage`、`jobs`、`validation`、`ai` |
+| `neton-bom` | 只做版本对齐，给不想拉四个基础模块、只要约束的项目：`implementation(platform("com.netonstream:neton-bom:1.0.0-beta1"))` |
+
+可选模块**故意不收进** `neton`：它们带原生库（Rust 数据库驱动、Redis 客户端），Kotlin/Native
+静态链接会把用不到的也编进每个二进制；而且 `neton-database` 没有 macOS x64 目标。
 
 ## 第三步：编写配置文件
 
