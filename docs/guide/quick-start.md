@@ -6,8 +6,8 @@ same thing from an empty directory so you can see every piece.
 ## Clone and run
 
 ```bash
-git clone https://github.com/netonframework/neton-start.git
-cd neton-start
+git clone https://github.com/netonframework/neton-app.git
+cd neton-app
 ./gradlew run
 ```
 

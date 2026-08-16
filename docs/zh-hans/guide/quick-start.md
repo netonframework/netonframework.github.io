@@ -5,8 +5,8 @@
 ## 克隆即运行
 
 ```bash
-git clone https://github.com/netonframework/neton-start.git
-cd neton-start
+git clone https://github.com/netonframework/neton-app.git
+cd neton-app
 ./gradlew run
 ```
 
