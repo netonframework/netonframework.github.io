@@ -1,8 +1,26 @@
 # Quick start
 
-This chapter takes you from an empty directory to a running Hello World service.
+Two ways in. The fastest is to clone the starter and run it; the rest of this page builds the
+same thing from an empty directory so you can see every piece.
 
-## Requirements
+## Clone and run
+
+```bash
+git clone https://github.com/netonframework/neton-start.git
+cd neton-start
+./gradlew run
+```
+
+Open `http://localhost:8080/` — you should see **Welcome to Neton**. `/api/hello` returns
+JSON. `./gradlew run` compiles a native binary for your machine and starts it; the first build
+downloads the Kotlin/Native toolchain and takes a few minutes, later builds take seconds.
+
+The starter is a complete, minimal application: one `@Controller`, one config file, one
+versioned dependency. Edit `src/commonMain/kotlin/controller/WelcomeController.kt` and rerun.
+
+## From scratch
+
+### Requirements
 
 | Tool | Version | Notes |
 |---|---|---|
@@ -22,7 +40,7 @@ Neton compiles to a Kotlin/Native binary. The current targets are:
 `macosX64` artifact. Every other module builds on Intel Macs.
 :::
 
-## 1. Create the project
+### 1. Create the project
 
 ```bash
 mkdir hello-neton
@@ -43,7 +61,7 @@ hello-neton/
             └── Main.kt
 ```
 
-## 2. Configure the build
+### 2. Configure the build
 
 Create `build.gradle.kts` with the Kotlin Multiplatform plugin and the Neton dependencies:
 
@@ -101,7 +119,7 @@ The optional modules are kept out of `neton` on purpose: they link native librar
 database driver, a Redis client) that Kotlin/Native would otherwise compile into every binary,
 and `neton-database` has no macOS x64 target.
 
-## 3. Write the configuration
+### 3. Write the configuration
 
 Create `config/application.conf` (TOML):
 
@@ -122,7 +140,7 @@ level = "INFO"
 - `server.port` — the HTTP listen port
 - `logging.level` — one of `DEBUG`, `INFO`, `WARN`, `ERROR`
 
-## 4. Write the entry point
+### 4. Write the entry point
 
 Create `src/commonMain/kotlin/Main.kt`:
 
@@ -158,7 +176,7 @@ The example above uses the DSL, which suits small services. For larger projects 
 [Routing and controllers](./routing.md).
 :::
 
-## 5. Build and run
+### 5. Build and run
 
 ```bash
 # macOS ARM64
@@ -184,7 +202,7 @@ On a successful start you should see something like:
 [INFO] helloworld application started on 0.0.0.0:8080
 ```
 
-## 6. Verify
+### 6. Verify
 
 From another terminal:
 
