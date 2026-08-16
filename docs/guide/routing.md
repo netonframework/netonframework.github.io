@@ -11,6 +11,26 @@ groups and mounting, and the routing DSL.
 
 ## Annotated routes
 
+KSP collects every `@Controller` in the application into one generated object,
+`neton.core.generated.GeneratedInitializer`. **Pass it to the framework explicitly** — it is
+not picked up on its own:
+
+```kotlin
+import neton.core.generated.GeneratedInitializer
+
+fun main(args: Array<String>) {
+    Neton.run(args) {
+        http { port = 8080 }
+        routing { }
+        modules(GeneratedInitializer)   // registers every @Controller route
+    }
+}
+```
+
+If you forget this line, startup logs `routing.no_routes` and every controller endpoint answers
+404. Applications built from module manifests pass their modules the same way and add
+`GeneratedInitializer` alongside them for any controller declared in the application itself.
+
 ### A basic controller
 
 Annotate a class with `@Controller` to give it a base path, then mark handlers with `@Get`,
