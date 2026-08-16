@@ -73,26 +73,33 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation(project(":neton-core"))
-                implementation(project(":neton-logging"))
-                implementation(project(":neton-routing"))
-                implementation(project(":neton-http"))
-                implementation(libs.kotlinx.coroutines.core)
+                implementation("com.netonstream:neton:1.0.0-beta1")
             }
         }
     }
 }
 ```
 
-What each dependency provides:
+`com.netonstream:neton` is the only coordinate that carries a version. It pulls in the four
+modules a runnable service needs — `neton-core`, `neton-logging`, `neton-http`,
+`neton-routing` — and pins every other Neton module to the same release, so you add the rest
+**without a version**:
 
-| Module | Purpose |
+```kotlin
+implementation("com.netonstream:neton-database")   // aligned to 1.0.0-beta1 automatically
+implementation("com.netonstream:neton-redis")
+implementation("com.netonstream:neton-cache")
+```
+
+| Coordinate | What it is |
 |---|---|
-| `neton-core` | Framework core: startup, the component model, configuration loading |
-| `neton-logging` | Structured logging |
-| `neton-routing` | The route registry and DSL |
-| `neton-http` | The HTTP server adapter |
-| `kotlinx-coroutines-core` | Coroutine support |
+| `neton` | The entry point: core + logging + http + routing, plus version constraints for every other module |
+| `neton-<module>` | Optional modules — `database`, `redis`, `cache`, `security`, `storage`, `jobs`, `validation`, `ai` |
+| `neton-bom` | Version alignment only, for projects that want the constraints without the four base modules: `implementation(platform("com.netonstream:neton-bom:1.0.0-beta1"))` |
+
+The optional modules are kept out of `neton` on purpose: they link native libraries (a Rust
+database driver, a Redis client) that Kotlin/Native would otherwise compile into every binary,
+and `neton-database` has no macOS x64 target.
 
 ## 3. Write the configuration
 
