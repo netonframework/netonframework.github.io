@@ -1,8 +1,25 @@
 # 快速开始
 
-本章将带你从零搭建第一个 Neton 应用，在 5 分钟内运行一个 Hello World 服务。
+两条路。最快的是 clone 启动模板直接跑；本页其余部分从空目录搭同一个东西，让你看清每一块。
 
-## 环境要求
+## 克隆即运行
+
+```bash
+git clone https://github.com/netonframework/neton-start.git
+cd neton-start
+./gradlew run
+```
+
+打开 `http://localhost:8080/`，看到 **Welcome to Neton** 即成功；`/api/hello` 返回 JSON。
+`./gradlew run` 为当前机器编译原生二进制并启动。首次构建要下载 Kotlin/Native 工具链，需要几分钟；
+之后只要几秒。
+
+模板是一个完整的最小应用：一个 `@Controller`、一个配置文件、一行带版本的依赖。改
+`src/commonMain/kotlin/controller/WelcomeController.kt` 再跑一次就是你自己的服务。
+
+## 从零开始
+
+### 环境要求
 
 在开始之前，请确保你的开发环境满足以下条件：
 
@@ -21,7 +38,7 @@ Neton 编译为 Kotlin/Native 原生二进制，当前支持以下目标平台�
 - **Windows x64** — x86_64 架构（MinGW）
 :::
 
-## 第一步：创建项目
+### 第一步：创建项目
 
 创建项目目录并初始化基本结构：
 
@@ -44,7 +61,7 @@ hello-neton/
             └── Main.kt
 ```
 
-## 第二步：配置构建脚本
+### 第二步：配置构建脚本
 
 创建 `build.gradle.kts`，配置 Kotlin Multiplatform 插件和 Neton 依赖：
 
@@ -100,7 +117,7 @@ implementation("com.netonstream:neton-cache")
 可选模块**故意不收进** `neton`：它们带原生库（Rust 数据库驱动、Redis 客户端），Kotlin/Native
 静态链接会把用不到的也编进每个二进制；而且 `neton-database` 没有 macOS x64 目标。
 
-## 第三步：编写配置文件
+### 第三步：编写配置文件
 
 在 `config/` 目录下创建 `application.conf`（TOML 格式）：
 
@@ -123,7 +140,7 @@ level = "INFO"
 - `server.port` -- HTTP 监听端口
 - `logging.level` -- 日志级别：`DEBUG`、`INFO`、`WARN`、`ERROR`
 
-## 第四步：编写主程序
+### 第四步：编写主程序
 
 创建 `src/commonMain/kotlin/Main.kt`：
 
@@ -157,7 +174,7 @@ fun main(args: Array<String>) {
 上面的示例使用 DSL 方式定义路由，适合简单场景。对于大型项目，推荐使用 `@Controller` + `@Get` 注解方式，配合 KSP 在编译期自动生成路由代码。详见 [路由与控制器](./routing.md)。
 :::
 
-## 第五步：构建和运行
+### 第五步：构建和运行
 
 执行以下命令编译并运行：
 
@@ -185,7 +202,7 @@ fun main(args: Array<String>) {
 [INFO] helloworld application started on 0.0.0.0:8080
 ```
 
-## 第六步：验证
+### 第六步：验证
 
 打开另一个终端窗口，使用 `curl` 验证服务是否正常运行：
 
