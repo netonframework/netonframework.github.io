@@ -1,6 +1,25 @@
-/* Hero code block alignment */
+/* The code sample is content, not a decorative hero image. */
 .VPHero .image-container {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+@media (max-width: 959px) {
+  .VPHero .image {
+    margin: 0 0 40px;
+    width: 100%;
+  }
+
+  .VPHero .image-container {
+    width: 100%;
+    height: auto;
+  }
+}
+
+@media (max-width: 639px) {
+  .VPHero {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
 }

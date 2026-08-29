@@ -23,6 +23,7 @@
 
 <style scoped>
 .hero-code {
+  box-sizing: border-box;
   border-radius: 12px;
   overflow: hidden;
   background: var(--vp-code-block-bg);
@@ -90,6 +91,21 @@
 @media (max-width: 960px) {
   .hero-code {
     max-width: 100%;
+  }
+}
+
+@media (max-width: 639px) {
+  .hero-code {
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  .hero-code-header {
+    padding: 8px 12px;
+  }
+
+  .hero-code-body {
+    padding: 16px;
   }
 }
 </style>
