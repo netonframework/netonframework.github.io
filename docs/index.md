@@ -16,8 +16,8 @@ features:
     details: Parameter binding is inferred from the signature (path / query / body), so roughly 90% of handlers need no annotations. Routes are grouped by directory convention.
   - title: Security built in
     details: A two-layer Authenticator + Guard architecture with JWT and mock authenticators included (sessions are yours to implement) and annotation-driven authorization.
-  - title: Spring Boot and Spring Cloud territory, without the weight
-    details: "Only the components almost every service uses — web, validation, database, cache, Redis, security, scheduling, domain events. Service discovery and config servers are left to Kubernetes. Fewer moving parts, wired at compile time: easier to maintain, faster, a better fit for microservices. See “Coming from Spring”."
+  - title: Only what a service needs
+    details: "Only the components almost every service uses — web, validation, database, cache, Redis, security, scheduling, domain events. Service discovery and config servers are left to Kubernetes. Fewer moving parts, wired at compile time: easier to maintain, faster, a better fit for microservices. See “What Neton gives you”."
   - title: Structured logging
     details: One Logger API with JSON output, built-in traceId / spanId propagation and automatic redaction, ready for log collection pipelines.
   - title: Compile-time codegen
@@ -25,7 +25,7 @@ features:
 ---
 
 ::: tip The Kotlin/Native server era starts here
-Spring Boot-class engineering productivity meets the startup and resource density of a native
+The engineering productivity of a mature framework, with the startup time and resource density of a native
 executable. Read [the Neton 1.0 public beta announcement](/releases/1.0.0-beta1).
 :::
 
