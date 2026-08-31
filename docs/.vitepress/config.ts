@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HOSTNAME = "https://netonframework.github.io";
+const HOSTNAME = "https://neton.tech";
 const DOCS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // locale 路径前缀 → hreflang 值。root locale（英文）没有前缀。
@@ -115,7 +115,9 @@ const zhGuideSidebar = [
 ];
 
 export default defineConfig({
-  title: "Neton Framework",
+  // 兜底值；每个 locale 用自己的完整标题覆盖（见下方 locales）。
+  // 浏览器标签与搜索结果里出现的是那句完整定位，导航栏用 themeConfig.siteTitle 保持短名。
+  title: "Neton",
   base: "/",
   lastUpdated: true,
   // Internal contracts stay in the repository but are not published until all locales are ready.
@@ -159,11 +161,17 @@ export default defineConfig({
     root: {
       label: "English",
       lang: "en-US",
-      description: "Kotlin Multiplatform backend framework and user guide",
+      title: "Neton - A modern Kotlin/Native web framework",
+      description:
+        "Neton is a Kotlin/Native server-side framework: routing, data access, caching, security, " +
+        "scheduled jobs and domain events, compiled to a native binary with no JVM and no reflection.",
       themeConfig: {
+        // 导航栏只放短名；完整定位句留给 <title> 与搜索结果。
+        siteTitle: "Neton",
         nav: [
           { text: "Home", link: "/" },
           { text: "Guide", link: "/guide/" },
+          { text: "1.0 Public Beta", link: "/releases/1.0.0-beta1" },
         ],
         sidebar: {
           "/guide/": enGuideSidebar,
@@ -180,11 +188,16 @@ export default defineConfig({
       label: "简体中文",
       lang: "zh-Hans",
       link: "/zh-hans/",
-      description: "Neton 框架用户指南",
+      title: "Neton - 高性能 Kotlin/Native 服务端应用框架",
+      description:
+        "Neton 是 Kotlin/Native 服务端框架：路由、数据访问、缓存、安全、定时任务、领域事件一应俱全，" +
+        "编译为原生二进制，无 JVM、零反射。",
       themeConfig: {
+        siteTitle: "Neton",
         nav: [
           { text: "首页", link: "/zh-hans/" },
           { text: "用户指南", link: "/zh-hans/guide/" },
+          { text: "1.0 正式公测", link: "/zh-hans/releases/1.0.0-beta1" },
         ],
         sidebar: {
           "/zh-hans/guide/": zhGuideSidebar,
