@@ -17,7 +17,7 @@ footprint. This guide takes you from an empty directory to a working, high-perfo
 ### Getting started
 
 - [Quick start](./quick-start.md) — build and run your first Neton application
-- [Coming from Spring Boot](./spring-boot.md) — every Spring Boot concept mapped to its Neton equivalent, and what is not there yet
+- [Coming from Spring](./spring-boot.md) — the essential component set, what is deliberately left out, and why
 - [Project structure](./project-structure.md) — module layout, directory conventions and config files
 
 ### Core features

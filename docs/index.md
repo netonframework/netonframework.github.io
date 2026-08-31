@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Neton
   text: A modern Kotlin/Native web framework
-  tagline: Everything a production service needs — routing, data access, caching, security, scheduled jobs, domain events — compiled to a native binary. No JVM, no reflection, millisecond startup.
+  tagline: "The components a production service actually needs — routing, data access, caching, security, scheduled jobs, domain events — and nothing more. Compiled to a native binary: no JVM, no reflection, millisecond startup."
   actions:
     - theme: brand
       text: Quick start
@@ -16,8 +16,8 @@ features:
     details: Parameter binding is inferred from the signature (path / query / body), so roughly 90% of handlers need no annotations. Routes are grouped by directory convention.
   - title: Security built in
     details: A two-layer Authenticator + Guard architecture with JWT and mock authenticators included (sessions are yours to implement) and annotation-driven authorization.
-  - title: Spring Boot capability, natively compiled
-    details: Built to match what Spring Boot gives a service — web, validation, a typed database DSL with transactions, two-tier caching, Redis and distributed locks, security, scheduling, domain events with a transactional outbox — wired at compile time instead of assembled by reflection at startup. See the full mapping in “Coming from Spring Boot”.
+  - title: Spring Boot and Spring Cloud territory, without the weight
+    details: "Only the components almost every service uses — web, validation, database, cache, Redis, security, scheduling, domain events. Service discovery and config servers are left to Kubernetes. Fewer moving parts, wired at compile time: easier to maintain, faster, a better fit for microservices. See “Coming from Spring”."
   - title: Structured logging
     details: One Logger API with JSON output, built-in traceId / spanId propagation and automatic redaction, ready for log collection pipelines.
   - title: Compile-time codegen
