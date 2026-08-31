@@ -14,6 +14,7 @@ Neton 是一个现代化的 Kotlin/Native Web 框架，基于 Kotlin Multiplatfo
 ### 入门
 
 - [快速开始](./quick-start.md) -- 从零搭建第一个 Neton 应用，5 分钟运行 Hello World
+- [从 Spring Boot 过来](./spring-boot.md) -- Spring Boot 概念逐条对照到 Neton，以及还缺什么
 - [项目结构](./project-structure.md) -- 了解 Neton 的模块划分、目录约定与配置文件
 
 ### 核心功能

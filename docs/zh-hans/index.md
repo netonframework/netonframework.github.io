@@ -16,8 +16,8 @@ features:
     details: 参数绑定自动推断（Path / Query / Body），90% 场景零注解。路由按目录约定分组。
   - title: 内建安全体系
     details: Authenticator + Guard 双层架构，内建 JWT / Mock 认证（Session 需自行实现），注解驱动授权。
-  - title: 完整的服务端能力
-    details: Web、校验、带事务的类型安全数据库 DSL、两级缓存、Redis 与分布式锁、安全、定时任务、带事务性 outbox 的领域事件——Spring Boot 服务常用的那套模块都在，且由编译期装配，而不是启动时反射拼装。
+  - title: 对标 Spring Boot，原生编译
+    details: 完全对标 Spring Boot 给一个服务的能力——Web、校验、带事务的类型安全数据库 DSL、两级缓存、Redis 与分布式锁、安全、定时任务、带事务性 outbox 的领域事件——且由编译期装配，而不是启动时反射拼装。逐条对照见「从 Spring Boot 过来」。
   - title: 结构化日志
     details: 统一 Logger API，JSON 输出，内建 traceId / spanId 传播，自动脱敏，便于对接日志采集系统。
   - title: KSP 编译期生成
