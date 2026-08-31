@@ -1,9 +1,9 @@
 ---
 layout: home
 hero:
-  name: Neton Framework
-  text: 现代化 Kotlin/Native Web 框架
-  tagline: 易用、高性能、可扩展。基于 Kotlin Multiplatform + KSP，编译为原生二进制，零反射、毫秒级启动。
+  name: Neton
+  text: 高性能 Kotlin/Native 服务端应用框架
+  tagline: 一个生产级服务需要的都在里面——路由、数据访问、缓存、安全、定时任务、领域事件——编译为原生二进制。无 JVM、零反射、毫秒级启动。
   actions:
     - theme: brand
       text: 快速开始
@@ -16,13 +16,18 @@ features:
     details: 参数绑定自动推断（Path / Query / Body），90% 场景零注解。路由按目录约定分组。
   - title: 内建安全体系
     details: Authenticator + Guard 双层架构，内建 JWT / Mock 认证（Session 需自行实现），注解驱动授权。
-  - title: 模块化组件系统
-    details: http / routing / security / redis / cache / database / storage / jobs / ai / logging，install 即用，按需组合。
+  - title: 完整的服务端能力
+    details: Web、校验、带事务的类型安全数据库 DSL、两级缓存、Redis 与分布式锁、安全、定时任务、带事务性 outbox 的领域事件——Spring Boot 服务常用的那套模块都在，且由编译期装配，而不是启动时反射拼装。
   - title: 结构化日志
     details: 统一 Logger API，JSON 输出，内建 traceId / spanId 传播，自动脱敏，便于对接日志采集系统。
   - title: KSP 编译期生成
     details: Controller 路由、参数绑定、Config SPI 均由 KSP 在编译期完成，零反射、零运行时扫描。
 ---
+
+::: tip Kotlin/Native 服务端时代，从这里开始
+Spring Boot 级的工程效率，Kotlin/Native 原生二进制的启动速度与资源密度。阅读
+[Neton 1.0.0-beta1 发布宣言](/zh-hans/releases/1.0.0-beta1)。
+:::
 
 ::: info 版本对应声明
 本文档对应 **Neton 1.0.0-beta1**（Kotlin 2.4.0 / KSP 2.3.10）。
