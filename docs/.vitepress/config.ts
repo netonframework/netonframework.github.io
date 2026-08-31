@@ -38,7 +38,7 @@ const enGuideSidebar = [
     items: [
       { text: "Introduction", link: "/guide/" },
       { text: "Quick start", link: "/guide/quick-start" },
-      { text: "Coming from Spring", link: "/guide/spring-boot" },
+      { text: "What Neton gives you", link: "/guide/capabilities" },
       { text: "Project structure", link: "/guide/project-structure" },
     ],
   },
@@ -80,7 +80,7 @@ const zhGuideSidebar = [
     items: [
       { text: "简介", link: "/zh-hans/guide/" },
       { text: "快速开始", link: "/zh-hans/guide/quick-start" },
-      { text: "从 Spring 过来", link: "/zh-hans/guide/spring-boot" },
+      { text: "能力总览", link: "/zh-hans/guide/capabilities" },
       { text: "项目结构", link: "/zh-hans/guide/project-structure" },
     ],
   },
