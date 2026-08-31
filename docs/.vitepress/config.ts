@@ -38,6 +38,7 @@ const enGuideSidebar = [
     items: [
       { text: "Introduction", link: "/guide/" },
       { text: "Quick start", link: "/guide/quick-start" },
+      { text: "Coming from Spring Boot", link: "/guide/spring-boot" },
       { text: "Project structure", link: "/guide/project-structure" },
     ],
   },
@@ -79,6 +80,7 @@ const zhGuideSidebar = [
     items: [
       { text: "简介", link: "/zh-hans/guide/" },
       { text: "快速开始", link: "/zh-hans/guide/quick-start" },
+      { text: "从 Spring Boot 过来", link: "/zh-hans/guide/spring-boot" },
       { text: "项目结构", link: "/zh-hans/guide/project-structure" },
     ],
   },

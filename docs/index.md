@@ -16,8 +16,8 @@ features:
     details: Parameter binding is inferred from the signature (path / query / body), so roughly 90% of handlers need no annotations. Routes are grouped by directory convention.
   - title: Security built in
     details: A two-layer Authenticator + Guard architecture with JWT and mock authenticators included (sessions are yours to implement) and annotation-driven authorization.
-  - title: The full server-side surface
-    details: Web, validation, a typed database DSL with transactions, two-tier caching, Redis and distributed locks, security, scheduling, and domain events with a transactional outbox — the module set a Spring Boot service usually reaches for, wired at compile time instead of assembled by reflection at startup.
+  - title: Spring Boot capability, natively compiled
+    details: Built to match what Spring Boot gives a service — web, validation, a typed database DSL with transactions, two-tier caching, Redis and distributed locks, security, scheduling, domain events with a transactional outbox — wired at compile time instead of assembled by reflection at startup. See the full mapping in “Coming from Spring Boot”.
   - title: Structured logging
     details: One Logger API with JSON output, built-in traceId / spanId propagation and automatic redaction, ready for log collection pipelines.
   - title: Compile-time codegen
