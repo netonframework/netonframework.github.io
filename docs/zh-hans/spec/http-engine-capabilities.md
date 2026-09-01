@@ -1,7 +1,7 @@
 # Neton HTTP 引擎能力规范
 
 > **定位**：把「HTTP 引擎能提供什么」从隐式假设变成**显式声明 + 启动期校验**，
-> 让 Ktor CIO 与 hyper4k 在同一套抽象下可插拔，并为 HTTP/2 落地划清边界。
+> 让 Ktor CIO 与 Hyper4k 在同一套抽象下可插拔，并为 HTTP/2 落地划清边界。
 >
 > **状态**：**Draft**，面向下一个 beta。
 >
@@ -147,19 +147,33 @@ Neton 启动失败：HTTP 引擎能力不足
 
 ## 三、能力现状矩阵
 
-| 能力 | Ktor CIO | hyper4k |
+| 能力 | Ktor CIO | Hyper4k |
 |---|---|---|
-| `HTTP_2` | ❌ 引擎不支持（§1.1，永久） | ⏳ 依赖已带 `features = ["http2"]`，accept 循环未接 |
-| `STREAMING_RESPONSE` | ✅ | ⏳ 路线图未完成 |
+| `HTTP_2` | ❌ 引擎不支持（§1.1，永久） | ✅ h2c prior-knowledge（TLS ALPN 待 TLS 能力） |
+| `STREAMING_RESPONSE` | ✅ | ✅ 真 socket 分块测试把关 |
 | `MULTIPART` | ✅ | ⏳ 路线图未完成 |
-| `ASYNC_HANDOFF` | ✅（协程原生） | ⏳ 路线图未完成 |
+| `ASYNC_HANDOFF` | ✅（协程原生） | ✅ Tokio → 有界 Kotlin 协程 |
 | `TRAILERS` | ❌ | ⏳ 随 HTTP/2 一并 |
 
 > ⏳ = 尚未实现。**实现前 `capabilities` 里就不许出现它**——
 > 声明一个没做完的能力，比不声明更危险。
 
-这张表也解释了为什么 hyper4k **暂时不能当默认引擎**：它缺的三项里，
-`STREAMING_RESPONSE` 正被 AI gateway 使用。
+Hyper4k 是默认引擎：无参 `http { }` 解析到它。矩阵里它仍缺 `MULTIPART`，
+需要文件上传的应用要么等该项落地，要么显式切到 `http(::KtorHttpAdapter)`。
+
+> ✅ 的依据必须是测试而非声明：`STREAMING_RESPONSE` 由真 socket 分块测试把关
+> （做过缓冲实现的反向变异验证），`HTTP_2` 由一条完整 h2c round-trip 把关——真实
+> client handshake、请求派发到 handler、校验 status/headers/body，并在同一连接上
+> 跑两个并发 stream。只发 preface 再收 SETTINGS 的握手测试**不足以**支撑这个 ✅。
+
+hyper4k 的异步 handoff 没有开关，也不要求应用标记 handler 类型。`http.maxConnections`
+限制同时执行的 handler 数，达到上限返回 503；`http.timeout` 限制单请求执行时间，超时返回
+504。停止时先停止接收新任务、排空在途请求，再关闭 Tokio。响应使用单次数字 token，客户端
+断开、超时或停止后的迟到响应只会安全失败，不允许跨 FFI 持有 Rust 裸指针。
+
+Hyper4k 与 Ktor 都必须复用 `BufferedHttpDispatcher`。路由、安全、限流、CORS、响应
+信封与 `HttpContext` 不得在 Adapter 仓库重新实现；Adapter 只拥有 socket、协议解析、
+请求快照和响应写回。
 
 ---
 
@@ -248,7 +262,7 @@ abstract class HttpEngineConformanceSuite {
 1. **能力枚举 + `HttpAdapter.capabilities` + 启动期校验**
    两个内置 Adapter 如实声明现状（hyper4k 此时**不**声明 h2 / streaming / multipart）
 2. **一致性套件**，两个引擎各跑一遍，把差异钉成测试而不是口头知识
-3. **hyper4k 补 `STREAMING_RESPONSE` / `MULTIPART` / `ASYNC_HANDOFF`**，
+3. **hyper4k 补 `STREAMING_RESPONSE` / `MULTIPART`**；`ASYNC_HANDOFF` 已完成，
    每补一项，先让对应一致性测试通过，再在 `capabilities` 里加声明
 4. **hyper4k 接 HTTP/2**（`auto::Builder` + h2c），同样测试先于声明
 5. 视情况再谈默认引擎是否切换——**那是独立决策，不在本规范范围**
@@ -273,6 +287,35 @@ abstract class HttpEngineConformanceSuite {
 1. 新增 Adapter 时**不写** `capabilities` 无法编译（接口无默认实现）
 2. 应用 require 一个引擎没有的能力 → **启动失败**，且错误信息包含
    「谁要求的」与「可换哪个引擎」
+
+---
+
+## 九、性能基准与 TechEmpower
+
+性能比较必须测完整 Neton 管线，不允许 Adapter 增加只为跑分存在的路由旁路。Ktor CIO 与
+Hyper4k 使用同一份应用代码、同一份 `RouteDefinition`、同一份 release 编译参数；
+唯一变量只能是传给 `http(...)` 的 Adapter 构造器。
+
+首批基准固定为：
+
+1. `plaintext`：固定 UTF-8 文本，测请求派发与响应写回
+2. `json`：固定对象，测 Neton/Kotlin 序列化路径
+3. `db`：单行随机查询，测 sqlx4k session 与连接池
+4. `queries`：1–500 次查询，必须遵守 TechEmpower 参数边界
+5. `updates`：查询、排序、批量更新，必须使用真实事务
+6. `fortunes`：查询、转义、排序和模板输出
+
+每次报告同时记录吞吐、延迟分位数、RSS、CPU、错误率、引擎版本、Kotlin/Native 版本、
+Rust 版本、编译器参数与硬件。预热、连接数、持续时间和数据库配置必须相同。
+
+两类数字必须分开：
+
+- **Engine baseline**：只经过 Rust C ABI，用于定位协议引擎上限
+- **Neton full pipeline**：经过 Adapter、`BufferedHttpDispatcher`、路由、安全/限流判定和
+  Neton 响应路径；只有这一组可以代表 Neton
+
+任何基准优化都必须先通过引擎一致性测试。为了提高跑分而改变错误语义、跳过 Header、
+绕过响应信封或使用仅在 benchmark 中存在的 API，一律不接受。
 3. 一致性套件在 Ktor CIO 与 hyper4k 上各跑一遍；跳过项在报告中显式可见
 4. 声明了能力但对应一致性测试被跳过 → 构建失败
 5. hyper4k 接入 h2 后，`http2_prior_knowledge` 的客户端能完成一次完整请求-响应
