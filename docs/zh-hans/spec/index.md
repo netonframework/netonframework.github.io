@@ -15,7 +15,7 @@
 
 ## HTTP 与路由
 
-- [HTTP 规范 v1](./http.md) — 入站 HttpAdapter、出站 NetonHttpClient、请求响应生命周期
+- [HTTP 规范 v1](./http.md) — 入站 HttpAdapter、出站 HttpClient、请求响应生命周期
 - [HTTP 引擎能力规范](./http-engine-capabilities.md) — 引擎能力声明与启动期校验、引擎一致性套件、HTTP/2 落地边界（Ktor CIO 与 hyper4k 可插拔）
 - [路由规范 v1](./routing.md) — 路由组、目录约定、安全集成
 - [参数绑定规范 v1](./parameter-binding.md) — 参数推断、类型转换、绑定规则
