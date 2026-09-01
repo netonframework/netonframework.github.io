@@ -44,13 +44,13 @@
 `neton-http` 是 Neton 主仓唯一的 HTTP 发布模块，同时承载两类能力：
 
 - **入站 Server**：`HttpComponent`、`HttpAdapter` 实现及请求/响应适配。`http { }` 默认使用 Ktor Server；其他 Adapter 由应用传入构造器引用。
-- **出站 Client**：`neton.http.client` 包中的 `NetonHttpClient`、请求/响应模型、错误模型、stream、SSE parser、redaction 与 retry primitive。
+- **出站 Client**：`neton.http.client` 包中的 `HttpClient`、请求/响应模型、错误模型、stream、SSE parser、redaction 与 retry primitive。
 
 **v1 模块规则（冻结）**：
 
 1. 不发布、不依赖独立的 `neton-http-client` 模块；该历史模块已合并进 `neton-http`。
-2. 业务模块和 `neton-ai` 依赖 `neton-http`，但通过 `NetonHttpClient` 抽象发起出站请求，不直接依赖内部 Ktor 实现。
-3. `NetonHttpClient.create { }` 可脱离 Neton Runtime 独立使用；`httpClient { }` 将 Client 绑定到 `NetonContext`，供其他 Component 获取。
+2. 业务模块和 `neton-ai` 依赖 `neton-http`，但通过 `HttpClient` 抽象发起出站请求，不直接依赖内部 Ktor 实现。
+3. `HttpClient.create { }` 可脱离 Neton Runtime 独立使用；`httpClient { }` 将 Client 绑定到 `NetonContext`，供其他 Component 获取。
 4. Client 由创建方持有并关闭；`HttpClientComponent` 创建的实例由组件生命周期管理。
 5. 入站 Server Adapter 与出站 Client Engine 是不同概念。替换 Server Adapter 不改变出站 Client 的平台 Engine。
 
@@ -74,14 +74,14 @@ Neton.run(args) {
 出站 Client 的最小公共面：
 
 ```kotlin
-interface NetonHttpClient {
-    suspend fun request(request: NetonHttpRequest): NetonHttpResponse
-    fun stream(request: NetonHttpRequest): Flow<NetonHttpStreamChunk>
+interface HttpClient {
+    suspend fun request(request: HttpClientRequest): HttpClientResponse
+    fun stream(request: HttpClientRequest): Flow<HttpClientStreamChunk>
     suspend fun close()
 }
 ```
 
-平台 Engine 固定由 `neton-http` 选择：macOS 使用 Darwin、Linux 使用 CIO、Windows 使用 WinHttp。测试可通过 `NetonHttpClient.createWithEngine(MockEngine)` 注入 Engine。
+平台 Engine 固定由 `neton-http` 选择：macOS 使用 Darwin、Linux 使用 CIO、Windows 使用 WinHttp。测试可通过 `HttpClient.createWithEngine(MockEngine)` 注入 Engine。
 
 ### 1.4 统一抽象架构
 

@@ -11,7 +11,7 @@ Neton is modular: each module has a clear responsibility and is pulled in only w
 |---|---|---|
 | `neton-core` | Framework core: startup, the component model (`NetonComponent`), the runtime container, configuration loading, HTTP abstractions (`HttpContext`, `HttpRequest`, `HttpResponse`) and the security context | Yes |
 | `neton-logging` | Structured logging: one Logger API, JSON output, asynchronous writes, sink routing, traceId / spanId propagation, automatic redaction | Yes |
-| `neton-http` | HTTP: the inbound server adapter plus the outbound `NetonHttpClient`, streaming, SSE and the error model | Yes |
+| `neton-http` | HTTP: the inbound server adapter plus the outbound `HttpClient`, streaming, SSE and the error model | Yes |
 | `neton-routing` | Routing: route resolution, route groups, directory-based grouping, DSL registration, controller binding | Yes |
 | `neton-security` | Security: the two-layer Authenticator + Guard architecture with JWT and mock authenticators (**session authentication is not built in for 1.0**) and annotation-driven authorization | No |
 | `neton-redis` | Redis client: connection management, core commands, distributed locks (`@Lock` / `LockManager`) | No |
