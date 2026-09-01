@@ -43,7 +43,7 @@
 
 `neton-http` 是 Neton 主仓唯一的 HTTP 发布模块，同时承载两类能力：
 
-- **入站 Server**：`HttpComponent`、`HttpAdapter` 实现及请求/响应适配。`http { }` 默认使用 Ktor Server；其他 Adapter 由应用传入构造器引用。
+- **入站 Server**：`HttpComponent`、`HttpAdapter` 实现及请求/响应适配。无参 `http { }` 使用应用所依赖的 adapter 模块提供的引擎（默认 Hyper4k）；其他 Adapter 由应用传入构造器引用。
 - **出站 Client**：`neton.http.client` 包中的 `HttpClient`、请求/响应模型、错误模型、stream、SSE parser、redaction 与 retry primitive。
 
 **v1 模块规则（冻结）**：
@@ -57,15 +57,19 @@
 入站 Adapter 选择规则（冻结）：
 
 ```kotlin
-typealias HttpAdapterFactory =
-    (HttpServerConfig, ParamConverterRegistry) -> HttpAdapter
+typealias HttpAdapterFactory = (HttpServerConfig) -> HttpAdapter
 
 Neton.run(args) {
+    // 显式指定引擎
     http(::XxxHttpAdapter) { port = 8080 }
+
+    // 或者不指定：依赖哪个 adapter 模块，无参重载就解析到哪个引擎
+    http { port = 8080 }
 }
 ```
 
-- `http { }` 等价于 `http(::KtorHttpAdapter) { }`。
+- 无参 `http { }` 由 adapter 模块提供；依赖 `neton-http-hyper4k` 时等价于 `http(::Hyper4kHttpAdapter) { }`。
+- 框架自身（neton-http）永远不引用具体引擎，因此不提供无参重载。
 - 禁止使用 `HttpEngine` 枚举、字符串类名、运行时 Provider 注册或 `http.engine` 配置选择 Adapter。
 - 第三方 Adapter 可以独立仓库发布；Neton 主仓不依赖、不枚举这些实现。
 - `application.conf` 只管理 port、timeout、maxConnections、CORS 等运行参数。
