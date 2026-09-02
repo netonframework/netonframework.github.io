@@ -17,6 +17,7 @@
 
 - [HTTP 规范 v1](./http.md) — 入站 HttpAdapter、出站 HttpClient、请求响应生命周期
 - [HTTP 引擎能力规范](./http-engine-capabilities.md) — 引擎能力声明与启动期校验、引擎一致性套件、HTTP/2 落地边界（Ktor CIO 与 hyper4k 可插拔）
+- [HTTP 引擎规范](./http-engine.md) — 单引擎交付（Server + Client）、契约层零引擎、引擎入口契约、Client 能力与一致性套件、hyper4k Kotlin 客户端封装、Ktor 归零路径、Server 侧 TLS 决策 **(Draft，冻结候选；开发前置)**
 - [路由规范 v1](./routing.md) — 路由组、目录约定、安全集成
 - [参数绑定规范 v1](./parameter-binding.md) — 参数推断、类型转换、绑定规则
 
