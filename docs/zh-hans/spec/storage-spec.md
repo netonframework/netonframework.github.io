@@ -237,7 +237,7 @@ interface StorageOperator {
 | 操作 | 建议 |
 |------|------|
 | Local write | 按 chunk 写入文件，避免将 ByteArray 额外复制到中间 buffer |
-| S3 write | 将 ByteArray 包装为 Ktor `ByteReadChannel` 作为 request body 发送，避免构造额外副本 |
+| S3 write / read | 经 `neton.http.client.HttpClient`（[HTTP 引擎规范](./http-engine.md) 规则 4）：write 用 `HttpClientBody.Bytes` 直接发送；read 走 `stream()` 组装字节——`HttpClientResponse.body` 是 String，缓冲路径会毁掉非 UTF-8 对象。client 由应用创建并绑定到 `NetonContext`，storage 只借用、不关闭 |
 | Local read | 先 stat 获取 size，预分配 ByteArray，一次性读入，避免多次拼接扩容 |
 | S3 read | 从 response body 流式读取，预分配（Content-Length 已知时）或 grow buffer，避免中间多份累积 |
 

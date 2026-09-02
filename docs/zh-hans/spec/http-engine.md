@@ -150,7 +150,7 @@ Server 侧（已有）与 Client 侧（本文新增）。
   只能被显式依赖。显式依赖 Ktor 的应用**不得**同时依赖 hyper4k 引擎模块。
 - 第三方引擎同理。选引擎是二选一，不是叠加。
 
-### 4.3 缺引擎时的可读错误（须验证后冻结）
+### 4.3 缺引擎时的可读错误（已验证，冻结）
 
 现状：`Unresolved reference 'create'`。目标：
 
@@ -179,10 +179,15 @@ fun HttpClient.Companion.create(
 默认参数的候选（引擎模块的）优先于需要使用默认参数的候选（fallback）。引擎在时
 命中引擎，不在时命中 fallback 并给出上面的错误。
 
-**这一条在 §十 第 4 步实施时必须先用最小工程验证**，验证不通过则退而求其次：
-在 `neton-http` 的 README 与 `neton` 聚合的 POM description 里写明缺引擎的处置，
-并把 `Unresolved reference 'create'` 作为已知症状登记到
-[tooling-known-issues](../guide/tooling-known-issues.md)。
+**验证结果（§十 第 4 步）**：引擎在时 ktor / hyper4k / ai 三个模块编译不变、无二义；
+引擎不在时两个入口各自恰好一条诊断，内容即上面的消息。两处实施细节：
+
+- **哑参数放在第一位**，不是最后。尾随 lambda 绑定到最后一个参数，放最后会让 lambda
+  落到 `MissingHttpEngine` 上，多出一条「类型不匹配」把真正的消息淹掉。
+- 调用方需要 `import neton.http.client.create`——引擎入口与 fallback 都是该包下的
+  扩展函数，没有 import 时看到的仍是 `Unresolved reference`。README 已写明。
+
+Server 侧 `http { }` 的 fallback 同构，声明在 `neton.http` 包。
 
 ---
 
@@ -462,10 +467,10 @@ hyper4k server 无 TLS，HTTP/2 仅 h2c。两个选择必须明写一个，本�
 
 | 引用点 | 处置 |
 |---|---|
-| `neton-storage/s3/S3StorageOperator.kt`、`StorageComponent.kt` | 构造参数改为 `neton.http.client.HttpClient`；`put/get/delete/head` 改经 `request()`；`StorageComponent` 不再 `HttpClient()` 自建，改为从 `ctx` 取应用绑定的 client（与 `neton-ai` 同一约定：**应用创建、应用关闭**） |
-| `neton-ai` 测试 | `createWithEngine(MockEngine)` → `ScriptedHttpClient`（§6.4）；`ktor.client.mock` 依赖删除 |
+| `neton-storage/s3/S3StorageOperator.kt`、`StorageComponent.kt` | **已完成。** 经 `HttpClient` 接口；对象体走 `stream()` 组装（`HttpClientResponse.body` 是 String，缓冲路径会毁掉非 UTF-8 字节）；client 从 `ctx` 借用，s3 源没有绑定 client 时 init 报错并给出要加的那一行 |
+| `neton-ai` 测试 | **已完成。** 7 个文件改用 `ScriptedHttpClient`（含可抛错的流式脚本）；测试类路径上不再有任何引擎 |
 | `neton-ai` 主代码 | 已只依赖接口，无改动 |
-| `neton-http-ktor` | 移出 BOM；保留仓库但标 **maintenance**：不再接收新功能，只跟随契约层接口变更。删除或归档在 hyper4k client 通过一致性套件之后作为独立决策 |
+| `neton-http-ktor` | **已移出 BOM**；标 maintenance：不再接收新功能，只跟随契约层接口变更。删除或归档作为独立决策 |
 | `HttpClient.kt` KDoc 中「per-platform Ktor engine selection」 | 删除，改为指向本文 |
 
 **S3 的 `HEAD` 与 `LIST` 分页**依赖响应头与状态码，现有 `HttpClientResponse` 已
@@ -475,7 +480,10 @@ hyper4k server 无 TLS，HTTP/2 仅 h2c。两个选择必须明写一个，本�
 
 ## 十、发布顺序
 
-每一步可独立发布、独立回滚，**顺序不可颠倒**：
+每一步可独立发布、独立回滚，**顺序不可颠倒**。**五步均已落地**（2026-09-03）；
+下面保留原始顺序作为记录。发布前剩下的一件事：**hyper4k 0.2.0 必须先发布到
+Maven Central**——`neton-http-hyper4k` 已依赖它（Kotlin 客户端在其中），本地用
+`-Phyper4k.local=true` 走源码替换，CI 在发布前不会绿。
 
 1. **契约层：`HttpClientCapability` + `HttpClient.capabilities` + `ScriptedOrigin` +
    `HttpClientConformanceSuite` + `ScriptedHttpClient`。** Ktor 实现如实声明能力并
