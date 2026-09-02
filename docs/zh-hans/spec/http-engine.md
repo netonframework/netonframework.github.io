@@ -524,7 +524,15 @@ Maven Central**——`neton-http-hyper4k` 已依赖它（Kotlin 客户端在其�
    时失败**，错误信息含选项名与引擎名。
 5. 删除 `neton-http-ktor` 目录后 `./gradlew allTests` 的用例总数只减少该模块
    自身的用例数。
-6. 缺引擎时的编译错误包含依赖坐标（若 §4.3 机制验证通过）。
+6. 缺引擎时的编译错误包含依赖坐标（§4.3 已验证）。
+
+**实战验证（2026-09-03）**：`privchat-service-client`——privchat 服务端唯一的业务
+HTTP 客户端（近 60 个 service API 端点）——从自带 Ktor 引擎改为借用应用绑定的
+`HttpClient`；`module-privchat` 同时去掉了对 `neton-http-ktor` 的依赖（它此前靠
+Ktor 模块拿 `HttpClient.create`，与应用的 hyper4k 模块并存会二义）。
+`privchat-application` 重新链接后，jwks / introspect / createRoom / issueRoomTicket /
+broadcastRoom 全部经 hyper4k 出站，端到端通过。这是比一致性套件更硬的一层证据：
+真实 envelope、真实错误映射、真实并发。
 
 ---
 
