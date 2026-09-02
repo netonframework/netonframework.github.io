@@ -471,7 +471,16 @@ hyper4k server 无 TLS，HTTP/2 仅 h2c。两个选择必须明写一个，本�
 | `neton-ai` 测试 | **已完成。** 7 个文件改用 `ScriptedHttpClient`（含可抛错的流式脚本）；测试类路径上不再有任何引擎 |
 | `neton-ai` 主代码 | 已只依赖接口，无改动 |
 | `neton-http-ktor` | **已移出 BOM**；标 maintenance：不再接收新功能，只跟随契约层接口变更。删除或归档作为独立决策 |
-| `HttpClient.kt` KDoc 中「per-platform Ktor engine selection」 | 删除，改为指向本文 |
+| `HttpClient.kt` KDoc 中「per-platform Ktor engine selection」 | 已删除，改为指向本文 |
+| `neton-core/build.gradle.kts` | **已删除**五个 `ktor-server-*` 依赖——neton-core 里没有任何代码引用它们，但聚合上的每个二进制都把 Ktor 链了进去。import 级的 grep 抓不到这种泄漏，CI 守卫因此同时检查 build 文件里的 `libs.ktor` 别名 |
+| `examples/neton-ai-sample` | 同时依赖两个引擎模块 → 改为只依赖 hyper4k（§4.2 二选一） |
+
+**已知残留（不在本文范围，登记为后续项）**：`neton-routing → neton-redis → rethis →
+ktor-network / ktor-io / ktor-utils / ktor-http / ktor-network-tls`。这是 Redis 客户端库
+的传输层，不是 HTTP 引擎；但它让最小聚合（core + logging + http + routing）的二进制
+里仍有 Ktor 的网络层符号，且与 `neton/build.gradle.kts` 自己写的「不把 redis 收进
+聚合」相矛盾。根因是 `neton-routing` 为了 `RedisRateLimitStore` 硬依赖 `neton-redis`；
+出路是把限流 store 做成 SPI、Redis 实现挪到独立模块。由路由/限流的 spec 处理。
 
 **S3 的 `HEAD` 与 `LIST` 分页**依赖响应头与状态码，现有 `HttpClientResponse` 已
 包含两者；`LIST` 的 XML 解析不依赖 Ktor。迁移是机械的，不涉及语义变化。
@@ -504,7 +513,9 @@ Maven Central**——`neton-http-hyper4k` 已依赖它（Kotlin 客户端在其�
 ## 十一、验收标准
 
 1. 只依赖 `com.netonstream:neton` 的最小工程，`http { }` 与 `HttpClient.create { }`
-   **都**能编译并运行，二进制中**不含** Ktor 符号（`nm` / `strings` 可验）。
+   **都**能编译并运行，二进制中**不含 Ktor HTTP 引擎**（`ktor-server-*` /
+   `ktor-client-*`）的符号（`nm` / `strings` 可验）。`ktor-network` 等经 Redis 客户端
+   进来的传输层符号属于 §九 登记的残留项，不在本条判定内。
 2. Client 一致性套件在 Ktor 与 hyper4k 上各跑一遍；跳过项显式可见；声明了能力
    却跳过 = 构建失败。
 3. `grep -rn "io\.ktor" --include=*.kt --include=*.kts` 在 `neton-http-ktor/` 与
