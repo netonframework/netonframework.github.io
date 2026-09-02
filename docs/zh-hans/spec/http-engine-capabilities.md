@@ -149,7 +149,7 @@ Neton 启动失败：HTTP 引擎能力不足
 
 | 能力 | Ktor CIO | Hyper4k |
 |---|---|---|
-| `HTTP_2` | ❌ 引擎不支持（§1.1，永久） | ✅ h2c prior-knowledge（TLS ALPN 待 TLS 能力） |
+| `HTTP_2` | ❌ 引擎不支持（§1.1，永久） | ✅ **仅 h2c** prior-knowledge；无 Server 侧 TLS，故无 ALPN（[HTTP 引擎规范 §八](./http-engine.md) 冻结：1.0 进程内不终止 TLS） |
 | `STREAMING_RESPONSE` | ✅ | ✅ 真 socket 分块测试把关 |
 | `MULTIPART` | ✅ | ⏳ 路线图未完成 |
 | `ASYNC_HANDOFF` | ✅（协程原生） | ✅ Tokio → 有界 Kotlin 协程 |
@@ -274,7 +274,7 @@ abstract class HttpEngineConformanceSuite {
 
 ## 七、非目标
 
-- **不**统一 HTTP 客户端（`neton-http/client` 是另一条线）
+- **不**覆盖 HTTP 客户端——Client 侧的能力声明、一致性套件与默认引擎见 [HTTP 引擎规范](./http-engine.md)
 - **不**在本规范内决定默认引擎切换
 - **不**做 ALPN / TLS 终止（§4.2）
 - **不**把 Ktor CIO 「改造成」支持 h2——那需要重写引擎，不如用 hyper4k

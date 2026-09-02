@@ -49,10 +49,10 @@
 **v1 模块规则（冻结）**：
 
 1. 不发布、不依赖独立的 `neton-http-client` 模块；该历史模块已合并进 `neton-http`。
-2. 业务模块和 `neton-ai` 依赖 `neton-http`，但通过 `HttpClient` 抽象发起出站请求，不直接依赖内部 Ktor 实现。
-3. `HttpClient.create { }` 可脱离 Neton Runtime 独立使用；`httpClient { }` 将 Client 绑定到 `NetonContext`，供其他 Component 获取。
-4. Client 由创建方持有并关闭；`HttpClientComponent` 创建的实例由组件生命周期管理。
-5. 入站 Server Adapter 与出站 Client Engine 是不同概念。替换 Server Adapter 不改变出站 Client 的平台 Engine。
+2. 框架内任何模块（含 `neton-ai`、`neton-storage`）发出站请求只经 `HttpClient` 接口，不直接依赖任何引擎实现（[HTTP 引擎规范](./http-engine.md) 规则 4）。
+3. `HttpClient.create { }` 可脱离 Neton Runtime 独立使用；无参 `create` 由**引擎模块**提供，机制与无参 `http { }` 相同（见下文）。没有 Client 组件层：Client 由应用创建、绑定到 `NetonContext` 并负责关闭。
+4. Client 由创建方持有并关闭；被交给其他模块的实例只是借用，借用方不得关闭。
+5. 入站 Server 与出站 Client 由**同一个引擎模块**交付；替换引擎模块同时替换两者（[HTTP 引擎规范](./http-engine.md) 规则 1）。
 
 入站 Adapter 选择规则（冻结）：
 
@@ -85,7 +85,7 @@ interface HttpClient {
 }
 ```
 
-平台 Engine 固定由 `neton-http` 选择：macOS 使用 Darwin、Linux 使用 CIO、Windows 使用 WinHttp。测试可通过 `HttpClient.createWithEngine(MockEngine)` 注入 Engine。
+契约层不选择传输实现。无参 `HttpClient.create { }` 由引擎模块声明在 `neton.http.client` 包下：依赖 `neton-http-hyper4k` 时解析到 hyper4k 客户端，依赖 `neton-http-ktor` 时解析到 Ktor 客户端（其内部按平台选 Darwin / CIO / WinHttp，属该模块实现细节）。测试用契约层 testkit 的 `ScriptedHttpClient`，不注入引擎对象。能力声明、一致性套件与引擎入口的完整契约见 [HTTP 引擎规范](./http-engine.md)。
 
 ### 1.4 统一抽象架构
 
