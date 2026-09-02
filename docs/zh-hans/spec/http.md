@@ -85,7 +85,7 @@ interface HttpClient {
 }
 ```
 
-契约层不选择传输实现。无参 `HttpClient.create { }` 由引擎模块声明在 `neton.http.client` 包下：依赖 `neton-http-hyper4k` 时解析到 hyper4k 客户端，依赖 `neton-http-ktor` 时解析到 Ktor 客户端（其内部按平台选 Darwin / CIO / WinHttp，属该模块实现细节）。测试用契约层 testkit 的 `ScriptedHttpClient`，不注入引擎对象。能力声明、一致性套件与引擎入口的完整契约见 [HTTP 引擎规范](./http-engine.md)。
+契约层不选择传输实现。无参 `HttpClient.create { }` 由引擎模块声明在 `neton.http.client` 包下：依赖 `neton-http-hyper4k` 时解析到 hyper4k 客户端，依赖 `neton-http-ktor` 时解析到 Ktor 客户端（POSIX 目标用 CIO、Windows 用 WinHttp，属该模块实现细节）。测试用契约层 testkit 的 `ScriptedHttpClient`，不注入引擎对象。能力声明、一致性套件与引擎入口的完整契约见 [HTTP 引擎规范](./http-engine.md)。
 
 ### 1.4 统一抽象架构
 

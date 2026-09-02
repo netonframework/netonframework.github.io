@@ -241,15 +241,25 @@ enum class HttpClientCapability {
 
 ### 5.3 能力现状矩阵
 
-| 能力 | Ktor（Darwin / CIO / WinHttp） | hyper4k client |
+| 能力 | Ktor（CIO / WinHttp） | hyper4k client |
 |---|---|---|
-| `HTTP_2` | 平台引擎决定，Native 上 CIO 不支持 | ✅ ALPN，`HTTP2_REQUIRED` 可拒绝降级 |
+| `HTTP_2` | ❌ CIO 在 Native 上不支持 | ✅ ALPN，`HTTP2_REQUIRED` 可拒绝降级 |
 | `STREAMING_BODY` | ✅ | ✅ `OnChunk` + `PAUSE/resume` 背压 |
 | `CANCELLATION` | ✅ | ✅ `hyper4k_client_cancel`，回调线程安全 |
-| `CUSTOM_CA` | 平台引擎决定 | ✅ 追加或替换系统 CA |
+| `CUSTOM_CA` | ❌ `HttpClientConfig` 无 CA 选项 | ✅ 追加或替换系统 CA |
 | `PROXY` | ✅ HTTP 代理 | ❌ ABI v4 无代理；`proxyUrl` → create 失败 |
 
 > ✅ 的依据必须是 Client 一致性套件里对应的测试通过，不是 ABI 文档说有。
+
+**Ktor 在 macOS 上不再使用 Darwin 引擎（实测结论，§十 第 1 步落地时发现）。**
+套件第一次跑就把 NSURLSession 的三处行为钉出来了：把重复的 `Set-Cookie` 合并成
+一个值、chunked 响应体攒到结束才交付（SSE 在上面不是慢，是不动）、Flow 取消后
+连接不关闭。三条都在「所有引擎必须通过」的清单里，Darwin 因此被移出。Ktor 现在
+在全部 POSIX 目标上用 CIO，macOS 与 Linux 行为一致；Windows 仍是 WinHttp，
+其一致性在 `ScriptedOrigin` 有 winsock 实现之前**未经验证**。
+
+这正是套件存在的意义：这三条此前没有任何测试覆盖，只有一条"macOS 上 SSE
+有时候不太对"的模糊印象。
 
 ### 5.4 错误映射（hyper4k → `HttpClientError`）
 
@@ -263,7 +273,7 @@ enum class HttpClientCapability {
 | `CANCELLED` | 不映射为错误 | Flow 取消 / `close()` 的正常终态，向上抛 `CancellationException` |
 | `TRUNCATED` | `Network` | 响应已开始但未完整；**已 emit 的 chunk 不撤回** |
 | `OUTCOME_UNKNOWN` | `Network`，`message` 以 `outcome unknown:` 起始 | 非幂等请求在连接中断时的唯一诚实答案；调用方**不得**据此自动重试 |
-| HTTP 4xx/5xx | `Http(statusCode, body)` | 与 Ktor 实现一致：状态码不是传输错误，由 `request()` 映射，`stream()` 不映射 |
+| HTTP 4xx/5xx | `request()`：**不映射**，原样返回 `HttpClientResponse`；`stream()`：第一个 chunk 之前抛 `Http(statusCode, body)` | 既有契约。状态码是响应的一部分（S3 的 404 是「不存在」不是错误）；而流式路径若不拦，一个 429 的错误 JSON 会流进 SSE 解析器变成零个事件和一次静默的正常结束 |
 
 `OUTCOME_UNKNOWN` 单列一行是刻意的：它是 ABI v4 §四 的核心语义（RFC 9113
 GOAWAY 边界），映射时**不得**并入普通 `Network` 而丢失「不可自动重试」的信息。
@@ -293,7 +303,8 @@ abstract class HttpClientConformanceSuite {
     @Test fun get_returns_status_headers_and_body()
     @Test fun request_body_bytes_are_verbatim()            // 含 NUL / 非 UTF-8
     @Test fun headers_preserve_multi_value_and_case_insensitive_lookup()
-    @Test fun http_4xx_5xx_map_to_HttpClientError_Http()
+    @Test fun request_returns_non_success_status_as_a_response()
+    @Test fun stream_throws_HttpClientError_Http_for_non_success_status()
     @Test fun connection_refused_maps_to_Network()
     @Test fun request_timeout_maps_to_Timeout()
     @Test fun close_is_idempotent_and_rejects_further_requests()
