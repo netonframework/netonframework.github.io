@@ -243,13 +243,32 @@ enum class HttpClientCapability {
 
 | 能力 | Ktor（CIO / WinHttp） | hyper4k client |
 |---|---|---|
-| `HTTP_2` | ❌ CIO 在 Native 上不支持 | ✅ ALPN，`HTTP2_REQUIRED` 可拒绝降级 |
+| `HTTP_2` | ❌ CIO 在 Native 上不支持 | 引擎 ✅（ALPN，`HTTP2_REQUIRED` 可拒绝降级）；**neton 层暂不声明**，见下 |
 | `STREAMING_BODY` | ✅ | ✅ `OnChunk` + `PAUSE/resume` 背压 |
 | `CANCELLATION` | ✅ | ✅ `hyper4k_client_cancel`，回调线程安全 |
-| `CUSTOM_CA` | ❌ `HttpClientConfig` 无 CA 选项 | ✅ 追加或替换系统 CA |
+| `CUSTOM_CA` | ❌ `HttpClientConfig` 无 CA 选项 | 引擎 ✅；**neton 层暂不声明**，见下 |
 | `PROXY` | ✅ HTTP 代理 | ❌ ABI v4 无代理；`proxyUrl` → create 失败 |
 
 > ✅ 的依据必须是 Client 一致性套件里对应的测试通过，不是 ABI 文档说有。
+
+**`Hyper4kHttpClient` 当前只声明 `STREAMING_BODY` 与 `CANCELLATION`。** 引擎在
+Rust 层对 h2/ALPN 与自定义 CA 都有测试，但本套件还没有 h2 / TLS 对端，neton 层
+拿不出对应的 `check*` 通过记录。按 §6.3 的纪律，没有测试守着的能力不许声明——
+哪怕它"其实能用"。补上对端后两项一起解锁；在那之前，需要 h2 上游的应用
+`require` 这两项会在 create 时失败，而不是在生产上以奇怪的方式失败。
+
+**§十 第 2 步落地时的两处实测发现（都是套件抓出来的，都不在任何人预料内）：**
+
+1. hyper4k client 在直连 HTTP/1.1 上发的是 **absolute-form** 请求行
+   （`GET http://host:port/path`），而不是 origin-form（`GET /path`）。hyper 的
+   低层 `conn` API 原样发送 URI，hyper 自己的 server 两种形式都接受，所以 hyper4k
+   自己的 101 个 Rust 测试全绿。真实 origin 会拒绝或误路由。已修（H1 改写为
+   origin-form，H2 保留完整 URI 以派生伪头），并在 Rust 侧加了原始 socket 抓请求行
+   的回归测试。
+2. hyper4k 的链接选项只写在自己 `build.gradle.kts` 的 `binaries.all` 里，
+   **不随 klib 传给使用方**。第一个引用 `hyper4k_client_new` 的使用方在 macOS 上
+   链接失败（`rustls-native-certs` 需要 `Security.framework`）。已改为写在
+   `.def` 的 `linkerOpts.*`——这是唯一会跟着 klib 走的位置。
 
 **Ktor 在 macOS 上不再使用 Darwin 引擎（实测结论，§十 第 1 步落地时发现）。**
 套件第一次跑就把 NSURLSession 的三处行为钉出来了：把重复的 `Set-Cookie` 合并成
