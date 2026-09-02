@@ -475,6 +475,15 @@ hyper4k server 无 TLS，HTTP/2 仅 h2c。两个选择必须明写一个，本�
 | `neton-core/build.gradle.kts` | **已删除**五个 `ktor-server-*` 依赖——neton-core 里没有任何代码引用它们，但聚合上的每个二进制都把 Ktor 链了进去。import 级的 grep 抓不到这种泄漏，CI 守卫因此同时检查 build 文件里的 `libs.ktor` 别名 |
 | `examples/neton-ai-sample` | 同时依赖两个引擎模块 → 改为只依赖 hyper4k（§4.2 二选一） |
 
+**应用模块的迁移状态（2026-09-03）**：
+
+| 模块 | 状态 |
+|---|---|
+| `neton-application-module-privchat`、`privchat-service-client` | ✅ 借用应用绑定的 `HttpClient`，端到端已验证 |
+| `neton-application-module-system`（短信）、`-payment`（支付平台） | ✅ 同上；测试改用 `ScriptedHttpClient` |
+| `neton-application-module-gateway`（AI 中继） | ⏸ **待决策**：`RelayEngine.clientFor(channel)` 按渠道建客户端并设置 `proxyUrl`，而 hyper4k client 无代理能力（§5.3）。改成默认引擎会让配置了代理的渠道在 create 时失败——这是能力模型要的行为，但也是真实的功能缺口。两条路：给 hyper4k client 加 HTTP 代理（ABI v4.1：`http://` 走 absolute-form、`https://` 走 CONNECT），或 gateway 显式保留 Ktor。在此之前 gateway 仍依赖 `neton-http-ktor`；因为是 `implementation` 依赖，不会把两个引擎同时暴露到应用的编译类路径，只是二进制里多一份引擎 |
+| 三个应用（privchat / neton / kedao） | ✅ 在 `Main` 里创建、绑定、随生命周期关闭同一个出站客户端 |
+
 **已知残留（不在本文范围，登记为后续项）**：`neton-routing → neton-redis → rethis →
 ktor-network / ktor-io / ktor-utils / ktor-http / ktor-network-tls`。这是 Redis 客户端库
 的传输层，不是 HTTP 引擎；但它让最小聚合（core + logging + http + routing）的二进制
