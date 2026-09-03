@@ -83,7 +83,7 @@ levels = "ALL"
 | `port` | Int | `8080` | 监听端口 |
 
 ::: warning `server.host` 1.0 暂不支持
-监听地址在 1.0 中硬编码为 `0.0.0.0`（见 `KtorHttpAdapter`），配置 `server.host` **不会生效**。
+监听地址在 1.0 中由引擎适配器硬编码为 `0.0.0.0`（hyper4k 与 Ktor 适配器均如此），配置 `server.host` **不会生效**。
 :::
 
 ### [logging] -- 日志

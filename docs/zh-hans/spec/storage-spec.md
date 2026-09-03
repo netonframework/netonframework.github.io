@@ -520,15 +520,14 @@ internal object AwsV4Signer {
 
 ### 5.4 HTTP 客户端
 
-使用 Ktor HttpClient，各平台引擎：
+经 Neton 的 `neton.http.client.HttpClient` 契约（[HTTP 引擎规范](./http-engine.md) 规则 4：
+框架内只有一条出站 HTTP 通道）。本模块**不带引擎、不创建客户端**：应用在 `Main` 里
+`HttpClient.create { }` 并 `bind(HttpClient::class, it)`，`StorageComponent.init()` 从
+`NetonContext` 借用；s3 源没有绑定客户端时 init 报错并给出要加的那一行。
+`S3StorageOperator.close()` 不关闭借来的客户端。
 
-| 平台 | Ktor 引擎 |
-|------|----------|
-| macOS (Arm64/X64) | Darwin |
-| Linux (X64/Arm64) | CIO |
-| Windows (mingwX64) | WinHttp |
-
-**S3StorageOperator 内部持有一个 Ktor HttpClient 实例**，在 `StorageComponent.init()` 时创建。
+对象体的读取走 `stream()` 组装字节：`HttpClientResponse.body` 是 String，缓冲路径会
+毁掉非 UTF-8 对象。
 
 ```kotlin
 internal class S3StorageOperator(
@@ -762,8 +761,8 @@ kotlin {
                 // S3 签名
                 implementation(libs.cryptography.core)
                 implementation(libs.cryptography.provider.optimal)
-                // S3 HTTP 请求
-                implementation(libs.ktor.client.core)
+                // S3 HTTP 请求：只依赖契约层，引擎由应用决定
+                implementation(project(":neton-http"))
             }
         }
 
@@ -779,48 +778,10 @@ kotlin {
 }
 ```
 
-### 8.2 libs.versions.toml 新增
+### 8.2 依赖（冻结）
 
-```toml
-[libraries]
-# Ktor Client（neton-storage S3 后端需要）
-ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
-ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
-ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
-ktor-client-winhttp = { module = "io.ktor:ktor-client-winhttp", version.ref = "ktor" }
-```
-
-### 8.3 平台引擎依赖（冻结）
-
-Ktor HttpClient **不会**自动选择引擎，必须按平台显式声明引擎依赖：
-
-```kotlin
-// build.gradle.kts sourceSets 内
-val commonMain by getting {
-    dependencies {
-        implementation(libs.ktor.client.core)
-    }
-}
-
-// macOS
-val macosArm64Main by getting { dependencies { implementation(libs.ktor.client.darwin) } }
-val macosX64Main by getting { dependencies { implementation(libs.ktor.client.darwin) } }
-
-// Linux
-val linuxX64Main by getting { dependencies { implementation(libs.ktor.client.cio) } }
-val linuxArm64Main by getting { dependencies { implementation(libs.ktor.client.cio) } }
-
-// Windows
-val mingwX64Main by getting { dependencies { implementation(libs.ktor.client.winhttp) } }
-```
-
-| 平台 | 引擎依赖 | 说明 |
-|------|---------|------|
-| macOS (Arm64/X64) | `ktor-client-darwin` | 基于 NSURLSession |
-| Linux (X64/Arm64) | `ktor-client-cio` | 基于 Coroutines I/O |
-| Windows (mingwX64) | `ktor-client-winhttp` | 基于 WinHTTP |
-
----
+不再有 Ktor 相关条目：`neton-storage` 不引用任何 HTTP 引擎，也不按平台声明引擎依赖。
+出站客户端的引擎是应用的选择（默认 hyper4k），详见 [HTTP 引擎规范](./http-engine.md)。
 
 ## 9. 使用示例
 

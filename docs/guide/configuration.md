@@ -81,7 +81,7 @@ levels = "ALL"
 | `port` | Int | `8080` | Listen port |
 
 ::: warning `server.host` is not supported in 1.0
-The bind address is hard-coded to `0.0.0.0` (see `KtorHttpAdapter`). Setting `server.host` has
+The bind address is hard-coded to `0.0.0.0` by the engine adapters (hyper4k and Ktor alike). Setting `server.host` has
 **no effect**.
 :::
 
