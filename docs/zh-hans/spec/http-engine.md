@@ -252,7 +252,7 @@ enum class HttpClientCapability {
 | `STREAMING_BODY` | ✅ | ✅ `OnChunk` + `PAUSE/resume` 背压 |
 | `CANCELLATION` | ✅ | ✅ `hyper4k_client_cancel`，回调线程安全 |
 | `CUSTOM_CA` | ❌ `HttpClientConfig` 无 CA 选项 | 引擎 ✅；**neton 层暂不声明**，见下 |
-| `PROXY` | ✅ HTTP 代理 | ❌ ABI v4 无代理；`proxyUrl` → create 失败 |
+| `PROXY` | ✅ HTTP 代理 | ✅ ABI 4.1：`http://` absolute-form、`https://` CONNECT 隧道；套件 `proxy_url_routes_through_the_proxy` 通过 |
 
 > ✅ 的依据必须是 Client 一致性套件里对应的测试通过，不是 ABI 文档说有。
 
@@ -422,7 +422,7 @@ hyper4k (Rust) ─────── hyper4k_client_*  （ABI v4，已完成）
 | `HttpClientConfig.connectMillis` | `Hyper4kClientOptions.connect_timeout_ms` |
 | `HttpClientConfig.requestMillis` | `request_timeout_ms`（整个请求含重试，不重置） |
 | `HttpClientConfig.socketMillis` | `read_idle_timeout_ms`（块间空闲，每块重置） |
-| `HttpClientConfig.proxyUrl` | **无对应**：非 null → `createWith` 失败（§5.2） |
+| `HttpClientConfig.proxyUrl` | `Hyper4kClientOptions.proxy_url`（ABI 4.1）；不合法的值在 create 时以 `IllegalArgumentException` 拒绝 |
 | `HttpClientRequest.timeout` | 覆盖该请求的 `read_idle_timeout_ms`；`0` = 显式禁用（SSE 场景） |
 | `request()` | `on_chunk` 累积到 `ByteArray`；`OnDone(NONE)` 后组装 `HttpClientResponse` |
 | `stream()` | `callbackFlow`：`OnHeaders` 校验状态，`OnChunk` → `Bytes`，`OnDone` → `End`；Flow 取消 → `hyper4k_client_cancel` |
@@ -549,7 +549,7 @@ broadcastRoom 全部经 hyper4k 出站，端到端通过。这是比一致性套
 
 - **不**改 `HttpClient` 的 `request / stream / close` 签名；
 - **不**做 Server 侧 TLS（§八）；
-- **不**做 hyper4k client 的代理支持（能力矩阵如实标 ❌；需要代理的应用显式用 Ktor）；
+- ~~不做 hyper4k client 的代理支持~~（ABI 4.1 已提供 HTTP 代理；无凭据、无 socks，见 hyper4k ABI 文档 §2.2.1）；
 - **不**做出站连接池参数的公共配置面——ABI v4 有 `max_connections_per_host` 等，
   v1 用引擎缺省，暴露与否等有真实需求；
 - **不**在本文决定 `neton-http-ktor` 的删除时间——§九 只把它变成**可删的**。
