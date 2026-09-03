@@ -150,6 +150,23 @@ Server 侧（已有）与 Client 侧（本文新增）。
   只能被显式依赖。显式依赖 Ktor 的应用**不得**同时依赖 hyper4k 引擎模块。
 - 第三方引擎同理。选引擎是二选一，不是叠加。
 
+### 4.4 需要按需建多个客户端的模块：`HttpClientProvider`
+
+绝大多数模块只借用应用绑定的那一个 `HttpClient`。少数模块必须按运行时配置建多个
+——AI 网关按上游渠道各自的代理与超时建客户端。它们不能自己调 `HttpClient.create { }`：
+那要求模块带引擎，而带引擎的模块一多，应用类路径上就有两个 `create`。冻结为：
+
+```kotlin
+// neton-http
+fun interface HttpClientProvider { fun create(block: HttpClientConfig.() -> Unit): HttpClient }
+
+// 应用 Main
+bind(HttpClientProvider::class, HttpClientProvider { HttpClient.create(it) })
+```
+
+模块从 `NetonContext` 取 provider；没绑定时在启动期报错并给出要加的那一行。
+由 provider 建出的客户端由**模块**负责关闭（它是模块要来的，不是借的）。
+
 ### 4.3 缺引擎时的可读错误（已验证，冻结）
 
 现状：`Unresolved reference 'create'`。目标：
@@ -481,7 +498,8 @@ hyper4k server 无 TLS，HTTP/2 仅 h2c。两个选择必须明写一个，本�
 |---|---|
 | `neton-application-module-privchat`、`privchat-service-client` | ✅ 借用应用绑定的 `HttpClient`，端到端已验证 |
 | `neton-application-module-system`（短信）、`-payment`（支付平台） | ✅ 同上；测试改用 `ScriptedHttpClient` |
-| `neton-application-module-gateway`（AI 中继） | ⏸ **待决策**：`RelayEngine.clientFor(channel)` 按渠道建客户端并设置 `proxyUrl`，而 hyper4k client 无代理能力（§5.3）。改成默认引擎会让配置了代理的渠道在 create 时失败——这是能力模型要的行为，但也是真实的功能缺口。两条路：给 hyper4k client 加 HTTP 代理（ABI v4.1：`http://` 走 absolute-form、`https://` 走 CONNECT），或 gateway 显式保留 Ktor。在此之前 gateway 仍依赖 `neton-http-ktor`；因为是 `implementation` 依赖，不会把两个引擎同时暴露到应用的编译类路径，只是二进制里多一份引擎 |
+| `neton-application-module-gateway`（AI 中继） | ✅ hyper4k client 加了代理（ABI 4.1）后迁移：网关按渠道建客户端的能力来自应用绑定的 `HttpClientProvider`（见 §4.4），模块不带引擎 |
+| ~~gateway 原待决策项~~ | ⏸ **（已解决，保留记录）**：`RelayEngine.clientFor(channel)` 按渠道建客户端并设置 `proxyUrl`，而 hyper4k client 无代理能力（§5.3）。改成默认引擎会让配置了代理的渠道在 create 时失败——这是能力模型要的行为，但也是真实的功能缺口。两条路：给 hyper4k client 加 HTTP 代理（ABI v4.1：`http://` 走 absolute-form、`https://` 走 CONNECT），或 gateway 显式保留 Ktor。在此之前 gateway 仍依赖 `neton-http-ktor`；因为是 `implementation` 依赖，不会把两个引擎同时暴露到应用的编译类路径，只是二进制里多一份引擎 |
 | 三个应用（privchat / neton / kedao） | ✅ 在 `Main` 里创建、绑定、随生命周期关闭同一个出站客户端 |
 
 **已知残留（不在本文范围，登记为后续项）**：`neton-routing → neton-redis → rethis →
