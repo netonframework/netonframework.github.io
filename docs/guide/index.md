@@ -1,7 +1,7 @@
 # Guide
 
 ::: info Version
-This documentation covers **Neton 1.0.0-beta1** (Kotlin 2.4.0 / KSP 2.3.10).
+This documentation covers **Neton 1.0.0** (Kotlin 2.4.0 / KSP 2.3.10), currently in public beta. The final release date is not yet fixed.
 Where the documentation and the code disagree, **the compilable examples under
 `neton/examples/` and the framework sources are authoritative**.
 :::
