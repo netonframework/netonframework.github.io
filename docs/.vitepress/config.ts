@@ -8,8 +8,9 @@ const DOCS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // locale 路径前缀 → hreflang 值。root locale（英文）没有前缀。
 // 增加语言时只改这里：路径用小写（zh-hans），hreflang 用 BCP 47 大小写（zh-Hans）。
+// hreflang 必须和 sitemap 里生成的值一致（sitemap 取 locale 的 lang），否则两处信号互相矛盾。
 const LOCALES: Array<{ prefix: string; hreflang: string }> = [
-  { prefix: "", hreflang: "en" },
+  { prefix: "", hreflang: "en-US" },
   { prefix: "zh-hans", hreflang: "zh-Hans" },
 ];
 
@@ -25,9 +26,18 @@ function sourceFileFor(prefix: string, sharedPath: string): string {
   return join(DOCS_ROOT, prefix, sharedPath);
 }
 
+/**
+ * 页面源路径（如 zh-hans/guide/cache.md）→ 站点上的规范 URL。
+ * 目录索引收敛到 / 结尾：GitHub Pages 会同时以 /guide/ 和 /guide/index.html 返回 200，
+ * 静态托管没法 301 掉其中一个，只能靠 canonical 指定哪个是正主。
+ */
+function urlForPage(page: string): string {
+  const html = page.replace(/\.md$/, ".html").replace(/(^|\/)index\.html$/, "$1");
+  return `${HOSTNAME}/${html}`;
+}
+
 function urlFor(prefix: string, sharedPath: string): string {
-  const html = sharedPath.replace(/\.md$/, ".html").replace(/(^|\/)index\.html$/, "$1");
-  return `${HOSTNAME}/${prefix ? `${prefix}/` : ""}${html}`;
+  return urlForPage(`${prefix ? `${prefix}/` : ""}${sharedPath}`);
 }
 
 // root locale = English（/guide/cache.html），中文走子路径（/zh-hans/guide/cache.html）。
@@ -134,6 +144,11 @@ export default defineConfig({
   transformHead({ page }) {
     const shared = stripLocale(page);
     const tags: Array<[string, Record<string, string>]> = [];
+
+    // 404 页不该声明 canonical——它不是任何 URL 的正主。
+    if (page !== "404.md") {
+      tags.push(["link", { rel: "canonical", href: urlForPage(page) }]);
+    }
 
     for (const { prefix, hreflang } of LOCALES) {
       if (!existsSync(sourceFileFor(prefix, shared))) continue;
