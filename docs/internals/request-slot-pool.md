@@ -107,3 +107,24 @@ that cannot escape. Start with a simple bounded implementation (a lock is fine);
 let tests decide whether contention warrants sharding. Keep the plain
 per-request-allocation path as the A/B control. Which object to reuse first is
 chosen after measuring which is largest and safest — not assumed.
+
+
+## Measured: the return path is allocation-free, and only escaping objects benefit
+
+A microbenchmark (5M iterations, 4 MiB heap floor, autotune off, GC epochs counted;
+`alloc-probe.kt` here) leasing+closing a pooled Box vs `new` each time:
+
+| | GC cycles over 5M | slots created |
+|---|---|---|
+| direct `new` (object escapes) | 36 | — |
+| pool lease+close | 0 | 1 |
+
+So the array-stack return path allocates nothing (one slot, zero GC over 5M
+reuses) — the "allocation-free return" claim holds, measured.
+
+Important caveat that shapes what to pool: when the object does NOT escape the
+loop, BOTH direct-new and pool showed 0 GC — Kotlin/Native's escape analysis
+already elides non-escaping allocations. Pooling only pays for objects that
+genuinely escape (held across suspension, handed to the handler): the
+context/request/response skeleton. Do not pool short-lived non-escaping
+temporaries; the compiler already handles those. This trims the wiring target.
