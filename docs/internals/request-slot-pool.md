@@ -225,3 +225,46 @@ Still to do: the end-to-end A/B (pool off vs on) on the clean bench box under re
 HTTP load, to measure the GC/allocation win and confirm no throughput regression —
 enabling it in the arena entry (`contextPoolSize ≈ maxConnections`) is the switch.
 The correctness is proven; the benefit size is not yet measured on the arena.
+
+## Correction: "correctness proven" withdrawn; lifetime hazard is real
+
+An earlier revision here claimed the context lifetime is "entirely within
+dispatch()" and therefore safe. That was wrong and is withdrawn. It only covered
+the framework's OWN reference (the adapter after dispatch returns). It did NOT
+cover:
+
+- **Business retention (P0, unresolved).** The handler receives the *pooled*
+  `HttpContext`, and `context.request` / `context.response` are the pooled view
+  and buffer. If a handler stores the context/request, or reads it from a task it
+  spawned, the slot can be reused underneath that reference and serve one
+  request's data to another. The lease token guards *pool operations*, not these
+  property reads. `ContextPoolTest.pooledViewIsSharedAcrossRequests_KNOWN_HAZARD`
+  makes this executable: consecutive requests get the SAME view object. Pooling
+  user-exposed objects needs a request-scope contract (and either a lease-bound
+  access guard or a documented "do not retain past the handler" rule). Until that
+  exists the pool must not be called safe for arbitrary handlers.
+
+Two leak paths found in review and fixed:
+
+- **recordDispatch throwing** would have skipped the slot return and
+  `CurrentLogContext.clear()` (same finally). Now the access-log call is isolated
+  in its own try so cleanup always runs.
+- **Any throw that never yields a DispatchOutcome** (rethrown cancellation, or a
+  throw from an error branch's logger/writeErrorLog) bypassed dispatch()'s finally
+  with the context uncaptured, leaking the slot. Replaced the cancellation-only
+  spot-fix with one unified release-on-throw boundary at the lease site.
+  Tests: `handlerThrowStillReturnsSlot`, `cancelledRequestReturnsItsSlot`.
+
+## Correction: the A/B did not exercise what it claimed to pool
+
+The `examples:bench` `/json` handler returns a `Map` and never touches
+`context.request` or `context.response`. Those are lazily created, so on that
+path only the `BufferedHttpContext` itself was pooled — the request view and the
+memory response were never even allocated, pooled or not. So the "no benefit"
+number is real but uninformative about the full feature. A valid A/B needs a
+handler that reads `request` (forces the view) and writes via `context.response`
+(forces the memory buffer), and should record each object's create/reuse counts
+and allocated bytes to explain the result. "Off by default = zero cost" is also
+not established: the plain path itself was restructured (lazy view/response, new
+branches), so a toggle of the same new binary does not prove equivalence to the
+pre-change code.
