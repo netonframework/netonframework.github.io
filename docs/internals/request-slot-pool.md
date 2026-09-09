@@ -195,3 +195,33 @@ consumer-refcount contract must be proven on the live path under cancellation,
 streaming, and cross-thread resume — a leaked reference here silently serves one
 request's body to the next. This is why wiring is a focused, A/B-gated effort
 with the plain-allocation path kept as the control, not a tail-of-session change.
+
+## Step 3 implemented: context pool wired into dispatch
+
+The pool is now wired (neton `feature/request-context-pool`). `BufferedHttpContext`
+and its lazily-owned `BufferedHttpRequestView` / `BufferedMemoryResponse` are
+built empty, re-bound by `fill()` per request, and `reset()` to a clean state on
+return. `BufferedHttpDispatcher` leases a context at route match and returns it in
+`dispatch()`'s `finally` (which runs on cancellation); the cancellation catch also
+returns the slot, since that path never reaches the finally with the context in
+hand.
+
+Gate: `HttpServerConfig.contextPoolSize` (0 = plain allocation, the unchanged
+control path). On exhaustion `lease()` is null and the dispatcher allocates
+plainly — the engine semaphore remains the only admission gate.
+
+Aliasing safety, verified by test: the emitted `BufferedHttpResponse` holds its
+own body array (response body is replace-on-write, reset sets it null) and its own
+header map (`headers.toMap()` copies), so returning/reusing a slot cannot clobber
+a response already handed to the engine.
+
+Tests (`ContextPoolTest`): pooled-vs-plain equivalence across query shapes, slot
+reuse without state leakage, response header/body reset, 500 concurrent requests
+with no cross-contamination and no cap breach, slot return on cancellation, and
+exhaustion falling back to allocation rather than rejection. Full neton-http suite
+(144 tests) green.
+
+Still to do: the end-to-end A/B (pool off vs on) on the clean bench box under real
+HTTP load, to measure the GC/allocation win and confirm no throughput regression —
+enabling it in the arena entry (`contextPoolSize ≈ maxConnections`) is the switch.
+The correctness is proven; the benefit size is not yet measured on the arena.
