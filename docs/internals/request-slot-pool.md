@@ -128,3 +128,41 @@ already elides non-escaping allocations. Pooling only pays for objects that
 genuinely escape (held across suspension, handed to the handler): the
 context/request/response skeleton. Do not pool short-lived non-escaping
 temporaries; the compiler already handles those. This trims the wiring target.
+
+## Admission policy: the pool is a cache, not a gate
+
+There is exactly ONE admission gate, and it already exists: the engine's
+`Semaphore(maxConcurrentRequests)` in `Hyper4kServer.submit` (`slots.tryAcquire()`).
+It bounds total in-flight requests and returns 503 when full. That is the limit
+that protects memory and the event loop.
+
+The slot pool must NOT add a second gate. Concretely:
+
+- **`lease() == null` degrades to plain allocation, never to a 503.** Pool
+  exhaustion means "no reusable skeleton right now", not "server overloaded".
+  Falling back to `new` gives exactly the pre-pool behaviour for that request —
+  strictly no worse — and the GC reclaims it as before.
+- **`maxSlots` bounds resident pooled memory only**, not concurrency. A second
+  concurrency counter in the pool would double-count against the semaphore:
+  either spurious 503s, or two counters that must be kept in lockstep for no
+  benefit. One gate, one source of truth.
+
+### Sizing
+
+Set `maxSlots ≈ maxConcurrentRequests`. Then in steady state every admitted
+request finds a free slot, because the semaphore already caps concurrency at
+that number. The only misses are transient: a slot is returned (after `reset`)
+slightly later than its semaphore permit is released, so a freshly admitted
+request can briefly find the pool empty. That request falls back to a fresh
+allocation — the return-lag window, not a failure. A small headroom
+(`maxSlots = maxConcurrentRequests + N`) shrinks even those misses, at the cost
+of N resident skeletons; it is a tuning knob, not a correctness requirement.
+
+### What this does not solve
+
+Sizing and fallback keep the pool safe under exhaustion. They do NOT make wiring
+safe: a slot returned while a streaming writer or a cancelled coroutine still
+holds it would hand one request's buffers to the next. That is the lease-token +
+consumer-refcount contract in `SlotPool.kt`, and it must be proven on the real
+dispatch path (cancel / streaming / cross-thread) before the pool is wired —
+step 3, deliberately separate from this policy.
