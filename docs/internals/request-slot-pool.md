@@ -166,3 +166,32 @@ holds it would hand one request's buffers to the next. That is the lease-token +
 consumer-refcount contract in `SlotPool.kt`, and it must be proven on the real
 dispatch path (cancel / streaming / cross-thread) before the pool is wired —
 step 3, deliberately separate from this policy.
+
+## Wiring target (step 3): what actually escapes, and its reset surface
+
+From the escape finding, pool ONLY the objects held across the suspend
+`handler.invoke(context, args)` call in `BufferedHttpDispatcher.dispatchOne`.
+Enumerated from that path:
+
+| Object | Why it escapes | Reset surface on return |
+|---|---|---|
+| `BufferedHttpContext` | passed to security, rate-limit and the suspend handler | `requestView`, `sessionOrNull`, `attributesOrNull`, `bufferedResponse`, and the ctor args (`sourceRequest`, `method`, `pathParameters`, `appContext`, `traceId`, `liveResponse`) must become re-fillable `var`s |
+| `BufferedHttpRequestView` | reached via `context.request`, lives inside the context | lazy caches `pathOrNull`, `urlOrNull`, `headersOrNull`, `queryParamsOrNull` |
+| `BufferedMemoryResponse` | reached via `context.response`, accumulates body/headers | largest reset surface — status, headers, body buffer, committed flag |
+| `ArgsView` (line ~320) | passed to the suspend handler | today its two scan lambdas capture `request`, so they allocate per request; pooling it means restructuring to non-capturing form |
+
+Do NOT pool: `DispatchOutcome` (consumed immediately up the stack — K/N already
+elides it), the path-parameter `HashMap` and `MatchedRoute` (short-lived, low
+value; measure before touching), and the log entries (off the hot path).
+
+### Why step 3 is a refactor, not a drop-in
+
+Every object above is built from `val` constructor fields today. Pooling them
+means: (1) make the fields mutable with a `fill(...)` that re-binds a leased
+skeleton to the new request, (2) a `reset()` that clears every field in the
+table above with no leftover reference to the previous request, (3) remove the
+per-request lambda capture in `ArgsView`. Then the lease-token +
+consumer-refcount contract must be proven on the live path under cancellation,
+streaming, and cross-thread resume — a leaked reference here silently serves one
+request's body to the next. This is why wiring is a focused, A/B-gated effort
+with the plain-allocation path kept as the control, not a tail-of-session change.
