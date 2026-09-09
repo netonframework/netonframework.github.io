@@ -26,10 +26,10 @@ features:
 
 ::: tip Kotlin/Native 服务端时代，从这里开始
 成熟框架的工程效率，原生二进制的启动速度与资源密度，两者不必二选一。阅读
-[Neton 1.0.0-beta1 发布宣言](/zh-hans/releases/1.0.0-beta1)。
+[Neton 1.0 发布宣言](/zh-hans/releases/1.0.0)。
 :::
 
 ::: info 版本对应声明
-本文档对应 **Neton 1.0.0-beta1**（Kotlin 2.4.0 / KSP 2.3.10）。
+本文档对应 **Neton 1.0.0**（Kotlin 2.4.0 / KSP 2.3.10），目前处于公开 Beta 阶段，正式发布日期未定。
 若文档与代码不一致，**一律以 `neton/examples/` 下的可编译示例和框架源码为准**，并欢迎提 issue 修正文档。
 :::

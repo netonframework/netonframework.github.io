@@ -26,11 +26,11 @@ features:
 
 ::: tip The Kotlin/Native server era starts here
 The engineering productivity of a mature framework, with the startup time and resource density of a native
-executable. Read [the Neton 1.0 public beta announcement](/releases/1.0.0-beta1).
+executable. Read [the Neton 1.0 public beta announcement](/releases/1.0.0).
 :::
 
 ::: info Version
-This documentation covers **Neton 1.0.0-beta1** (Kotlin 2.4.0 / KSP 2.3.10).
+This documentation covers **Neton 1.0.0** (Kotlin 2.4.0 / KSP 2.3.10), currently in public beta. The final release date is not yet fixed.
 
 Where the documentation and the code disagree, **the compilable examples under `neton/examples/` and the framework sources are authoritative**. Please open an issue so the docs can be corrected.
 :::

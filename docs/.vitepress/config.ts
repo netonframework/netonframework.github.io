@@ -188,7 +188,7 @@ export default defineConfig({
         nav: [
           { text: "Home", link: "/" },
           { text: "Guide", link: "/guide/" },
-          { text: "1.0 Public Beta", link: "/releases/1.0.0-beta1" },
+          { text: "1.0 Public Beta", link: "/releases/1.0.0" },
         ],
         sidebar: {
           "/guide/": enGuideSidebar,
@@ -214,7 +214,7 @@ export default defineConfig({
         nav: [
           { text: "首页", link: "/zh-hans/" },
           { text: "用户指南", link: "/zh-hans/guide/" },
-          { text: "1.0 正式公测", link: "/zh-hans/releases/1.0.0-beta1" },
+          { text: "1.0 正式公测", link: "/zh-hans/releases/1.0.0" },
         ],
         sidebar: {
           "/zh-hans/guide/": zhGuideSidebar,
