@@ -3,7 +3,7 @@
 > **定位**：在 Neton 框架内提供 WebSocket 服务端能力：路由注册、握手安全、会话收发、关闭与停机。
 > 协议本身不在框架内实现，由 `com.netonstream:websocket` 提供；本文只规定**框架如何接入它**。
 >
-> **状态**：**Draft v1 r5**。本文是实施规格，实施前的 API 讨论结论已并入。
+> **状态**：**Draft v1 r6**。本文是实施规格，实施前的 API 讨论结论已并入。
 > r2 按评审修订了运行时契约：单一协议读取者（§7.3）、发送顺序与数据所有权（§7.4）、
 > 三类配额（§7.6）、升级中连接的停机（§8.3）、心跳三项配置（§10.2）、性能验收（§11.1）。
 > r3 补充：各层职责划分（§2.5）、消费停滞与写阻塞不冒充心跳失败（§7.3、§7.4）、
@@ -12,6 +12,8 @@
 > 预算耗尽时保证连接能退出（§10.3）、空闲缓冲先测量再决策（§10.4）。
 > r5 修订：入站预算改为可拒绝的预留（§10.3.1）、全局耗尽时拒绝并关闭增长中的连接（§10.3.2）、
 > 挂起发送者最坏保留量与精确 UTF-8 长度（§7.4、§10.3.3）。
+> r6 修订：WebSocket 是 **HTTP 适配器可提供的标准能力**，不是某个引擎专属的功能。公共策略在 `neton-http` 只实现一次，
+> 适配器只提供机制；新增引擎 SPI（§7.0）与一致性套件（§9.2）。
 >
 > **前置**：
 > [HTTP 规范](./http.md)、[HTTP 引擎能力规范](./http-engine-capabilities.md)、
@@ -26,7 +28,9 @@
 
 ### 1.1 v1 交付
 
-- HTTP/1.1 上的 `ws://` 与 `wss://`（RFC 6455），引擎为 `neton-http-netonstream`。
+- HTTP/1.1 上的 `ws://` 与 `wss://`（RFC 6455）。
+- **WebSocket 是 HTTP 适配器可提供的一项标准能力**：业务代码只依赖框架 API，换适配器不改业务代码。公共策略（会话、心跳、预算、关闭、停机）在 `neton-http` 实现一次；适配器通过引擎 SPI（§7.0）提供底层机制。
+- v1 只有 `neton-http-netonstream` 实现该 SPI，但抽象与公共逻辑从第一版起就按多引擎设计，并配套一致性套件（§9.2）。
 - DSL `webSocket(...)` 与注解 `@WebSocket` 两种入口，**共用同一套注册流程**。
 - 握手复用现有安全链：认证、Guard、`@Permission`、限流、路径参数绑定、`@CurrentUser`。
 - Origin 校验（握手层拒绝，不依赖 CORS 响应头）。
@@ -42,7 +46,7 @@
 | HTTP/2 WebSocket（RFC 8441 extended CONNECT） | 握手模型不同于 101，作为独立能力另行验收 |
 | HTTP/3 WebSocket（RFC 9220） | 依赖 h3 引擎接入，不在本期 |
 | STOMP / 消息代理协议 | 不做 |
-| hyper4k、Ktor 引擎上的 WebSocket | 这两个引擎不声明 `WEBSOCKET` 能力；注册了 WebSocket 路由时启动失败（§9） |
+| hyper4k、Ktor 适配器实现 SPI | v1 不实现；它们不声明 `WEBSOCKET` 能力，注册了 WebSocket 路由时启动失败（§9）。日后实现时复用同一套公共逻辑与一致性套件，hyper4k 的可行性见 §12 |
 | `@OnOpen` / `@OnMessage` / `@OnClose` 生命周期注解 | 连接状态无处安放，见 §4.4 |
 
 ---
@@ -52,14 +56,21 @@
 ### 2.1 依赖链
 
 ```
-Neton 路由 / 安全 / 会话 API          neton-core · neton-routing · neton-ksp · neton-http
+业务：@WebSocket / routing { webSocket(...) }
         ↓
-WebSocket 引擎适配                     neton-http-netonstream
+框架 API 与路由                        neton-core（WebSocketSession、注解、能力）· neton-routing · neton-ksp
         ↓
-HTTP Upgrade → WebSocket              com.netonstream:http · com.netonstream:websocket
+WebSocket 框架运行时（引擎无关）        neton-http：握手策略、会话、心跳、预算、关闭、停机
         ↓
-io  或  tls → openssl → io            com.netonstream:io · tls · openssl
+引擎 SPI：WebSocketEngineConnection    neton-core（接口，§7.0）
+        ↓                                    ↓
+neton-http-netonstream（v1）          neton-http-hyper4k（未来）
+  com.netonstream:http + websocket      对应引擎的升级与 WebSocket 实现
+        ↓
+io  或  tls → openssl → io
 ```
+
+这与 HTTP 现有的分工一致：`neton-http` 只依赖 `neton-core`，不依赖任何引擎库；引擎无关的 `BufferedHttpDispatcher` 在 `neton-http` 中实现一次，由各适配器调用；`HttpEngineConformanceSuite` 约束所有适配器的行为。
 
 普通 ws/wss 不需要 `quic` 与 `http3`。
 
@@ -395,21 +406,82 @@ annotation class WebSocket(val value: String = "", val subprotocols: Array<Strin
 
 ## 七、线程与所有权模型
 
+### 7.0 分层：框架运行时与引擎 SPI
+
+**策略只实现一次，机制由适配器提供。** 例如"多久没收到 Pong 就关闭"由框架决定；实际发出 Ping、报告收到的 Pong、确认写出完成，由适配器负责。适配器**不得**自行定义超时、预算、关闭码等语义。
+
+| 层 | 模块 | 负责 |
+|---|---|---|
+| 业务 API | `neton-core` | `WebSocketSession`、`WebSocketMessage`、`CloseCode`、`@WebSocket`、`WEBSOCKET` 能力 |
+| 框架运行时 | `neton-http`（`neton.http.websocket`） | 握手策略（§6）、会话实现、单一读循环（§7.3）、出站 FIFO 与写串行（§7.4）、心跳（§10.2）、预算（§10.3）、配额（§7.6）、关闭与停机（§7.7、§8） |
+| 引擎 SPI | `neton-core`（`neton.core.http.adapter`） | 适配器与运行时之间的接口，见下 |
+| 适配器 | `neton-http-netonstream` 等 | 升级交接（§7.2）、底层收发、线程约束、写出确认、强制断开 |
+| 协议库 | `com.netonstream:websocket` 等 | 帧解析、分片、掩码、压缩、协议状态机、自动回复对端 Ping |
+
+引擎 SPI：
+
+```kotlin
+package neton.core.http.adapter
+
+/**
+ * 适配器提供的一条**已完成升级**的 WebSocket 连接。
+ * 所有方法只能在 [executor] 上调用；框架运行时保证这一点。
+ */
+interface WebSocketEngineConnection {
+    /** 连接所属的执行上下文。必须同时实现 kotlinx.coroutines.Delay（定时器）。
+     *  框架运行时的读循环、写串行、心跳与超时计时都运行在它上面，不额外切换线程。 */
+    val executor: CoroutineDispatcher
+
+    /**
+     * 读取下一个事件；同一时刻只有一个调用者（框架的读循环）。
+     * 数据消息的**每一次**内存分配之前，引擎必须调用 [budget].tryReserve；
+     * 失败时不得继续分配，抛出 WebSocketCapacityException（§10.3.1）。
+     * 对端的 Ping 由引擎自动回复，不作为事件上报。返回 null 表示连接已结束。
+     */
+    suspend fun receive(budget: ByteBudget): WebSocketEngineEvent?
+
+    /** 写出一条数据消息，**真正写出（flush 完成）后**才返回。 */
+    suspend fun writeData(message: WebSocketMessage)
+    /** 写出 Ping，写出完成后返回。 */
+    suspend fun writePing(payload: ByteArray)
+    /** 写出关闭帧，写出完成后返回。 */
+    suspend fun writeClose(code: Int, reason: String)
+
+    /** 进入丢弃模式：此后数据消息的负载直接跳过，不物化、不申请预算（§7.3）。 */
+    fun discardData()
+
+    /** 强制断开，不发关闭帧。幂等；必须使挂起中的 receive 与 write 立即结束。 */
+    fun abort()
+}
+
+sealed interface WebSocketEngineEvent {
+    class Data(val message: WebSocketMessage, val lease: BudgetLease) : WebSocketEngineEvent
+    class Pong(val payload: ByteArray) : WebSocketEngineEvent
+    class CloseReceived(val code: Int?, val reason: String) : WebSocketEngineEvent
+}
+```
+
+- **声明 `WEBSOCKET` 能力的前提**：适配器完整实现上述 SPI，**包括分配前可拒绝的预留**，并通过一致性套件（§9.2）。只实现了"能升级、能收发"而做不到预算约束的引擎，不得声明该能力，否则预算会在该引擎上悄悄失效。
+- 握手与升级交接（§6、§7.2）中，策略部分（顺序、Origin、安全链、配额）同样由框架运行时执行；适配器只负责把"已接受升级"的请求在正确时机交接出底层连接，并构造 `WebSocketEngineConnection`。
+- 框架运行时运行在适配器提供的 `executor` 上，**不强制切换到 `Dispatchers.Default`**，因此公共逻辑放在框架层不会增加线程跳转。
+
 ### 7.1 角色
 
 ```
 一条 WebSocket 连接 =
-  连接协程（reactor 上，所有者）
-    ├─ 底层 WebSocket（fromUpgraded 在 reactor 上创建，写驱动随之运行在 reactor 上）
-    ├─ 协议读取者（唯一调用底层 receive 的地方）──→ 入站缓冲（有界）──→ incoming
-    ├─ 出站队列（有界，线程安全，单一 FIFO）──→ 写串行器 ──→ 底层写接口
-    ├─ 心跳计时（reactor 上）
+  框架运行时的连接协程（在引擎提供的 executor 上，所有者）
+    ├─ WebSocketEngineConnection（适配器构造；netonstream 中包装 WebSocket.fromUpgraded 的结果）
+    ├─ 读循环（唯一调用 receive 的地方）──→ 入站缓冲（有界）──→ incoming
+    ├─ 出站队列（有界，线程安全，单一 FIFO）──→ 写串行器 ──→ writeData / writePing / writeClose
+    ├─ 心跳与超时计时（executor 的定时器）
     └─ 业务处理协程（handler）
 ```
 
-连接协程是**唯一所有者**，负责：协议读取、写入串行化、心跳、关闭握手、超时强制释放、三类配额的归还（§7.6）。业务处理协程只通过 `incoming` 与出站队列和连接交互，**从不直接调用底层 `WebSocket`**。
+框架运行时的连接协程是**唯一所有者**，负责：读循环、写入串行化、心跳、关闭握手、超时强制释放、三类配额的归还（§7.6）。业务处理协程只通过 `incoming` 与出站队列和连接交互，**从不直接调用引擎连接**。适配器只实现 `WebSocketEngineConnection` 的各个原语，不持有任何策略状态。
 
 ### 7.2 升级时序
+
+下图以 netonstream 适配器为例。**其他适配器必须满足相同的约束**：先返回 101 再交接连接、不丢预读字节、升级响应不走普通响应流程、失败时回滚配额。
 
 ```
 reactor 线程（连接协程）                         HTTP 交换
@@ -435,7 +507,7 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 
 - **不得**在 service 返回 101 之前等待 `upgradeOn()`。h1 要等 101 写出之后才 `fulfill`，提前等待会让双方互相等待。
 - 分发结果必须显式区分"普通响应"和"接受升级"。升级响应**不走**普通响应的包装、压缩（`Compression.kt`）和请求超时流程。
-- 必须使用 `fromUpgraded`，不得使用 `fromRawStream(stream, …)`。后者会丢掉与握手同一个包到达的首帧。
+- netonstream 中必须使用 `fromUpgraded`，不得使用 `fromRawStream(stream, …)`。后者会丢掉与握手同一个包到达的首帧。一般地，**任何适配器都不得丢弃与握手同包到达的数据**（§9.2 一致性套件检查此项）。
 - 升级失败（`upgradeOn` 抛 `UserNoUpgrade` 或其他错误）时，由连接协程关闭底层流并归还配额。业务处理协程尚未启动，不涉及业务清理。
 
 ### 7.3 入站：单一协议读取者
@@ -457,8 +529,8 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 
 ### 7.4 出站：单一 FIFO 与数据所有权
 
-- **单一出站队列，单一顺序**。所有发送（任意线程的业务发送、Hub 等后续扩展）都按**被接受的先后**进入同一个 FIFO，写串行器按此顺序写出。**不设**"本 reactor 直接写、绕过队列"的旁路：旁路会让后发的消息越过队列中先被接受的消息。
-  （性能优化只允许在**不改变顺序**的前提下进行，例如在 reactor 线程上且队列为空时就地写出；是否值得做，由 §11 第 3 步的数据决定。）
+- **单一出站队列，单一顺序**。所有发送（任意线程的业务发送、Hub 等后续扩展）都按**被接受的先后**进入同一个 FIFO，写串行器按此顺序写出。**不设**"在连接的执行上下文上直接写、绕过队列"的旁路：旁路会让后发的消息越过队列中先被接受的消息。
+  （性能优化只允许在**不改变顺序**的前提下进行，例如在连接的执行上下文上且队列为空时就地写出；是否值得做，由 §11 第 3 步的数据决定。）
 - **控制帧插队的边界**：心跳 Ping、Pong 回复、关闭帧不进数据 FIFO，由写串行器在两条数据消息之间插入，不会排在已积压的数据消息后面。但控制帧**不能**打断一次正在进行的网络写操作。对端不读时，控制帧同样写不出去。"插队"只解决排队，不解决慢客户端。
 - **写超时**：每一次底层写出（flush）都有期限 `writeTimeoutMillis`（§10.1）。超时归类为"写阻塞"：对端已不读取，关闭帧也写不出去，因此**不发关闭帧**，直接强制关闭底层流（§7.7 第 4 至 7 步），`closed` 记为 1006，原因注明 write stalled，**不记为心跳失败**。
 - **任何路径都不得绕过写串行器**直接调用底层写接口。
@@ -478,8 +550,8 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 
 | 方案 | 做法 | 优点 | 代价 |
 |---|---|---|---|
-| A：reactor 上运行 | handler 在连接所在 reactor 的调度器上启动，挂起后回到同一 reactor | 入站缓冲与出站队列的交接都在同一线程上，无线程跳转 | 业务若在 handler 中阻塞，会拖慢同一 reactor 上的其他连接；重活须 `withContext(Dispatchers.Default)` |
-| B：Default 上运行 | handler 在 `Dispatchers.Default` 上运行 | 业务不可能阻塞 reactor | 入站、出站每条消息各一次线程跳转 |
+| A：在引擎 executor 上运行 | handler 在连接的 `executor`（netonstream 中即所属 reactor）上启动，挂起后回到同一上下文 | 入站缓冲与出站队列的交接都在同一线程上，无线程跳转 | 业务若在 handler 中阻塞，会拖慢同一 executor 上的其他连接；重活须 `withContext(Dispatchers.Default)` |
+| B：Default 上运行 | handler 在 `Dispatchers.Default` 上运行 | 业务不可能阻塞引擎线程 | 入站、出站每条消息各一次线程跳转 |
 
 两种方案都遵守 §7.3、§7.4 的**同一个所有权模型**：唯一协议读取者、单一出站 FIFO。区别只在 handler 运行的线程，API 完全相同（§4.3）。本节由 §11 第 3 步的基准测试数据决定；在得出结论之前不冻结。
 
@@ -500,7 +572,7 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 1. 若连接尚未进入关闭状态，按 §8.1 发起关闭（发送关闭帧）；
 2. 在 `closeTimeoutMillis` 内继续由协议读取者完成关闭握手（§8.2）；
 3. 取消业务处理协程，并等待其结束，最长到第 2 步的同一截止时间；
-4. 关闭底层 `WebSocket`。写驱动使用独立 Job（`WebSocket.kt:435`），**必须显式关闭**，不能指望取消传递；
+4. 调用引擎连接的 `abort()`，结束其全部内部活动。netonstream 适配器须注意：底层写驱动使用独立 Job（`WebSocket.kt:435`），**`abort()` 必须显式关闭它**，不能指望取消传递；
 5. 关闭底层流（强制，不再等待）；
 6. 完成 `session.closed`；
 7. 释放 WebSocket 配额与 TCP 连接配额。
@@ -563,6 +635,8 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 
 ## 九、引擎能力
 
+### 9.1 能力声明
+
 ```kotlin
 enum class HttpCapability {
     HTTP_2, STREAMING_RESPONSE, MULTIPART, ASYNC_HANDOFF, TRAILERS,
@@ -578,6 +652,19 @@ enum class HttpCapability {
 | `neton-http-ktor` | 否 |
 
 注册了 WebSocket 路由，而当前引擎不声明 `WEBSOCKET` 时，由现有的 `validateHttpCapabilities` 在 `adapter.start()` **之前**抛出 `HttpCapabilityException`，并列出所有相关路由。**不降级、不返回 501。**
+
+声明的前提见 §7.0：完整实现引擎 SPI（含分配前可拒绝的预留），并通过 §9.2 的一致性套件。"底层库支持 WebSocket"不等于"适配器已接入"，与 `HttpAdapter.capabilities` 现有的"实现之前不许声明"规则一致。
+
+### 9.2 一致性套件
+
+仿照现有的 `HttpEngineConformanceSuite`，在 `neton-http/conformance/` 中提供两套测试：
+
+| 套件 | 测试对象 | 内容 |
+|---|---|---|
+| `WebSocketRuntimeSuite` | 框架运行时，配合一个**可控时序的假引擎**（实现 SPI，测试代码可以精确控制事件到达与写出完成的先后） | 心跳登记与 Pong 竞态、预算拒绝与 1013、消费停滞与写阻塞的分类、关闭期限、停机、配额。这些是公共策略，只在这里测一遍 |
+| `WebSocketEngineConformanceSuite` | 每个声明 `WEBSOCKET` 的适配器的真实实现 | SPI 契约：分配前预留与拒绝、写出完成后才返回、`abort` 能结束挂起的读写、丢弃模式不物化、执行上下文约束、自动回复 Ping、握手与首帧同包不丢帧 |
+
+任何适配器声明 `WEBSOCKET`，都必须在其自身测试中运行 `WebSocketEngineConformanceSuite` 并全部通过。
 
 ---
 
@@ -639,10 +726,10 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
   2. 写出 Ping(n)。这期间读取者收到载荷为 n 的 Pong，**立即匹配**，把探测标记为已应答；
   3. 写出完成后，只有在探测**尚未应答**时才启动 `pongTimeoutMillis` 期限；已应答则本次探测直接结束；
   4. 写出失败或写超时：清除本次探测状态，由写超时规则处理（§7.4），不记为心跳失败。
-- 登记、匹配、启动期限都在连接所在的 reactor 线程上进行，不需要锁。
+- 登记、匹配、启动期限都在连接的 `executor` 上进行，不需要锁。
 - 读取暂停期间（§7.3）冻结 Pong 等待与入站空闲计时。
 - **错峰**：每条连接的第一次 Ping 在 `[0, pingIntervalMillis)` 内随机偏移，此后按固定间隔。避免大量连接同时建立后在同一时刻发 Ping。
-- 所有计时都用 reactor 上的定时器（§2.5），不为每条连接创建线程。
+- 所有计时都用连接 `executor` 提供的定时器（SPI 要求它实现 `Delay`，§7.0；netonstream 中即 reactor 的定时器，§2.5），不为每条连接创建线程。
 
 启动期校验只针对**同时开启**的组合：
 
@@ -718,7 +805,7 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 **其他约束：**
 
 - **准入**：WebSocket 配额（§7.6）、TCP 配额、全局队列预算三者都满足，才允许升级。
-- 心跳与超时定时器全部在 reactor 上（§10.2），**定时器数量与连接数线性相关，线程数与连接数无关**。
+- 心跳与超时定时器全部在连接的 `executor` 上（§10.2），**定时器数量与连接数线性相关，线程数与连接数无关**。
 
 ### 10.4 空闲连接成本
 
@@ -741,7 +828,8 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 |---|---|---|
 | 0 | **本地依赖与版本对齐**：按 §3 接入 composite build；适配器坐标改为 `io 0.3.2 / http 0.2.0 / tls 0.2.0`；包名冲突检查改读本地源码 | neton 全量测试通过；**普通 HTTP 性能不回退**（按 §11.1 测量，这一步升级了底层依赖，必须实测） |
 | 1 | **路由与 API**：`WebSocketSession` 等接口、`RouteDefinition.webSocket`、DSL `webSocket`、`@WebSocket` 与 KSP 校验、`WEBSOCKET` 能力登记、426 兜底 | 能力校验在 hyper4k 下启动失败并列出路由；KSP 非法签名编译失败 |
-| 2 | **适配器升级接入**：仅在存在 WebSocket 路由时使用 `serveConnectionWithUpgrades`；分发结果区分"普通响应 / 接受升级"；§7.2 时序；§7.3 单一读取者；§7.4 出站 FIFO；§7.6 配额；§7.7 清理 | echo 可用；握手与首帧同包不丢帧；无 WebSocket 路由的应用走原路径；§11.1 的普通 HTTP 指标不回退 |
+| 1b | **引擎 SPI 与框架运行时**：`WebSocketEngineConnection` 等接口（§7.0）；`neton-http` 中的运行时（读循环、出站 FIFO、心跳、预算、关闭、停机）；可控时序假引擎与 `WebSocketRuntimeSuite` | `WebSocketRuntimeSuite` 全部通过，**不依赖任何真实引擎** |
+| 2 | **netonstream 实现 SPI**：仅在存在 WebSocket 路由时使用 `serveConnectionWithUpgrades`；分发结果区分"普通响应 / 接受升级"；§7.2 时序；把 `WebSocket.fromUpgraded` 包装为 `WebSocketEngineConnection`；websocket 库增加 `ByteBudget` 预留（§10.3.1） | `WebSocketEngineConformanceSuite` 全部通过；echo 可用；无 WebSocket 路由的应用走原路径；§11.1 的普通 HTTP 指标不回退 |
 | 3 | **线程模型定案**：方案 A、B 各实现一版，做 echo 与跨线程发送的基准测试 | §7.5 结论写回本文并冻结该节 |
 | 4 | **握手安全**：Origin 策略、安全链复用、子协议协商 | §14 握手类用例全部通过 |
 | 5 | **心跳、超时、关闭、停机、全局预算**（§10.2、§10.3） | §14 关闭类与高并发类用例全部通过；§10.4 空闲连接成本有实测数字 |
@@ -770,8 +858,9 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 
 | 项 | 何时决定 |
 |---|---|
-| §7.5 业务处理协程运行在 reactor 上还是 Default 上 | 第 3 步基准测试之后 |
+| §7.5 业务处理协程运行在引擎 executor 上还是 Default 上 | 第 3 步基准测试之后 |
 | 反向代理场景是否提供"信任代理"配置，以便使用 `X-Forwarded-Host` 做同源比较 | v1 不提供；有明确需求时另议 |
+| hyper4k 实现 SPI 的可行性：需要 Rust 侧的 WebSocket 实现（如 tokio-tungstenite）加 FFI；tungstenite 不提供"分配前可拒绝预留"，要满足 §7.0 的前提，可能需要修改或替换其重组逻辑 | 有明确需求时评估；做不到预算约束就不声明 `WEBSOCKET` |
 
 ---
 
@@ -828,7 +917,7 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 - 进入关闭状态后，后续数据消息被丢弃，关闭握手在 `closeTimeoutMillis` 内完成
 
 **发送顺序与所有权**
-- 先在其他线程 `trySend(A)` 成功，再回到 reactor 线程 `send(B)`：对端先收到 A
+- 先在其他线程 `trySend(A)` 成功，再回到连接的执行上下文 `send(B)`：对端先收到 A
 - `sendBinary(arr)` 返回后立刻修改 `arr`：对端收到的是修改前的内容
 - `send` 挂起期间被取消：该消息不发出；已接受后调用方被取消：该消息仍发出
 - 单条消息超过 `outboundQueueBytes`：立即抛 `WebSocketMessageTooLargeException`，不挂起
@@ -845,7 +934,7 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 - 出站堵塞（对端不读）：报告为写阻塞（1006，write stalled），不记为心跳失败
 - 关闭全部心跳配置（三项均为 0）：慢消费者与写阻塞仍能按 `inboundStallTimeoutMillis` 与 `writeTimeoutMillis` 回收
 - 大量连接同时建立：Ping 时间分散，没有集中在同一时刻
-- 大量空闲连接 + 少量活跃连接：活跃连接的 p99、reactor 定时器延迟、CPU、RSS 都在可接受范围，并记录数字
+- 大量空闲连接 + 少量活跃连接：活跃连接的 p99、executor 定时器延迟、CPU、RSS 都在可接受范围，并记录数字
 - 全局队列预算耗尽：`send` 挂起或 `trySend` 返回 false，新握手 503，队列内存不越过预算
 - 全局预算耗尽时：Ping、Pong、Close 照常发出，处于关闭状态的连接能完成关闭握手并释放
 - 全局预算耗尽时进入关闭：该连接挂起的 `send` 立即抛 `WebSocketClosedException`
@@ -878,6 +967,11 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 **性能**
 - 无 WebSocket 路由的应用：baseline 与第 0 步之后的基线相比不回退
 - echo 吞吐与延迟纳入基准测试，与独立运行的 `websocket` 库（`websocket-bench`）比较，量化框架层的开销
+
+**多引擎**
+- `WebSocketRuntimeSuite` 在假引擎上全部通过，覆盖全部公共策略
+- netonstream 适配器通过 `WebSocketEngineConformanceSuite`
+- 同一份业务代码（DSL 与注解各一个）在声明 `WEBSOCKET` 的适配器上行为一致；在不声明的适配器上启动失败并列出路由
 
 **协议一致性**
 - 通过框架 echo 路由跑 Autobahn 服务端测试，结果与独立库一致
