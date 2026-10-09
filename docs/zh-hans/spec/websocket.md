@@ -119,7 +119,8 @@ io  或  tls → openssl → io            com.netonstream:io · tls · openssl
 
 1. 本阶段**不发布** `io`、`http`、`tls`、`openssl`、`websocket`、`neton` 的任何版本。
 2. neton 通过 Gradle **composite build** 直接使用兄弟目录的源码：
-   `../io`、`../http`、`../tls`、`../openssl-kotlin`、`../websocket`。
+   `../io`、`../http`、`../tls`、`../websocket`。
+   `openssl` 例外：默认使用 `tls` 已钉住的已发布版本 `com.netonstream:openssl:4.0.2`，**不是新发布**。原因见 §3.3。需要时用 `-Pnetonstream.local.openssl=true` 改为本地源码。
 3. **禁止** `mavenLocal()`。沿用现有约定：适配器构建脚本注释已写明 "never an implicit mavenLocal fallback"。
 4. 本地源码替换与 `netonstream.repository`（发布验证用的 staging 仓库）**互斥**，同时开启时构建报错。这与 `hyper4k.local` / `hyper4k.repository` 的互斥规则一致。
 
@@ -137,9 +138,12 @@ require(!useLocalNetonstream || !providers.gradleProperty("netonstream.repositor
     "Choose netonstream source substitution OR artifact verification, not both."
 }
 if (useLocalNetonstream) {
-    for (dir in listOf("../io", "../http", "../tls", "../openssl-kotlin", "../websocket")) {
+    for (dir in listOf("../io", "../http", "../tls", "../websocket")) {
         require(file(dir).isDirectory) { "netonstream.local=true requires $dir" }
         includeBuild(dir)
+    }
+    if (providers.gradleProperty("netonstream.local.openssl").orNull == "true") {
+        includeBuild("../openssl-kotlin")
     }
 }
 ```
@@ -148,7 +152,8 @@ if (useLocalNetonstream) {
 
 ### 3.3 已知代价与风险
 
-- `openssl` 按目标从源码编译 OpenSSL。首次本地构建较慢，增量构建不受影响。
+- **`openssl` 默认不走本地源码**（2026-10-09 实测）：openssl-kotlin 不加 `-PnativeTargets=all` 时只构建宿主目标，而 `tls` 声明了全部 10 个目标。替换后 tls 的其余 9 个目标无从解析，构建失败。若构建全部 10 个目标，需要用 NDK、iOS SDK、MinGW 工具链从源码编译 OpenSSL。openssl-kotlin 只是上游 OpenSSL 的绑定，本轮不改动它，因此默认使用已发布的 4.0.2。
+- 已用 `dependencies` 核实替换生效：`io`、`http`、`tls`（含 tls 自身对 io 的依赖）均解析为 `project :io:io` / `:http:http` / `:tls:tls`。
 - ~~`tls` 按 `io:0.1.0` 编写~~：`tls` 仓库已升到 0.2.0，依赖 `io:0.3.2`，此项风险已消除（2026-10-09 核对）。
 - 适配器的 `checkNetonHttpPackageClash` 原本读取 `http` 已发布的 sources jar；源码替换下没有该 jar，改为在 `netonstream.local=true` 时读取 `../http/http/src/*Main`，规则不变。
 - 坐标中的版本号在源码替换下不起作用，但仍须改写为与本地源码一致的版本，避免误读：`io:0.3.2`、`http:0.2.0`、`tls:0.2.0`、`websocket:0.2.0`。
