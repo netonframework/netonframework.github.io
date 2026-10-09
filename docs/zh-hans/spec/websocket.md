@@ -3,7 +3,7 @@
 > **定位**：在 Neton 框架内提供 WebSocket 服务端能力：路由注册、握手安全、会话收发、关闭与停机。
 > 协议本身不在框架内实现，由 `com.netonstream:websocket` 提供；本文只规定**框架如何接入它**。
 >
-> **状态**：**Draft v1 r9**。本文是目标实施规格，不表示下文全部能力已经交付。
+> **状态**：**Draft v1 r10，运行时已实现，发布验收未完成**。本文是目标实施规格，不表示下文全部能力已经验收。
 > r2 按评审修订了运行时契约：单一协议读取者（§7.3）、发送顺序与数据所有权（§7.4）、
 > 三类配额（§7.6）、升级中连接的停机（§8.3）、心跳三项配置（§10.2）、性能验收（§11.1）。
 > r3 补充：各层职责划分（§2.5）、消费停滞与写阻塞不冒充心跳失败（§7.3、§7.4）、
@@ -19,8 +19,8 @@
 > r8 调整：默认 HTTP 适配器合入 `neton-http`，命名为 `DefaultHttpAdapter`，不再单独维护 `neton-http-netonstream` 模块。
 > `http { }` 固定选择默认适配器；Hyper4k 必须通过 `http(::Hyper4kHttpAdapter)` 显式选择，不能靠依赖或导入顺序改变默认值。
 > r9 调整：默认 WebSocket provider 内置于 `neton-websocket`，不建立独立默认桥接模块。
-> 当前落地范围：模块依赖、provider 安装/替换、兼容性检查、协议握手与底层收发桥接。
-> 路由升级、业务 Session、KSP、心跳与共享预算仍未交付；现有实验性 SPI 不声明 PREALLOCATION_BUDGET，要求它时启动校验失败。
+> r10 已实现：路由升级、业务 Session、KSP 参数预绑定、心跳、共享预算、停机交接与默认 provider 的 PREALLOCATION_BUDGET。
+> 实现差异以如下清单为准；其他章节仍是目标契约，不得把待验证项当成已完成。
 >
 > **前置**：
 > [HTTP 规范](./http.md)、[HTTP 引擎能力规范](./http-engine-capabilities.md)、
@@ -30,6 +30,18 @@
 > **开发方式**：本阶段所有开发依赖**本地源码目录**，不发布任何版本（§3）。
 
 ---
+
+### r10 实施与验证记录
+
+- `neton-http` 内置 `DefaultHttpAdapter`，`neton-websocket` 内置默认 provider，不再增加默认引擎桥接模块；HTTP 不依赖 WebSocket。
+- 业务 handler 采用 Default 调度器；协议读取、写入、计时与关闭仍在连接执行器上。此选择尚无独立高并发性能优劣结论。
+- 入站在分配前非阻塞预留；采用保守 charge：每分片 `8 * max(payloadBytes, 128)`，出站 `8 * payloadBytes`。它不是精确 RSS 统计，固定编解码/TLS 缓冲、业务保留消息与对象开销另计。极碎片消息可能提前触发 1013。
+- 入站默认单方向 8 MiB、出站默认单方向 8 MiB，二者共同计入全局 512 MiB。发送等待者另有数量和保留字节上限；关闭不等待应用数据预算。
+- 配置快照隔离启动后的外部修改；时间参数最大为 Int.MAX_VALUE 毫秒。压缩明确不支持，不会静默接受 compression=true。
+- macOS 已运行协议与框架回归，包括真实 TCP 升级/echo、开启证书验证的 WSS 升级/echo、预读首帧、HTTP 配额释放、Origin、提前 Pong、超时与预算退出。注解示例的真实 KSP 输出已编译；Linux x64/arm64 编译通过。
+- 本轮测试：WebSocket 框架 23、HTTP 196、Hyper4k 37、KSP 43、协议 WebSocket 250，均无失败。引擎清理抛异常时也验证了队列预算释放和 closed 完成。
+- 待验收：Linux 实际运行、Windows、多核混合负载与普通 HTTP A/B 性能闸门；第三方适配器一致性测试仍需各自接入。没有发布、推送或修改 Arena PR。
+
 
 ## 一、范围
 
