@@ -93,7 +93,7 @@ io  或  tls → openssl → io            com.netonstream:io · tls · openssl
 | handler 作用域固定为 `Dispatchers.Default`，挂起后离开 reactor | `NetonStreamHttpAdapter.kt:278` |
 | 请求被压平为 `BufferedHttpRequest`，`extensions`（含 `OnUpgrade`）丢失 | `NetonStreamHttpAdapter.kt:607` |
 | CORS 对不允许的 Origin 只是不加响应头，不拒绝请求 | `BufferedHttpDispatcher.kt:621` |
-| 依赖钉在 `io:0.3.0 / http:0.1.2 / tls:0.1.0`；websocket 0.2.0 需要 `io:0.3.2 / http:0.2.0`；`tls` 仓库自身仍依赖 `io:0.1.0` | `neton-http-netonstream/build.gradle.kts:24-26`、`tls/tls/build.gradle.kts` |
+| 依赖钉在 `io:0.3.0 / http:0.1.2 / tls:0.1.0`；websocket 0.2.0 需要 `io:0.3.2 / http:0.2.0`（`tls` 仓库现为 0.2.0，已基于 `io:0.3.2`） | `neton-http-netonstream/build.gradle.kts:24-26` |
 
 ### 2.5 职责划分：哪些靠配置，哪些要框架实现
 
@@ -149,8 +149,9 @@ if (useLocalNetonstream) {
 ### 3.3 已知代价与风险
 
 - `openssl` 按目标从源码编译 OpenSSL。首次本地构建较慢，增量构建不受影响。
-- `tls` 当前按 `io:0.1.0` 编写。替换为 `io` 源码（0.3.2）后，**能否编译通过需要验证**，这是实施第 0 步（§11）。
-- 坐标中的版本号在源码替换下不起作用，但仍须改写为与本地源码一致的版本，避免误读：`io:0.3.2`、`http:0.2.0`、`websocket:0.2.0`、`tls` 以其仓库当前版本为准。
+- ~~`tls` 按 `io:0.1.0` 编写~~：`tls` 仓库已升到 0.2.0，依赖 `io:0.3.2`，此项风险已消除（2026-10-09 核对）。
+- 适配器的 `checkNetonHttpPackageClash` 原本读取 `http` 已发布的 sources jar；源码替换下没有该 jar，改为在 `netonstream.local=true` 时读取 `../http/http/src/*Main`，规则不变。
+- 坐标中的版本号在源码替换下不起作用，但仍须改写为与本地源码一致的版本，避免误读：`io:0.3.2`、`http:0.2.0`、`tls:0.2.0`、`websocket:0.2.0`。
 
 ### 3.4 恢复发布前的闸门
 
@@ -733,7 +734,7 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 
 | 步 | 内容 | 出口条件 |
 |---|---|---|
-| 0 | **本地依赖与版本对齐**：按 §3 接入 composite build；适配器坐标改为 `io 0.3.2 / http 0.2.0`；修复 `tls` 在 `io 0.3.2` 下的编译问题 | neton 全量测试通过；**普通 HTTP 性能不回退**（按 §11.1 测量，这一步升级了底层依赖，必须实测） |
+| 0 | **本地依赖与版本对齐**：按 §3 接入 composite build；适配器坐标改为 `io 0.3.2 / http 0.2.0 / tls 0.2.0`；包名冲突检查改读本地源码 | neton 全量测试通过；**普通 HTTP 性能不回退**（按 §11.1 测量，这一步升级了底层依赖，必须实测） |
 | 1 | **路由与 API**：`WebSocketSession` 等接口、`RouteDefinition.webSocket`、DSL `webSocket`、`@WebSocket` 与 KSP 校验、`WEBSOCKET` 能力登记、426 兜底 | 能力校验在 hyper4k 下启动失败并列出路由；KSP 非法签名编译失败 |
 | 2 | **适配器升级接入**：仅在存在 WebSocket 路由时使用 `serveConnectionWithUpgrades`；分发结果区分"普通响应 / 接受升级"；§7.2 时序；§7.3 单一读取者；§7.4 出站 FIFO；§7.6 配额；§7.7 清理 | echo 可用；握手与首帧同包不丢帧；无 WebSocket 路由的应用走原路径；§11.1 的普通 HTTP 指标不回退 |
 | 3 | **线程模型定案**：方案 A、B 各实现一版，做 echo 与跨线程发送的基准测试 | §7.5 结论写回本文并冻结该节 |
