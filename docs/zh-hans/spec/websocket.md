@@ -3,7 +3,9 @@
 > **定位**：在 Neton 框架内提供 WebSocket 服务端能力：路由注册、握手安全、会话收发、关闭与停机。
 > 协议本身不在框架内实现，由 `com.netonstream:websocket` 提供；本文只规定**框架如何接入它**。
 >
-> **状态**：**Draft v1**。本文是实施规格，实施前的 API 讨论结论已并入。
+> **状态**：**Draft v1 r2**。本文是实施规格，实施前的 API 讨论结论已并入。
+> r2 按评审修订了运行时契约：单一协议读取者（§7.3）、发送顺序与数据所有权（§7.4）、
+> 三类配额（§7.6）、升级中连接的停机（§8.3）、心跳三项配置（§10.2）、性能验收（§11.1）。
 >
 > **前置**：
 > [HTTP 规范](./http.md)、[HTTP 引擎能力规范](./http-engine-capabilities.md)、
@@ -69,12 +71,12 @@ io  或  tls → openssl → io            com.netonstream:io · tls · openssl
 | 契约 | 来源 | 对框架的约束 |
 |---|---|---|
 | 连接只能在创建它的 reactor 线程上使用，内部无锁 | `WebSocket.kt:60` | 协议读写固定在所属 reactor（§7） |
-| 同一时刻最多一个 `receive`、一个写操作，并发第二个抛 `IllegalStateException` | `WebSocket.kt:38` | `incoming` 单消费者；写统一串行（§7.3） |
-| 写驱动协程使用**独立 Job**，不随创建方取消 | `WebSocket.kt:435` | 框架必须显式关闭连接，不能只靠取消（§7.5） |
+| 同一时刻最多一个 `receive`、一个写操作，并发第二个抛 `IllegalStateException` | `WebSocket.kt:38` | 单一协议读取者（§7.3）；单一出站 FIFO 与写串行器（§7.4） |
+| 写驱动协程使用**独立 Job**，不随创建方取消 | `WebSocket.kt:435` | 框架必须显式关闭连接，不能只靠取消（§7.7） |
 | `close()` 只发起关闭握手，须继续 `receive` 直到返回 null | `WebSocket.kt:250` | 关闭需要等待期限与强制释放（§8.2） |
 | 握手不检查 `Host` 与 `Origin` | `handshake/ServerHandshake.kt:36` | 框架自行校验 Origin（§6.3） |
 | `Upgraded` 只在 101 写出、该次 HTTP 交换结束后才可用 | `h1/Server.kt:435` | **不得在返回 101 之前等待 `upgradeOn()`**（§7.2） |
-| 默认 `maxMessageSize` 64 MiB、`maxFrameSize` 16 MiB；`sendCloseOnProtocolError = false` | `WebSocketConfig.kt:32-51` | 框架必须覆盖这些默认值（§10） |
+| 默认 `maxMessageSize` 64 MiB、`maxFrameSize` 16 MiB；`sendCloseOnProtocolError = false` | `WebSocketConfig.kt:32-51` | 框架必须覆盖这些默认值（§10.1） |
 
 ### 2.4 框架侧的缺口（已核对源码，`main` 分支）
 
@@ -170,7 +172,17 @@ routing {
 }
 ```
 
-签名：`fun webSocket(path: String, handler: suspend (WebSocketSession) -> Unit)`。显式写出 `session ->`，与现有 `get { ctx -> }` 的风格一致。
+签名：
+
+```kotlin
+fun webSocket(
+    path: String,
+    subprotocols: List<String> = emptyList(),   // 与 @WebSocket(subprotocols = …) 等价
+    handler: suspend (WebSocketSession) -> Unit,
+)
+```
+
+显式写出 `session ->`，与现有 `get { ctx -> }` 的风格一致。DSL 与注解的能力必须一一对应，任何一方新增参数时另一方同步提供。
 
 ### 4.2 注解
 
@@ -212,15 +224,24 @@ interface WebSocketSession {
     /** 协商出的子协议；未协商时为 null。 */
     val subprotocol: String?
 
-    /** 完整消息（分片已重组）。单消费者：并发迭代第二次抛 IllegalStateException。对端关闭后迭代结束。 */
+    /**
+     * 完整数据消息（分片已重组），来自协议读取者的有界入站缓冲（§7.3）。
+     * 单消费者：并发迭代第二次抛 IllegalStateException。连接进入关闭后迭代结束。
+     * 不读取不会阻止控制帧处理与关闭握手。
+     */
     val incoming: WebSocketIncoming
 
-    /** 发送一条消息。可在任意协程、任意线程调用（§7.3）。队列满时挂起。 */
+    /**
+     * 把消息交给连接的出站队列（§7.4）。返回 = **已接受**（进入队列），不代表已送达对端。
+     * 任意协程、任意线程可调用。队列满时挂起；挂起期间被取消 = 未接受，消息不会发出。
+     * 单条消息超过 outboundQueueBytes 时立即抛 WebSocketMessageTooLargeException。
+     * 连接已关闭时抛 WebSocketClosedException。
+     */
     suspend fun send(message: WebSocketMessage)
     suspend fun sendText(text: String) = send(WebSocketMessage.Text(text))
     suspend fun sendBinary(bytes: ByteArray) = send(WebSocketMessage.Binary(bytes))
 
-    /** 不挂起地入队；队列满或连接已关闭时返回 false。 */
+    /** 不挂起地尝试接受；队列满、超过单条上限或连接已关闭时返回 false。返回 true 与 send 返回的含义相同。 */
     fun trySend(message: WebSocketMessage): Boolean
 
     /** 发起关闭握手。幂等。返回时关闭握手已完成，或已超时强制释放（§8.2）。 */
@@ -241,14 +262,19 @@ interface WebSocketIterator {
 
 sealed interface WebSocketMessage {
     class Text(val text: String) : WebSocketMessage
-    class Binary(val bytes: ByteArray) : WebSocketMessage
+    /** 构造时复制入参：此后调用方可任意修改原数组，不影响已构造的消息。 */
+    class Binary(bytes: ByteArray) : WebSocketMessage {
+        /** 构造时的副本。框架与调用方都不得修改它。 */
+        val bytes: ByteArray = bytes.copyOf()
+    }
 }
 ```
 
 约束：
 
 - **不暴露** `neton.websocket.*` 的任何类型，也不暴露 Ping、Pong、Close 帧。控制帧由框架处理。
-- `incoming` 用挂起迭代器实现，而不是 `Channel`，避免每条入站消息多一次线程跳转。
+- `incoming` 是挂起迭代器，读的是协议读取者交接过来的有界缓冲（§7.3），不是第二个协议读取者。
+- 数据所有权：`Binary` 在**构造时复制**，`send` / `trySend` 之后调用方修改原数组不影响发出的内容。框架内部从此只持有副本，不再复制。
 - `close` 的 `reason` 超过 123 字节时抛 `IllegalArgumentException`（RFC 6455 §5.5 限制）。
 
 ### 4.4 不采用的写法
@@ -311,7 +337,7 @@ annotation class WebSocket(val value: String = "", val subprotocols: Array<Strin
 | 5. 安全链：认证、Guard、`@Permission` | 401 / 403（与 HTTP 路由相同） |
 | 6. 限流 | 429（与 HTTP 路由相同） |
 | 7. 参数绑定（路径参数、`@CurrentUser`、`@Header`、`@Query`） | 400（与 HTTP 路由相同） |
-| 8. 并发上限（§10 `maxConnections`） | 503 |
+| 8. 预留 WebSocket 配额并登记为 pending（§7.6、§8.3）；draining 状态下拒绝 | 503 |
 | 9. 子协议、压缩协商，生成 101（`createResponse`） | 400（握手头非法） |
 
 第 5 至 7 步复用 HTTP 路由的现有实现，不复制代码。
@@ -349,12 +375,13 @@ annotation class WebSocket(val value: String = "", val subprotocols: Array<Strin
 一条 WebSocket 连接 =
   连接协程（reactor 上，所有者）
     ├─ 底层 WebSocket（fromUpgraded 在 reactor 上创建，写驱动随之运行在 reactor 上）
-    ├─ 出站邮箱（有界，线程安全；跨线程发送的唯一入口）
+    ├─ 协议读取者（唯一调用底层 receive 的地方）──→ 入站缓冲（有界）──→ incoming
+    ├─ 出站队列（有界，线程安全，单一 FIFO）──→ 写串行器 ──→ 底层写接口
     ├─ 心跳计时（reactor 上）
     └─ 业务处理协程（handler）
 ```
 
-连接协程是**唯一所有者**，负责：读循环、写入串行化、心跳、关闭握手、超时强制释放、连接配额的归还。
+连接协程是**唯一所有者**，负责：协议读取、写入串行化、心跳、关闭握手、超时强制释放、三类配额的归还（§7.6）。业务处理协程只通过 `incoming` 与出站队列和连接交互，**从不直接调用底层 `WebSocket`**。
 
 ### 7.2 升级时序
 
@@ -375,7 +402,7 @@ serve(connection) 返回
 upgraded = upgradeOn(request.extensions)       （此时已完成，不会阻塞）
 ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
                                                （预读的首帧随 rest 一起交给 ws）
-进入连接循环（§7.3），启动业务处理协程
+进入连接循环（§7.3、§7.4），启动业务处理协程
 ```
 
 要点：
@@ -385,37 +412,64 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 - 必须使用 `fromUpgraded`，不得使用 `fromRawStream(stream, …)`。后者会丢掉与握手同一个包到达的首帧。
 - 升级失败（`upgradeOn` 抛 `UserNoUpgrade` 或其他错误）时，由连接协程关闭底层流并归还配额。业务处理协程尚未启动，不涉及业务清理。
 
-### 7.3 发送路径
+### 7.3 入站：单一协议读取者
 
-`send` 对调用方的契约是：任意线程可调用、同一发送方的消息保序、有界、队列满时挂起。实现上分两条路径：
+底层的 Ping 自动回复、关闭帧处理都发生在 `receive()` 内部，写驱动不会代为读取（`WebSocket.kt:27`）。因此：
 
-- **调用方就在连接所在的 reactor 线程**：直接写入底层 `WebSocket`，由连接协程的写串行器排序，不经过邮箱。
-- **其他线程**：写入出站邮箱，由连接协程在 reactor 上取出并写出。
+- **始终只有一个协议读取者**：连接协程里的读循环。它是唯一调用底层 `receive()` 的地方，业务代码与框架其他部分都不调用。
+- 读到的**数据消息**放入入站缓冲，`incoming` 从缓冲中取。**控制帧**（Ping、Pong、Close）由读取者当场处理，不进缓冲。
+- 入站缓冲按消息数与字节数双重限制（§10.1 `inboundQueueMessages` / `inboundQueueBytes`）。
+- **缓冲满时，读取者暂停读取**，由 TCP 把背压传给对端。暂停期间控制帧同样得不到处理，因此业务长时间不消费 `incoming` 会导致 Pong 超时，连接按 §8.1 以 1001 关闭。这是有意为之：消费停滞的连接不应无限占用内存。
+- **连接进入关闭状态后**（任一方发起关闭、停机、超时），读取者**丢弃**后续数据消息并持续读取，直到关闭握手完成或 `closeTimeoutMillis` 到期。关闭握手不依赖业务是否读取。
+- handler 只发不收、正在等待其他 I/O、或自己调用了 `session.close()`，都不影响控制帧处理和关闭握手。
 
-心跳 Ping、业务发送、关闭帧都经同一个写串行器，**不允许**任何路径绕过它直接调用底层写接口。
+### 7.4 出站：单一 FIFO 与数据所有权
 
-邮箱按**消息数**和**字节数**双重限制（§10）。队列满时 `send` 挂起，`trySend` 返回 false。连接关闭后，`send` 抛 `WebSocketClosedException`，`trySend` 返回 false。
+- **单一出站队列，单一顺序**。所有发送（任意线程的业务发送、Hub 等后续扩展）都按**被接受的先后**进入同一个 FIFO，写串行器按此顺序写出。**不设**"本 reactor 直接写、绕过队列"的旁路：旁路会让后发的消息越过队列中先被接受的消息。
+  （性能优化只允许在**不改变顺序**的前提下进行，例如在 reactor 线程上且队列为空时就地写出；是否值得做，由 §11 第 3 步的数据决定。）
+- **控制帧插队**：心跳 Ping、Pong 回复、关闭帧不进数据 FIFO，由写串行器在两条数据消息之间插入，不会被数据队列阻塞，也不会拆开一条数据消息。
+- **任何路径都不得绕过写串行器**直接调用底层写接口。
+- **预算**：出站队列按消息数与字节数双重限制（§10.1）。字节预算覆盖"已接受未写出"与"正在写出"两部分。挂起中的 `send` 所持有的消息**不计入**预算，它仍归调用方所有；应用要自行约束并发挂起的发送数量。
+- **单条超限**：一条消息本身超过 `outboundQueueBytes` 时，立即抛 `WebSocketMessageTooLargeException`，而不是永久挂起。
+- **接受的时点**：消息进入 FIFO 的那一刻。之前被取消 = 未发送；之后被取消（调用方协程被取消）不影响它被写出，除非连接先关闭。
+- **连接关闭后**，队列中尚未写出的消息丢弃，`send` 抛 `WebSocketClosedException`，`trySend` 返回 false。
 
-### 7.4 业务处理协程跑在哪里（待定，见 §12）
+### 7.5 业务处理协程跑在哪里（待定，见 §12）
 
 | 方案 | 做法 | 优点 | 代价 |
 |---|---|---|---|
-| A：reactor 上运行 | handler 在连接所在 reactor 的调度器上启动，挂起后回到同一 reactor | `receive`/`send` 无线程跳转 | 业务若在 handler 中阻塞，会拖慢同一 reactor 上的其他连接；重活须 `withContext(Dispatchers.Default)` |
-| B：Default 上运行 | handler 在 `Dispatchers.Default` 上运行，入站经桥接、出站经邮箱 | 业务不可能阻塞 reactor | 每条消息至少两次线程跳转 |
+| A：reactor 上运行 | handler 在连接所在 reactor 的调度器上启动，挂起后回到同一 reactor | 入站缓冲与出站队列的交接都在同一线程上，无线程跳转 | 业务若在 handler 中阻塞，会拖慢同一 reactor 上的其他连接；重活须 `withContext(Dispatchers.Default)` |
+| B：Default 上运行 | handler 在 `Dispatchers.Default` 上运行 | 业务不可能阻塞 reactor | 入站、出站每条消息各一次线程跳转 |
 
-**两种方案的 API 完全相同**（§4.3），区别只在实现。用 §11 第 3 步的基准测试数据决定；在得出结论之前不冻结本节。
+两种方案都遵守 §7.3、§7.4 的**同一个所有权模型**：唯一协议读取者、单一出站 FIFO。区别只在 handler 运行的线程，API 完全相同（§4.3）。本节由 §11 第 3 步的基准测试数据决定；在得出结论之前不冻结。
 
-### 7.5 结束与清理
+### 7.6 三类配额
 
-连接结束的唯一出口在连接协程的 `finally` 中，按以下顺序执行：
+适配器里有两种性质不同的计数（已核对 `NetonStreamHttpAdapter.kt`）：`maxOpenConnections` 限制 **TCP 连接数**；`HttpServerConfig.maxConnections` 实际限制的是**在途 HTTP 请求数**（`admit()`，第 442 行）。WebSocket 再加一类自己的配额。三者的规则冻结如下：
 
-1. 取消业务处理协程（如仍在运行）；
-2. 关闭底层 `WebSocket`。写驱动使用独立 Job，**必须显式关闭**，不能指望取消传递；
-3. 关闭底层流；
-4. 完成 `session.closed`；
-5. 归还 `maxConnections` 配额。
+| 配额 | 获取 | 释放 |
+|---|---|---|
+| TCP 连接（`maxOpenConnections`） | 接受 TCP 连接时（现有逻辑） | 底层流关闭时。**升级后继续持有**，直到 WebSocket 连接结束 |
+| 在途 HTTP 请求（`maxConnections`） | 握手请求进入分发时（现有逻辑） | **升级交接完成时释放**。长连接不得长期占用请求名额，否则会挤掉普通 HTTP 请求 |
+| WebSocket 连接（`websocket.maxConnections`） | **发送 101 之前预留**（§6.1 第 8 步） | 预留后握手失败或升级失败时**回滚**；否则在连接最终结束时释放 |
 
-升级后的连接**不属于** HTTP 的 `connectionHandlers` 作用域，后者在 `serve()` 返回时取消，不能波及 WebSocket。升级后的连接挂在适配器级别的 WebSocket 作用域下，由停机流程统一管理（§8.3）。
+### 7.7 结束与清理
+
+连接结束的唯一出口在连接协程的 `finally` 中。每一步都有时限，**任一步抛异常不影响后续步骤执行**：
+
+1. 若连接尚未进入关闭状态，按 §8.1 发起关闭（发送关闭帧）；
+2. 在 `closeTimeoutMillis` 内继续由协议读取者完成关闭握手（§8.2）；
+3. 取消业务处理协程，并等待其结束，最长到第 2 步的同一截止时间；
+4. 关闭底层 `WebSocket`。写驱动使用独立 Job（`WebSocket.kt:435`），**必须显式关闭**，不能指望取消传递；
+5. 关闭底层流（强制，不再等待）；
+6. 完成 `session.closed`；
+7. 释放 WebSocket 配额与 TCP 连接配额。
+
+**`closed` 的完成时点**：底层流已关闭之后。`closed` 完成时，连接不再收发任何字节。
+
+**不配合取消的业务代码**：框架**不承诺**任意业务代码都能在时限内执行完 `finally`。第 3 步超时后，框架照常执行 4 至 7 步释放连接资源，并对该路由记录一条 WARN（包含路由与超时时长）。此后该 handler 对 `session` 的调用一律抛 `WebSocketClosedException`。
+
+升级后的连接**不属于** HTTP 的 `connectionHandlers` 作用域，后者在 `serve()` 返回时取消，不能波及 WebSocket。升级后的连接由适配器级的 WebSocket 注册表管理（§8.3）。
 
 ---
 
@@ -430,7 +484,7 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 | 空闲超时、心跳超时 | 1001 Going Away | |
 | 入站消息超过 `maxMessageBytes` | 1009 Message Too Big | |
 | 入站文本不是合法 UTF-8 | 1007 Invalid Payload | |
-| 协议错误（帧格式、未掩码等） | 1002 Protocol Error | 需要 `sendCloseOnProtocolError = true`（§10） |
+| 协议错误（帧格式、未掩码等） | 1002 Protocol Error | 需要 `sendCloseOnProtocolError = true`（§10.1） |
 | 应用主动拒绝（令牌过期、无权订阅） | 1008 Policy Violation | 应用调用 `close(POLICY_VIOLATION)` |
 | handler 抛出异常 | 1011 Internal Error | 记录 ERROR 日志，带路由与异常 |
 | handler 因停机被取消 | 1001 Going Away | 取消**不**映射为 1011 |
@@ -444,12 +498,20 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 
 ### 8.3 停机
 
-适配器停机时，对所有 WebSocket 连接执行：
+**注册表**：适配器维护一个 WebSocket 注册表，同时管理两种状态的连接：
 
-1. 停止接受新的升级（新握手返回 503）；
-2. 对每条连接发送 1001，并取消其业务处理协程；
-3. 等待关闭握手，最长 `min(closeTimeoutMillis, 停机宽限期剩余时间)`；
-4. 强制释放剩余连接。
+- **pending**：已在 §6.1 第 8 步预留配额、101 尚未完成交接的连接；
+- **active**：已完成交接、连接协程正在运行的连接。
+
+连接在预留配额时**同时**登记为 pending，交接完成后转为 active，结束时注销。登记、状态转换、注销与停机状态的读取在同一把锁（或同一原子状态）下完成，不存在"已接受但未登记"的窗口。
+
+**停机状态是持续生效的标志，不是一次性快照**。适配器停机时：
+
+1. 置 draining 标志。此后所有新握手在第 8 步前返回 503，不再预留配额。该标志不会复位；
+2. 对 active 连接：按 §8.1 以 1001 发起关闭，并取消业务处理协程；
+3. 对 pending 连接：不打断 101 的写出；交接一完成就检查 draining 标志，立即以 1001 关闭，不启动业务处理协程；
+4. 等待注册表清空，最长到停机宽限期；
+5. 宽限期到期后，对剩余连接强制执行 §7.7 的第 4 至 7 步。
 
 停机流程纳入 [Lifecycle Contract](./lifecycle.md) 的资源所有权链：WebSocket 作用域在 HTTP 监听停止**之后**关闭，以保证已建立的连接能收到 1001。
 
@@ -477,24 +539,43 @@ enum class HttpCapability {
 
 ## 十、配置
 
+### 10.1 配置项
+
 ```toml
 [websocket]
-maxConnections      = 10000      # WebSocket 连接上限；占用 HTTP maxConnections 配额的同时另受此限
-maxMessageBytes     = 1048576    # 1 MiB，入站完整消息上限 → 底层 maxMessageSize
-maxFrameBytes       = 1048576    # 1 MiB，入站单帧上限 → 底层 maxFrameSize
-outboundQueueMessages = 256      # 每连接出站邮箱消息数上限
-outboundQueueBytes  = 4194304    # 4 MiB，每连接出站邮箱字节数上限
-pingIntervalMillis  = 30000      # 0 = 关闭心跳
-idleTimeoutMillis   = 60000      # 期间无任何入站帧（含 Pong）即关闭；0 = 不限
-closeTimeoutMillis  = 5000
-compression         = false      # permessage-deflate，默认关闭
-allowedOrigins      = []         # 见 §6.3；空 = 仅同源
+maxConnections        = 10000      # WebSocket 连接上限（§7.6）；与 HTTP 在途请求配额独立
+maxMessageBytes       = 1048576    # 1 MiB，入站完整消息上限 → 底层 maxMessageSize
+maxFrameBytes         = 1048576    # 1 MiB，入站单帧上限 → 底层 maxFrameSize
+inboundQueueMessages  = 64         # 每连接入站缓冲消息数上限（§7.3）
+inboundQueueBytes     = 1048576    # 1 MiB，每连接入站缓冲字节数上限
+outboundQueueMessages = 256        # 每连接出站队列消息数上限（§7.4）
+outboundQueueBytes    = 4194304    # 4 MiB，每连接出站队列字节数上限；也是单条出站消息上限
+pingIntervalMillis    = 30000      # 0 = 不主动发 Ping
+pongTimeoutMillis     = 10000      # 0 = 不等待 Pong
+idleTimeoutMillis     = 0          # 0 = 关闭入站空闲超时
+closeTimeoutMillis    = 5000
+compression           = false      # permessage-deflate，默认关闭
+allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 ```
 
 - 框架**始终**设置 `sendCloseOnProtocolError = true`，不对外暴露此项。
 - 开启 `compression` 时，`maxMessageBytes` 限制的是**解压后**的大小，防止压缩炸弹。
-- `idleTimeoutMillis` 必须大于 `pingIntervalMillis`，否则启动失败。
+- `inboundQueueBytes` 必须不小于 `maxMessageBytes`，否则一条合法的最大消息永远放不进缓冲；不满足时启动失败。
 - 注解与 DSL 的路由级覆盖不在 v1 范围内，v1 只有全局配置。
+
+### 10.2 心跳与超时：三项相互独立
+
+| 机制 | 配置 | 行为 | 关闭方式 |
+|---|---|---|---|
+| 定时 Ping | `pingIntervalMillis` | 每隔该时长发一个 Ping。同一时刻最多一个未回应的 Ping | — |
+| Pong 等待 | `pongTimeoutMillis` | 发出 Ping 后，在该时长内必须收到**载荷相同**的 Pong。载荷为 8 字节递增序号；载荷不匹配的 Pong 视为普通入站活动，不清除等待 | 超时以 1001 关闭 |
+| 入站空闲 | `idleTimeoutMillis` | 在该时长内没有收到任何入站帧（数据或控制帧） | 超时以 1001 关闭 |
+
+启动期校验只针对**同时开启**的组合：
+
+- `pongTimeoutMillis > 0` 要求 `pingIntervalMillis > 0`，否则无从等待，启动失败；
+- 两者都开启时，要求 `pongTimeoutMillis <= pingIntervalMillis`，否则启动失败；
+- `idleTimeoutMillis` 与另外两项**不做**大小约束。任一项为 0 就是关闭该项，关闭不会导致启动失败。
 
 ---
 
@@ -504,15 +585,30 @@ allowedOrigins      = []         # 见 §6.3；空 = 仅同源
 
 | 步 | 内容 | 出口条件 |
 |---|---|---|
-| 0 | **本地依赖与版本对齐**：按 §3 接入 composite build；适配器坐标改为 `io 0.3.2 / http 0.2.0`；修复 `tls` 在 `io 0.3.2` 下的编译问题 | neton 全量测试通过；**普通 HTTP baseline 不回退**（arena 同法 A/B，按效率 rps/CPU% 比较） |
+| 0 | **本地依赖与版本对齐**：按 §3 接入 composite build；适配器坐标改为 `io 0.3.2 / http 0.2.0`；修复 `tls` 在 `io 0.3.2` 下的编译问题 | neton 全量测试通过；**普通 HTTP 性能不回退**（按 §11.1 测量，这一步升级了底层依赖，必须实测） |
 | 1 | **路由与 API**：`WebSocketSession` 等接口、`RouteDefinition.webSocket`、DSL `webSocket`、`@WebSocket` 与 KSP 校验、`WEBSOCKET` 能力登记、426 兜底 | 能力校验在 hyper4k 下启动失败并列出路由；KSP 非法签名编译失败 |
-| 2 | **适配器升级接入**：仅在存在 WebSocket 路由时使用 `serveConnectionWithUpgrades`；分发结果区分"普通响应 / 接受升级"；§7.2 时序；§7.5 清理 | echo 可用；握手与首帧同包不丢帧；无 WebSocket 路由的应用走原路径（代码路径不变） |
-| 3 | **线程模型定案**：方案 A、B 各实现一版，做 echo 与跨线程发送的基准测试 | §7.4 结论写回本文并冻结该节 |
+| 2 | **适配器升级接入**：仅在存在 WebSocket 路由时使用 `serveConnectionWithUpgrades`；分发结果区分"普通响应 / 接受升级"；§7.2 时序；§7.3 单一读取者；§7.4 出站 FIFO；§7.6 配额；§7.7 清理 | echo 可用；握手与首帧同包不丢帧；无 WebSocket 路由的应用走原路径；§11.1 的普通 HTTP 指标不回退 |
+| 3 | **线程模型定案**：方案 A、B 各实现一版，做 echo 与跨线程发送的基准测试 | §7.5 结论写回本文并冻结该节 |
 | 4 | **握手安全**：Origin 策略、安全链复用、子协议协商 | §14 握手类用例全部通过 |
 | 5 | **心跳、超时、关闭、停机** | §14 关闭类用例全部通过 |
 | 6 | **wss** | TLS 上的 echo 与 Autobahn 子集通过 |
 
-步骤 2 有一条性能硬约束：**没有注册 WebSocket 路由的应用，HTTP 处理路径不得有任何变化。** 按 baseline 跑分的教训，这一点靠代码结构保证，不靠事后测量。
+步骤 2 有一条结构约束：**没有注册 WebSocket 路由的应用，HTTP 处理路径不得有任何变化。** 结构约束降低回退的可能，但**不代替测量**：第 0 步本身就升级了底层依赖，§11.1 的测量在第 0 步和第 2 步都要执行。
+
+### 11.1 性能验收
+
+| 负载 | 指标 |
+|---|---|
+| 普通 HTTP（无 WebSocket 路由的应用；有 WebSocket 路由但只走 HTTP 的应用） | 吞吐、p99 延迟、错误率、RSS 峰值 |
+| WebSocket echo（不同消息大小、连接数） | 消息吞吐、p99 延迟、错误率、RSS 峰值 |
+| 混合：普通 HTTP 压测 + 一批不读取的慢 WebSocket 客户端 | HTTP 的吞吐与 p99 不应明显下降；RSS 受 §10.1 各项预算约束、有上界；无错误 |
+
+测量方法：
+
+- 改动前后的二进制在同一台机器上交替运行（A/B/B/A），每组多次重复，报告中位数与离散程度；
+- 压测端与被测端不得争抢 CPU（分核绑定或分机），并记录双方的 CPU 占用以确认被测端是瓶颈；
+- `rps/CPU%` 可以作为辅助指标，但它**不能免疫**环境干扰（CPU 分配、邻居负载都会影响它），不得单独作为结论；
+- 任何一项回退都需要给出原因或修复，不接受"在噪声范围内"之外的无解释回退。
 
 ---
 
@@ -520,8 +616,7 @@ allowedOrigins      = []         # 见 §6.3；空 = 仅同源
 
 | 项 | 何时决定 |
 |---|---|
-| §7.4 业务处理协程运行在 reactor 上还是 Default 上 | 第 3 步基准测试之后 |
-| `maxConnections` 与 HTTP 连接配额的关系：共享还是独立计数 | 第 2 步实现时，以停机与过载测试结果为准 |
+| §7.5 业务处理协程运行在 reactor 上还是 Default 上 | 第 3 步基准测试之后 |
 | 反向代理场景是否提供"信任代理"配置，以便使用 `X-Forwarded-Host` 做同源比较 | v1 不提供；有明确需求时另议 |
 
 ---
@@ -569,8 +664,25 @@ allowedOrigins      = []         # 见 §6.3；空 = 仅同源
 - handler 挂起（如 `delay` 或切到 `Dispatchers.Default`）后再发送，消息正确送达
 - 从其他线程（如另一连接的协程）发送，消息正确送达且同一发送方保序
 - 并发多发送方的消息不交错、不触发底层并发异常
-- 慢客户端：出站邮箱满时 `send` 挂起、`trySend` 返回 false，内存有界
+- 慢客户端：出站队列满时 `send` 挂起、`trySend` 返回 false，内存有界
 - 第二个并发消费 `incoming` 抛 `IllegalStateException`
+
+**单一读取者与背压**
+- handler 只发不收：对端 Ping 仍得到 Pong，对端发起的关闭仍能完成
+- handler 阻塞在其他 I/O 上时调用 `session.close()`：关闭握手照常完成
+- 入站缓冲满：读取暂停、内存有界；持续不消费时按 Pong 超时以 1001 关闭
+- 进入关闭状态后，后续数据消息被丢弃，关闭握手在 `closeTimeoutMillis` 内完成
+
+**发送顺序与所有权**
+- 先在其他线程 `trySend(A)` 成功，再回到 reactor 线程 `send(B)`：对端先收到 A
+- `sendBinary(arr)` 返回后立刻修改 `arr`：对端收到的是修改前的内容
+- `send` 挂起期间被取消：该消息不发出；已接受后调用方被取消：该消息仍发出
+- 单条消息超过 `outboundQueueBytes`：立即抛 `WebSocketMessageTooLargeException`，不挂起
+
+**配额**
+- 升级完成后，在途 HTTP 请求计数归还，普通 HTTP 请求不受长连接数量影响
+- 握手在预留 WebSocket 配额之后失败：配额回滚
+- WebSocket 结束后，TCP 连接配额与 WebSocket 配额都归还
 
 **关闭与生命周期**
 - handler 正常返回发 1000；抛异常发 1011 并记录日志
@@ -578,7 +690,11 @@ allowedOrigins      = []         # 见 §6.3；空 = 仅同源
 - 对端不回应关闭帧，`closeTimeoutMillis` 后强制释放
 - 升级途中客户端断开：配额归还，无泄漏
 - 心跳超时与空闲超时关闭连接
-- 停机：所有连接收到 1001，在宽限期内完成或被强制释放，`finally` 全部执行
+- 停机：所有 active 连接收到 1001，在宽限期内完成或被强制释放
+- 停机时有处于 pending 的连接（101 正在写出）：交接完成后立即以 1001 关闭，不启动 handler，不遗漏
+- 停机开始后的新握手一律 503，且 draining 状态不会复位
+- handler 不响应取消：宽限期到期后连接资源照常释放，记录 WARN，之后对 `session` 的调用抛 `WebSocketClosedException`
+- 心跳配置：三项各自为 0 时都能正常启动；`pongTimeoutMillis > 0` 而 `pingIntervalMillis = 0` 时启动失败；载荷不匹配的 Pong 不清除等待
 - 长时间运行后连接数归零时，配额、协程、底层流全部释放
 
 **性能**
