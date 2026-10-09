@@ -3,9 +3,11 @@
 > **定位**：在 Neton 框架内提供 WebSocket 服务端能力：路由注册、握手安全、会话收发、关闭与停机。
 > 协议本身不在框架内实现，由 `com.netonstream:websocket` 提供；本文只规定**框架如何接入它**。
 >
-> **状态**：**Draft v1 r2**。本文是实施规格，实施前的 API 讨论结论已并入。
+> **状态**：**Draft v1 r3**。本文是实施规格，实施前的 API 讨论结论已并入。
 > r2 按评审修订了运行时契约：单一协议读取者（§7.3）、发送顺序与数据所有权（§7.4）、
 > 三类配额（§7.6）、升级中连接的停机（§8.3）、心跳三项配置（§10.2）、性能验收（§11.1）。
+> r3 补充：各层职责划分（§2.5）、消费停滞与写阻塞不冒充心跳失败（§7.3、§7.4）、
+> 心跳计时起点与错峰（§10.2）、全局预算与空闲连接成本（§10.3、§10.4）。
 >
 > **前置**：
 > [HTTP 规范](./http.md)、[HTTP 引擎能力规范](./http-engine-capabilities.md)、
@@ -88,6 +90,21 @@ io  或  tls → openssl → io            com.netonstream:io · tls · openssl
 | 请求被压平为 `BufferedHttpRequest`，`extensions`（含 `OnUpgrade`）丢失 | `NetonStreamHttpAdapter.kt:607` |
 | CORS 对不允许的 Origin 只是不加响应头，不拒绝请求 | `BufferedHttpDispatcher.kt:621` |
 | 依赖钉在 `io:0.3.0 / http:0.1.2 / tls:0.1.0`；websocket 0.2.0 需要 `io:0.3.2 / http:0.2.0`；`tls` 仓库自身仍依赖 `io:0.1.0` | `neton-http-netonstream/build.gradle.kts:24-26`、`tls/tls/build.gradle.kts` |
+
+### 2.5 职责划分：哪些靠配置，哪些要框架实现
+
+底层库提供**协议能力**，框架负责**连接管理**；业务用户只写 `webSocket { session -> … }` 和配置项，**不写心跳循环、不处理控制帧**。
+
+| 能力 | 底层库已提供（已核对源码） | 框架必须实现的部分 | 业务用户 |
+|---|---|---|---|
+| Ping / Pong | 发送 Ping；解析 Pong；**读取时自动回复对端的 Ping**（`WebSocket.kt:27`） | 定时发 Ping、匹配 Pong、超时判定（§10.2）。`WebSocketConfig` **没有任何心跳或超时配置** | 只配参数 |
+| 关闭握手 | Close 帧编解码与协议状态机 | 关闭期限、超时强制回收、取消业务协程（§7.7、§8） | 调用 `close()` 或直接返回 |
+| 消息与帧大小、压缩 | `maxMessageSize`、`maxFrameSize`、permessage-deflate | 映射配置并设置服务端默认值（§10.1） | 只配参数 |
+| 定时器 | io 的 reactor 本身是 `CoroutineDispatcher` + `Delay`，用最小堆加时间轮实现（`neton-io/.../net/Reactor.kt:82,247`） | 心跳、超时都用 reactor 上的定时器，**不为每条连接创建线程** | — |
+| 空闲连接内存 | io 的池化 `Buffer` 首次写入时才取数组，reactor 的空闲扫描通过 `releaseIfIdle` 归还挂起读的数组（`neton-io/.../bytes/Buffer.kt:9-12`） | **需实测**：websocket 编解码器自己的读写缓冲是否被空闲扫描覆盖。若不覆盖，需在 websocket 库中补齐（§10.4） | — |
+| 高并发连接管理 | 异步网络与协议收发 | 准入、单连接与全局预算、慢消费者与写阻塞处理、停机（§7.3、§7.4、§7.6、§8.3、§10.3） | 只配参数 |
+
+结论：**不是"配置底层库就够了"**。协议层无需重写，但保活、超时、预算、回收这一层由框架实现；做完之后，业务侧只需要配置。
 
 ---
 
@@ -337,7 +354,7 @@ annotation class WebSocket(val value: String = "", val subprotocols: Array<Strin
 | 5. 安全链：认证、Guard、`@Permission` | 401 / 403（与 HTTP 路由相同） |
 | 6. 限流 | 429（与 HTTP 路由相同） |
 | 7. 参数绑定（路径参数、`@CurrentUser`、`@Header`、`@Query`） | 400（与 HTTP 路由相同） |
-| 8. 预留 WebSocket 配额并登记为 pending（§7.6、§8.3）；draining 状态下拒绝 | 503 |
+| 8. 准入：WebSocket 配额、全局缓冲预算（§7.6、§10.3）；预留配额并登记为 pending（§8.3）；draining 状态下拒绝 | 503 |
 | 9. 子协议、压缩协商，生成 101（`createResponse`） | 400（握手头非法） |
 
 第 5 至 7 步复用 HTTP 路由的现有实现，不复制代码。
@@ -419,15 +436,22 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 - **始终只有一个协议读取者**：连接协程里的读循环。它是唯一调用底层 `receive()` 的地方，业务代码与框架其他部分都不调用。
 - 读到的**数据消息**放入入站缓冲，`incoming` 从缓冲中取。**控制帧**（Ping、Pong、Close）由读取者当场处理，不进缓冲。
 - 入站缓冲按消息数与字节数双重限制（§10.1 `inboundQueueMessages` / `inboundQueueBytes`）。
-- **缓冲满时，读取者暂停读取**，由 TCP 把背压传给对端。暂停期间控制帧同样得不到处理，因此业务长时间不消费 `incoming` 会导致 Pong 超时，连接按 §8.1 以 1001 关闭。这是有意为之：消费停滞的连接不应无限占用内存。
-- **连接进入关闭状态后**（任一方发起关闭、停机、超时），读取者**丢弃**后续数据消息并持续读取，直到关闭握手完成或 `closeTimeoutMillis` 到期。关闭握手不依赖业务是否读取。
+- **缓冲满时，读取者暂停读取**，由 TCP 把背压传给对端。
+- **消费停滞是本地问题，不归咎对端**。暂停读取期间，对端回的 Pong 可能就在我们自己没读的数据之后，因此：
+  - 暂停期间**冻结** Pong 等待计时与入站空闲计时，恢复读取后继续计时；
+  - 缓冲**持续满**超过 `inboundStallTimeoutMillis`（§10.1），按"消费停滞"以 1011 关闭（§8.1），日志与 `closed` 的原因注明 consumer stalled，**不记为心跳失败**；
+  - `inboundStallTimeoutMillis = 0` 表示不因消费停滞关闭。此时连接可以一直处于暂停读取状态，内存仍受入站缓冲预算约束。
+- **连接进入关闭状态后**（任一方发起关闭、停机、超时）：
+  - 正在等待 `incoming` 的业务协程立即被唤醒，迭代结束；
+  - 读取者**丢弃**入站缓冲中尚未消费的数据和后续数据消息，恢复读取并持续推进，直到关闭握手完成或 `closeTimeoutMillis` 到期。关闭握手不依赖业务是否读取。
 - handler 只发不收、正在等待其他 I/O、或自己调用了 `session.close()`，都不影响控制帧处理和关闭握手。
 
 ### 7.4 出站：单一 FIFO 与数据所有权
 
 - **单一出站队列，单一顺序**。所有发送（任意线程的业务发送、Hub 等后续扩展）都按**被接受的先后**进入同一个 FIFO，写串行器按此顺序写出。**不设**"本 reactor 直接写、绕过队列"的旁路：旁路会让后发的消息越过队列中先被接受的消息。
   （性能优化只允许在**不改变顺序**的前提下进行，例如在 reactor 线程上且队列为空时就地写出；是否值得做，由 §11 第 3 步的数据决定。）
-- **控制帧插队**：心跳 Ping、Pong 回复、关闭帧不进数据 FIFO，由写串行器在两条数据消息之间插入，不会被数据队列阻塞，也不会拆开一条数据消息。
+- **控制帧插队的边界**：心跳 Ping、Pong 回复、关闭帧不进数据 FIFO，由写串行器在两条数据消息之间插入，不会排在已积压的数据消息后面。但控制帧**不能**打断一次正在进行的网络写操作。对端不读时，控制帧同样写不出去。"插队"只解决排队，不解决慢客户端。
+- **写超时**：每一次底层写出（flush）都有期限 `writeTimeoutMillis`（§10.1）。超时归类为"写阻塞"：对端已不读取，关闭帧也写不出去，因此**不发关闭帧**，直接强制关闭底层流（§7.7 第 4 至 7 步），`closed` 记为 1006，原因注明 write stalled，**不记为心跳失败**。
 - **任何路径都不得绕过写串行器**直接调用底层写接口。
 - **预算**：出站队列按消息数与字节数双重限制（§10.1）。字节预算覆盖"已接受未写出"与"正在写出"两部分。挂起中的 `send` 所持有的消息**不计入**预算，它仍归调用方所有；应用要自行约束并发挂起的发送数量。
 - **单条超限**：一条消息本身超过 `outboundQueueBytes` 时，立即抛 `WebSocketMessageTooLargeException`，而不是永久挂起。
@@ -481,7 +505,10 @@ ws = WebSocket.fromUpgraded(upgraded, Role.Server, config, deflate)
 |---|---|---|
 | handler 正常返回 | 1000 Normal | |
 | 服务端停机 | 1001 Going Away | |
-| 空闲超时、心跳超时 | 1001 Going Away | |
+| Pong 超时（§10.2） | 1001 Going Away | 尝试发送关闭帧，受 `closeTimeoutMillis` 与 `writeTimeoutMillis` 约束 |
+| 入站空闲超时（§10.2） | 1001 Going Away | |
+| 消费停滞：入站缓冲持续满超过 `inboundStallTimeoutMillis` | 1011 Internal Error | 本地问题，原因注明 consumer stalled |
+| 写阻塞：一次写出超过 `writeTimeoutMillis` | 不发关闭帧 | 强制关闭，`closed` 记为 1006，原因注明 write stalled |
 | 入站消息超过 `maxMessageBytes` | 1009 Message Too Big | |
 | 入站文本不是合法 UTF-8 | 1007 Invalid Payload | |
 | 协议错误（帧格式、未掩码等） | 1002 Protocol Error | 需要 `sendCloseOnProtocolError = true`（§10.1） |
@@ -546,10 +573,16 @@ enum class HttpCapability {
 maxConnections        = 10000      # WebSocket 连接上限（§7.6）；与 HTTP 在途请求配额独立
 maxMessageBytes       = 1048576    # 1 MiB，入站完整消息上限 → 底层 maxMessageSize
 maxFrameBytes         = 1048576    # 1 MiB，入站单帧上限 → 底层 maxFrameSize
+readBufferBytes       = 16384      # 16 KiB → 底层 readBufferSize（底层默认 128 KiB，见 §10.4）
+writeBufferBytes      = 16384      # 16 KiB → 底层 writeBufferSize（底层默认 128 KiB）
 inboundQueueMessages  = 64         # 每连接入站缓冲消息数上限（§7.3）
 inboundQueueBytes     = 1048576    # 1 MiB，每连接入站缓冲字节数上限
+inboundStallTimeoutMillis = 30000  # 入站缓冲持续满多久判定消费停滞；0 = 不因此关闭
 outboundQueueMessages = 256        # 每连接出站队列消息数上限（§7.4）
 outboundQueueBytes    = 4194304    # 4 MiB，每连接出站队列字节数上限；也是单条出站消息上限
+maxSuspendedSends     = 16         # 每连接同时挂起的 send 上限；超出立即抛 WebSocketBackpressureException
+writeTimeoutMillis    = 10000      # 单次底层写出的期限（§7.4）
+maxBufferedBytes      = 536870912  # 512 MiB，全部 WebSocket 连接的入站与出站缓冲总预算（§10.3）
 pingIntervalMillis    = 30000      # 0 = 不主动发 Ping
 pongTimeoutMillis     = 10000      # 0 = 不等待 Pong
 idleTimeoutMillis     = 0          # 0 = 关闭入站空闲超时
@@ -561,21 +594,55 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 - 框架**始终**设置 `sendCloseOnProtocolError = true`，不对外暴露此项。
 - 开启 `compression` 时，`maxMessageBytes` 限制的是**解压后**的大小，防止压缩炸弹。
 - `inboundQueueBytes` 必须不小于 `maxMessageBytes`，否则一条合法的最大消息永远放不进缓冲；不满足时启动失败。
+- `writeTimeoutMillis` 必须大于 0。写超时是回收"对端不读"连接的唯一手段，不允许关闭。
 - 注解与 DSL 的路由级覆盖不在 v1 范围内，v1 只有全局配置。
 
 ### 10.2 心跳与超时：三项相互独立
 
+**默认语义：区分"安静"和"失联"。**
+
+- 没有业务消息、但能正常回复 Pong 的连接：**一直保持，不踢掉**。这是聊天、推送类连接的常态。
+- 主动探测后在期限内没有回复 Pong 的连接：判定失联，关闭并回收。
+- 业务层的入站空闲超时：单独配置，**默认关闭**。只因为没有聊天消息，不能判定客户端失效。
+
 | 机制 | 配置 | 行为 | 关闭方式 |
 |---|---|---|---|
 | 定时 Ping | `pingIntervalMillis` | 每隔该时长发一个 Ping。同一时刻最多一个未回应的 Ping | — |
-| Pong 等待 | `pongTimeoutMillis` | 发出 Ping 后，在该时长内必须收到**载荷相同**的 Pong。载荷为 8 字节递增序号；载荷不匹配的 Pong 视为普通入站活动，不清除等待 | 超时以 1001 关闭 |
+| Pong 等待 | `pongTimeoutMillis` | Ping **完成底层写出之后**才开始计时，在该时长内必须收到**载荷相同**的 Pong。载荷为 8 字节递增序号；载荷不匹配的 Pong 视为普通入站活动，不清除等待 | 超时以 1001 关闭 |
 | 入站空闲 | `idleTimeoutMillis` | 在该时长内没有收到任何入站帧（数据或控制帧） | 超时以 1001 关闭 |
+
+计时规则：
+
+- **起点是"写出"，不是"入队"**。出站拥塞时 Ping 可能迟迟写不出去；这段时间由写超时（§7.4）负责，不计入 Pong 等待，避免高负载时误踢正常连接。
+- 读取暂停期间（§7.3）冻结 Pong 等待与入站空闲计时。
+- **错峰**：每条连接的第一次 Ping 在 `[0, pingIntervalMillis)` 内随机偏移，此后按固定间隔。避免大量连接同时建立后在同一时刻发 Ping。
+- 所有计时都用 reactor 上的定时器（§2.5），不为每条连接创建线程。
 
 启动期校验只针对**同时开启**的组合：
 
 - `pongTimeoutMillis > 0` 要求 `pingIntervalMillis > 0`，否则无从等待，启动失败；
 - 两者都开启时，要求 `pongTimeoutMillis <= pingIntervalMillis`，否则启动失败；
 - `idleTimeoutMillis` 与另外两项**不做**大小约束。任一项为 0 就是关闭该项，关闭不会导致启动失败。
+
+### 10.3 全局预算与高并发
+
+单连接有界，不等于全局内存可控。按 §10.1 的默认值，仅出站队列一项，10,000 条连接 × 4 MiB 的理论上限就约为 39 GiB。这不是预分配，但说明必须有全局约束：
+
+- **全局缓冲预算** `maxBufferedBytes`：所有 WebSocket 连接的入站缓冲与出站队列（含正在写出的数据）共用一个计数。
+  - 达到上限时，`send` 按"队列满"处理（挂起；`trySend` 返回 false），读取者按"缓冲满"处理（暂停读取）；
+  - 达到上限时，新握手在 §6.1 第 8 步返回 503。
+- **挂起发送者上限** `maxSuspendedSends`：每连接同时挂起的 `send` 超过该值时，后续 `send` 立即抛 `WebSocketBackpressureException`，不再继续挂起。挂起发送者持有的消息不计入缓冲预算（§7.4），所以必须用数量来限制它。
+- **准入**：WebSocket 配额（§7.6）、TCP 配额、全局缓冲预算三者都满足，才允许升级。
+- 心跳与超时定时器全部在 reactor 上（§10.2），**定时器数量与连接数线性相关，线程数与连接数无关**。
+
+### 10.4 空闲连接成本
+
+高并发下连接大多数时间是空闲的。空闲连接的内存成本决定单机能承载多少连接，因此列为验收项（§14）。
+
+- 底层默认读写缓冲各 128 KiB。框架默认改为各 16 KiB（§10.1），大消息通过缓冲增长处理，不需要大的初始容量。
+- io 的池化 `Buffer` 首次写入时才取数组，reactor 的空闲扫描会通过 `releaseIfIdle` 归还挂起读的缓冲数组。**websocket 编解码器自己的读写缓冲（`FrameCodec.input` / `output`、`WebSocket.writeBuffer`）是否被这一机制覆盖，目前未验证**。
+- 实施第 2 步须实测：建立 N 条空闲连接（完成握手后不收发），测每条连接增加的 RSS。若编解码器缓冲在空闲时不归还，在 websocket 库中补齐空闲归还（本阶段按 §3 使用本地源码，可以直接改库）。
+- 目标：空闲连接的每连接 RSS 要有明确的实测数字，并写回本节。
 
 ---
 
@@ -590,7 +657,7 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 | 2 | **适配器升级接入**：仅在存在 WebSocket 路由时使用 `serveConnectionWithUpgrades`；分发结果区分"普通响应 / 接受升级"；§7.2 时序；§7.3 单一读取者；§7.4 出站 FIFO；§7.6 配额；§7.7 清理 | echo 可用；握手与首帧同包不丢帧；无 WebSocket 路由的应用走原路径；§11.1 的普通 HTTP 指标不回退 |
 | 3 | **线程模型定案**：方案 A、B 各实现一版，做 echo 与跨线程发送的基准测试 | §7.5 结论写回本文并冻结该节 |
 | 4 | **握手安全**：Origin 策略、安全链复用、子协议协商 | §14 握手类用例全部通过 |
-| 5 | **心跳、超时、关闭、停机** | §14 关闭类用例全部通过 |
+| 5 | **心跳、超时、关闭、停机、全局预算**（§10.2、§10.3） | §14 关闭类与高并发类用例全部通过；§10.4 空闲连接成本有实测数字 |
 | 6 | **wss** | TLS 上的 echo 与 Autobahn 子集通过 |
 
 步骤 2 有一条结构约束：**没有注册 WebSocket 路由的应用，HTTP 处理路径不得有任何变化。** 结构约束降低回退的可能，但**不代替测量**：第 0 步本身就升级了底层依赖，§11.1 的测量在第 0 步和第 2 步都要执行。
@@ -670,7 +737,7 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 **单一读取者与背压**
 - handler 只发不收：对端 Ping 仍得到 Pong，对端发起的关闭仍能完成
 - handler 阻塞在其他 I/O 上时调用 `session.close()`：关闭握手照常完成
-- 入站缓冲满：读取暂停、内存有界；持续不消费时按 Pong 超时以 1001 关闭
+- 入站缓冲满：读取暂停、内存有界；持续不消费超过 `inboundStallTimeoutMillis` 时以 1011（consumer stalled）关闭
 - 进入关闭状态后，后续数据消息被丢弃，关闭握手在 `closeTimeoutMillis` 内完成
 
 **发送顺序与所有权**
@@ -683,6 +750,18 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 - 升级完成后，在途 HTTP 请求计数归还，普通 HTTP 请求不受长连接数量影响
 - 握手在预留 WebSocket 配额之后失败：配额回滚
 - WebSocket 结束后，TCP 连接配额与 WebSocket 配额都归还
+
+**保活与高并发**
+- 长时间没有业务消息、但持续回复 Pong 的连接不被关闭（持续时长远大于 `pingIntervalMillis` 与 `pongTimeoutMillis` 之和）
+- 对端失联（静默丢包，不回 Pong）：在 Ping 写出后 `pongTimeoutMillis` 内关闭，流、协程、配额全部释放
+- 入站缓冲满：报告为消费停滞（1011，consumer stalled），不记为心跳失败；读取暂停期间不触发 Pong 超时
+- 出站堵塞（对端不读）：报告为写阻塞（1006，write stalled），不记为心跳失败
+- 关闭全部心跳配置（三项均为 0）：慢消费者与写阻塞仍能按 `inboundStallTimeoutMillis` 与 `writeTimeoutMillis` 回收
+- 大量连接同时建立：Ping 时间分散，没有集中在同一时刻
+- 大量空闲连接 + 少量活跃连接：活跃连接的 p99、reactor 定时器延迟、CPU、RSS 都在可接受范围，并记录数字
+- 全局缓冲预算耗尽：`send` 挂起或 `trySend` 返回 false，新握手 503，内存不越过预算
+- 单连接挂起的 `send` 超过 `maxSuspendedSends`：立即抛 `WebSocketBackpressureException`
+- 空闲连接的每连接 RSS 有实测数字（§10.4）
 
 **关闭与生命周期**
 - handler 正常返回发 1000；抛异常发 1011 并记录日志
