@@ -3,7 +3,7 @@
 > **定位**：在 Neton 框架内提供 WebSocket 服务端能力：路由注册、握手安全、会话收发、关闭与停机。
 > 协议本身不在框架内实现，由 `com.netonstream:websocket` 提供；本文只规定**框架如何接入它**。
 >
-> **状态**：**Draft v1 r7**。本文是实施规格，实施前的 API 讨论结论已并入。
+> **状态**：**Draft v1 r9**。本文是目标实施规格，不表示下文全部能力已经交付。
 > r2 按评审修订了运行时契约：单一协议读取者（§7.3）、发送顺序与数据所有权（§7.4）、
 > 三类配额（§7.6）、升级中连接的停机（§8.3）、心跳三项配置（§10.2）、性能验收（§11.1）。
 > r3 补充：各层职责划分（§2.5）、消费停滞与写阻塞不冒充心跳失败（§7.3、§7.4）、
@@ -16,6 +16,11 @@
 > 适配器只提供机制；新增引擎 SPI（§7.0）与一致性套件（§9.2）。
 > r7 重构：新增独立模块 **`neton-websocket`**；`neton-core` 只提供与协议无关的**升级扩展点**；
 > WebSocket 引擎通过 **`WebSocketEngineProvider`** 接入并可替换，参考 Spring 的 `RequestUpgradeStrategy` 分工与 Axum 的路由入口（§7.0）。
+> r8 调整：默认 HTTP 适配器合入 `neton-http`，命名为 `DefaultHttpAdapter`，不再单独维护 `neton-http-netonstream` 模块。
+> `http { }` 固定选择默认适配器；Hyper4k 必须通过 `http(::Hyper4kHttpAdapter)` 显式选择，不能靠依赖或导入顺序改变默认值。
+> r9 调整：默认 WebSocket provider 内置于 `neton-websocket`，不建立独立默认桥接模块。
+> 当前落地范围：模块依赖、provider 安装/替换、兼容性检查、协议握手与底层收发桥接。
+> 路由升级、业务 Session、KSP、心跳与共享预算仍未交付；现有实验性 SPI 不声明 PREALLOCATION_BUDGET，要求它时启动校验失败。
 >
 > **前置**：
 > [HTTP 规范](./http.md)、[HTTP 引擎能力规范](./http-engine-capabilities.md)、
@@ -33,7 +38,7 @@
 - HTTP/1.1 上的 `ws://` 与 `wss://`（RFC 6455）。
 - **WebSocket 是独立的框架功能模块 `neton-websocket`**，可选引入。业务代码只依赖它的 API；换 HTTP 适配器或换 WebSocket 引擎，业务代码都不改。
 - **升级前归 HTTP，升级后归 WebSocket**：路由、认证、Origin、握手拒绝走 HTTP 路径；升级之后由 WebSocket 会话管理，不再套用 HTTP 的请求超时、响应包装和请求配额，但仍受服务器统一停机管理。
-- **WebSocket 引擎可替换**：通过 `WebSocketEngineProvider` 接入（§7.0）。v1 提供默认组合 `neton-http-netonstream` + `neton-websocket-netonstream`（自研 `com.netonstream:websocket`）；高级用户可以实现自己的 provider，通过一致性套件（§9.2）后即可替换。
+- **WebSocket 引擎可替换**：通过 `WebSocketEngineProvider` 接入（§7.0）。v1 提供默认组合 `neton-http` + `neton-websocket`（内置自研 `com.netonstream:websocket`）；高级用户可以实现自己的 provider，通过一致性套件（§9.2）后即可替换。
 - DSL `webSocket(...)` 与注解 `@WebSocket` 两种入口，**共用同一套注册流程**。
 - 握手复用现有安全链：认证、Guard、`@Permission`、限流、路径参数绑定、`@CurrentUser`。
 - Origin 校验（握手层拒绝，不依赖 CORS 响应头）。
@@ -75,15 +80,15 @@ WebSocketEngineProvider ─ 把交接出的连接接到具体的 WebSocket 协�
 **依赖单向**（禁止反向）：
 
 ```
-neton-websocket-netonstream ─→ neton-websocket ─→ neton-routing ─→ neton-core
-            │                          └──────────────────────────→ neton-core
-            ├─→ neton-http-netonstream ─→ neton-http ─→ neton-core
-            └─→ com.netonstream:websocket
+neton-websocket ─→ neton-http ─→ neton-core
+       ├─→ neton-routing（路由集成阶段引入）
+       └─→ com.netonstream:websocket（内置默认 provider）
 ```
 
 - `neton-core`、`neton-http`、各 HTTP 适配器**都不依赖** `neton-websocket`，也不引用任何 WebSocket 类型。HTTP 分发器只通过 `neton-core` 中与协议无关的升级扩展点（§5.1）调用已注册的端点。
 - 不使用 WebSocket 的应用不引入 `neton-websocket`，也不引入协议库 `com.netonstream:websocket`。
-- 这与 HTTP 现有的分工一致：`neton-http` 只依赖 `neton-core`；引擎无关的 `BufferedHttpDispatcher` 实现一次，由各适配器调用；`HttpEngineConformanceSuite` 约束所有适配器。
+- `neton-http` 同时承载公共 HTTP 集成与内置引擎，但两者仍分包隔离：公共分发器不引用默认引擎的具体类型。`DefaultHttpAdapter` 位于 `neton.http.engine.default`，依赖自研 `io/http/tls`；`HttpEngineConformanceSuite` 仍约束所有适配器。
+- 引入 `neton-http` 会带上内置引擎的构建依赖，即使选择 Hyper4k 也不自动移除它们；不承诺链接器完全消除相关体积。WebSocket 模块仍然可选，HTTP 模块不反向依赖它。
 
 普通 ws/wss 不需要 `quic` 与 `http3`。
 
@@ -112,12 +117,12 @@ neton-websocket-netonstream ─→ neton-websocket ─→ neton-routing ─→ n
 
 | 缺口 | 位置 |
 |---|---|
-| 适配器使用不支持升级的 `serveConnection(...)`（`upgrades = false`） | `NetonStreamHttpAdapter.kt:279` |
-| HTTP 服务结束后立即 `connectionHandlers.cancel()`，会连带取消升级后的会话 | `NetonStreamHttpAdapter.kt:284` |
-| handler 作用域固定为 `Dispatchers.Default`，挂起后离开 reactor | `NetonStreamHttpAdapter.kt:278` |
-| 请求被压平为 `BufferedHttpRequest`，`extensions`（含 `OnUpgrade`）丢失 | `NetonStreamHttpAdapter.kt:607` |
+| 适配器使用不支持升级的 `serveConnection(...)`（`upgrades = false`） | `DefaultHttpAdapter.kt:279` |
+| HTTP 服务结束后立即 `connectionHandlers.cancel()`，会连带取消升级后的会话 | `DefaultHttpAdapter.kt:284` |
+| handler 作用域固定为 `Dispatchers.Default`，挂起后离开 reactor | `DefaultHttpAdapter.kt:278` |
+| 请求被压平为 `BufferedHttpRequest`，`extensions`（含 `OnUpgrade`）丢失 | `DefaultHttpAdapter.kt:607` |
 | CORS 对不允许的 Origin 只是不加响应头，不拒绝请求 | `BufferedHttpDispatcher.kt:621` |
-| 依赖钉在 `io:0.3.0 / http:0.1.2 / tls:0.1.0`；websocket 0.2.0 需要 `io:0.3.2 / http:0.2.0`（`tls` 仓库现为 0.2.0，已基于 `io:0.3.2`） | `neton-http-netonstream/build.gradle.kts:24-26` |
+| 已对齐 `io:0.3.2 / http:0.2.0 / tls:0.2.0`，默认使用相邻源码 composite build；普通 HTTP 性能出口仍需实测 | `neton-http/build.gradle.kts`、`settings.gradle.kts` |
 
 ### 2.5 职责划分：哪些靠配置，哪些要框架实现
 
@@ -199,13 +204,13 @@ if (useLocalNetonstream) {
 
 ### 4.0 安装与引擎选择
 
-与 `http { }` 的选择方式一致：**编译期选择，不依赖 `ServiceLoader`**（Kotlin/Native 没有它）。现有做法是：`neton-http` 提供一个 `DeprecationLevel.ERROR` 的兜底 `http { }`，没有引擎时编译失败并说明该加哪个依赖；引擎模块提供无参 `http { }` 作为默认；显式选择用 `http(::XxxHttpAdapter) { }`（`neton-http/.../MissingHttpEngineDsl.kt`、`neton-http-hyper4k/.../DefaultHttpDsl.kt`）。WebSocket 照此设计：
+HTTP 与 WebSocket 都采用**固定默认工厂、显式替换**，不依赖 `ServiceLoader`。`neton-http` 提供 `DefaultHttpAdapter`，`neton-websocket` 提供 `DefaultWebSocketEngineProvider`。旧的 HTTP 兜底重载与 Hyper4k 默认重载已移除；第三方不得通过提供同名默认重载来改变选择。以下路由写法仍是目标 API，当前安装入口只安装 provider：
 
 ```kotlin
 Neton.run(args) {
-    http(::NetonStreamHttpAdapter) { }
+    http { }                            // neton-http 内置 DefaultHttpAdapter
 
-    websocket { }                       // 默认引擎：由 neton-websocket-netonstream 提供的无参重载
+    websocket { }                       // neton-websocket 内置默认 provider
     // websocket(::MyWebSocketEngineProvider) { }   // 显式替换引擎
 
     routing {
@@ -214,8 +219,8 @@ Neton.run(args) {
 }
 ```
 
-- `neton-websocket` 提供 `websocket(providerFactory: WebSocketEngineProviderFactory) { }`，以及一个 `DeprecationLevel.ERROR` 的兜底 `websocket { }`。没有引擎模块时**编译失败**，信息写明"添加 `neton-websocket-netonstream`，或用 `websocket(::XxxProvider) { }` 显式指定"。
-- `neton-websocket-netonstream` 提供无参 `websocket { }`，使用自研引擎。
+- `neton-websocket` 提供一个带默认工厂参数的 `websocket(providerFactory = ...) { }`，不设报错兜底重载、不设独立默认桥接模块。
+- 引入本模块就带上默认协议库的构建依赖；显式替换 provider 不会自动移除该依赖。不使用 WebSocket 时无需引入本模块。
 - 配置来自 `application.conf` 的 `[websocket]` 段（§10）；块内可以覆盖。
 - 注册了 WebSocket 路由却没有安装 `websocket { }`：启动失败，列出相关路由。
 
@@ -520,7 +525,7 @@ annotation class WebSocket(val value: String = "", val subprotocols: Array<Strin
 | `neton-http` | 路由、安全链、握手拒绝响应、把 `Accept` 交给适配器。不认识 WebSocket |
 | HTTP 适配器 | 写 101、交接底层连接、提供执行上下文、关闭底层连接（§7.2） |
 | **`neton-websocket`** | 业务 API（§4）、`@WebSocket` 与 DSL、引擎 SPI（下文）、会话运行时：握手策略、单一读循环、出站 FIFO、心跳、预算、配额、关闭、停机；一致性套件（§9.2） |
-| `neton-websocket-netonstream` | 默认 provider：把 netonstream 交接出的连接接到 `com.netonstream:websocket` |
+| `neton-websocket` 内部的 `engine/default` 包 | 默认 provider：把默认 HTTP 适配器交接出的连接接到 `com.netonstream:websocket` |
 | 协议库 | 帧、分片、掩码、压缩、协议状态机 |
 
 #### 7.0.2 引擎 SPI（`neton-websocket`）
@@ -711,7 +716,7 @@ upgraded = upgradeOn(request.extensions)        （此时已完成，不会阻�
 
 ### 7.6 三类配额
 
-适配器里有两种性质不同的计数（已核对 `NetonStreamHttpAdapter.kt`）：`maxOpenConnections` 限制 **TCP 连接数**；`HttpServerConfig.maxConnections` 实际限制的是**在途 HTTP 请求数**（`admit()`，第 442 行）。WebSocket 再加一类自己的配额。三者的规则冻结如下：
+适配器里有两种性质不同的计数（已核对 `DefaultHttpAdapter.kt`）：`maxOpenConnections` 限制 **TCP 连接数**；`HttpServerConfig.maxConnections` 实际限制的是**在途 HTTP 请求数**（`admit()`，第 442 行）。WebSocket 再加一类自己的配额。三者的规则冻结如下：
 
 | 配额 | 获取 | 释放 |
 |---|---|---|
@@ -803,7 +808,7 @@ enum class HttpCapability {
 
 | HTTP 适配器 | 声明 `PROTOCOL_UPGRADE` | 可用的 WebSocket provider |
 |---|---|---|
-| `neton-http-netonstream` | 是 | `neton-websocket-netonstream`（默认） |
+| `neton-http` | 目标为是，当前尚未接入路由升级 | `neton-websocket` 内置默认 provider |
 | `neton-http-hyper4k` | 否 | 无 |
 | `neton-http-ktor` | 否 | 无 |
 
@@ -987,9 +992,9 @@ allowedOrigins        = []         # 见 §6.3；空 = 仅同源
 | 步 | 内容 | 出口条件 |
 |---|---|---|
 | 0 | **本地依赖与版本对齐**：按 §3 接入 composite build；适配器坐标改为 `io 0.3.2 / http 0.2.0 / tls 0.2.0`；包名冲突检查改读本地源码 | neton 全量测试通过；**普通 HTTP 性能不回退**（按 §11.1 测量，这一步升级了底层依赖，必须实测） |
-| 1 | **升级扩展点与模块骨架**：`neton-core` 的 `UpgradeEndpoint` / `UpgradeDecision` / `UpgradedConnection`、`RouteDefinition.upgrade`、`PROTOCOL_UPGRADE`；`neton-http` 分发器的升级路由处理与 426 兜底；新建 `neton-websocket` 模块：业务 API、`websocket { }` 安装与兜底 DSL、`webSocket(...)` DSL、`@WebSocket` 与 KSP 校验；启动期兼容性校验 | 在 hyper4k 下启动失败并列出路由；未安装 `websocket { }` 编译或启动失败且信息明确；KSP 非法签名编译失败；`neton-core` / `neton-http` 不依赖 `neton-websocket`（依赖检查） |
+| 1 | **升级扩展点与模块骨架**：`neton-core` 的 `UpgradeEndpoint` / `UpgradeDecision` / `UpgradedConnection`、`RouteDefinition.upgrade`、`PROTOCOL_UPGRADE`；`neton-http` 分发器的升级路由处理与 426 兜底；新建 `neton-websocket` 模块：业务 API、`websocket { }` 安装与默认工厂、`webSocket(...)` DSL、`@WebSocket` 与 KSP 校验；启动期兼容性校验 | 在 hyper4k 下启动失败并列出路由；未安装 `websocket { }` 编译或启动失败且信息明确；KSP 非法签名编译失败；`neton-core` / `neton-http` 不依赖 `neton-websocket`（依赖检查） |
 | 1b | **引擎 SPI 与会话运行时**（`neton-websocket`）：`WebSocketEngineProvider` / `WebSocketEngineConnection`（§7.0.2）；运行时（读循环、出站 FIFO、心跳、预算、关闭、停机）；可控时序假引擎与 `WebSocketRuntimeSuite` | `WebSocketRuntimeSuite` 全部通过，**不依赖任何真实引擎** |
-| 2 | **默认组合**：`neton-http-netonstream` 声明 `PROTOCOL_UPGRADE`，仅在存在升级路由时使用 `serveConnectionWithUpgrades`，按 §7.2 交接并通过 `unwrap` 暴露 `neton.http.Upgraded`；新建 `neton-websocket-netonstream`：provider 用 `createResponse` 完成握手的协议部分，用 `WebSocket.fromUpgraded` 构造引擎连接；websocket 库增加 `ByteBudget` 预留（§10.3.1） | `WebSocketEngineConformanceSuite` 全部通过；echo 可用；无 WebSocket 路由的应用走原路径；§11.1 的普通 HTTP 指标不回退 |
+| 2 | **默认组合**：`neton-http` 声明 `PROTOCOL_UPGRADE`，仅在存在升级路由时使用 `serveConnectionWithUpgrades`，按 §7.2 交接并通过 `unwrap` 暴露 `neton.http.Upgraded`；在 `neton-websocket` 内置默认 provider：provider 用 `createResponse` 完成握手的协议部分，用 `WebSocket.fromUpgraded` 构造引擎连接；websocket 库增加 `ByteBudget` 预留（§10.3.1） | `WebSocketEngineConformanceSuite` 全部通过；echo 可用；无 WebSocket 路由的应用走原路径；§11.1 的普通 HTTP 指标不回退 |
 | 3 | **线程模型定案**：方案 A、B 各实现一版，做 echo 与跨线程发送的基准测试 | §7.5 结论写回本文并冻结该节 |
 | 4 | **握手安全**：Origin 策略、安全链复用、子协议协商 | §14 握手类用例全部通过 |
 | 5 | **心跳、超时、关闭、停机、全局预算**（§10.2、§10.3） | §14 关闭类与高并发类用例全部通过；§10.4 空闲连接成本有实测数字 |
