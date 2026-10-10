@@ -1307,6 +1307,16 @@ maxHandshakeSnapshotBytes = 65536 # r12：复制前限制保留字符串总量�
 
 ## 十五、规范依据
 
+### 2026-10-11 实施记录（不等于全部验收）
+
+- `neton-main-integration` 已实现握手快照、`awaitClosed`、分离的关闭结果、Handler 对象入口及连接级 `sessionId`。此 `sessionId` 是 WebSocket 连接标识，不是 §16 的登录会话标识；应用索引应明确命名为 connectionId，不能用它代替认证会话 ID。
+- `BACKPRESSURE`、`REJECT_DATA`、`DISCARD_DATA` 已接入 DSL、注解生成代码及默认 provider。后两项按路由校验引擎能力，不支持则启动失败。
+- 协议库在分配数据帧负载前执行拒绝；活跃丢弃增量校验掩码、分片、消息上限及 UTF-8，不进行完整消息重组，不复用关闭丢弃语义。当前不支持压缩与非交付策略组合。
+- 丢弃每次最多处理 32 个步骤，每步最多消费 16 KiB；达到预算后驱动 yield 并继续处理缓冲数据，不错误等待下一次网络读取。此机制已测试，但不代表大规模混合负载 p99 已验收。
+- 新增可复用 `WebSocketEngineConformanceSuite`：独立对端验证消息、空 Close、自动 Pong、预分配拒绝、帧上限、拒绝策略、有效/非法 UTF-8 丢弃、abort 唤醒。声明的能力不能跳过；它不替代 Autobahn 和完整一致性矩阵。
+- 本轮 macOS：框架 50/50、协议库 255/255、KSP 43/43 通过；Linux x64/arm64 编译通过。未新增 Linux/Windows 实跑、高并发压测或框架级 Autobahn 结果；API/SPI 仍未冻结。
+- 应用 `SecurityConfig.kt`、`CoreAuthenticatorBridge.kt` 存在其他任务的未提交鉴权改动，尚未整合；§16 的跨域凭据、撤权、用户会话索引及生产端点验收仍未完成。不得据此宣称管理员/会员已接入。
+
 - [RFC 6455 §7.1.5、§7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1)：未携带状态码的 Close、本地保留码、1003 与 1008 的语义。
 - [kotlinx.coroutines Channel 契约](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-channel/)：prompt cancellation 与 undelivered elements；不能从“可续读”推出“任意取消不丢消息”。
 - 第三方框架是设计参考，不是本实现的兼容性证明；本规范的行为由版本化一致性套件验证。
