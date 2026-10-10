@@ -113,7 +113,7 @@ msgtrans 没有外部一致性套件；与独立实现的互通是主要的外�
 
 ## 6. 缺口（进入路线图）
 
-1. ~~查明运行 37961081168 的失败~~：已查明为互通脚本的缺陷并修正（99a5cd5），见 §5；待修正后的 CI 运行确认。
+1. ~~查明运行 37961081168 的失败~~：已查明为互通脚本的缺陷并修正（99a5cd5），见 §5；修正后的 CI 运行 38025066892（88fbf64）全部通过，含 epoll 与 io_uring 两项互通。
 2. 在 Kotlin 测试中运行 msgtrans-rust 的 `wire_format_fixtures`（`tests/fixtures/01–08`，encode 与 decode 两个方向），并补上拒绝 `version != 1`、未知 `compression` / `packet_type` 的断言。
 3. TCP 互通进入 CI（复用 `interop/rust-peer` 与同一份清单，对端为 crates.io 的 2.0.0-beta.2），替代手工的 `scripts/interop-rust.sh`。
 4. 负载上限与规范对齐：默认 64 MiB 宽于 WIRE_FORMAT §9.3 的 16 MB 单帧上限与 msgtrans-rust 的默认值；决定是否把默认值改为 16 MiB（行为变更，按 [工程标准 §8](../standards.md#_8-兼容性) 处理），并为 QUIC 超限帧补测试。
