@@ -20,7 +20,7 @@
 - [HTTP 引擎规范](./http-engine.md) — 单引擎交付（Server + Client）、契约层零引擎、引擎入口契约、Client 能力与一致性套件、hyper4k Kotlin 客户端封装、Ktor 归零路径、Server 侧 TLS 决策 **(Draft，冻结候选；开发前置)**
 - [路由规范 v1](./routing.md) — 路由组、目录约定、安全集成
 - [参数绑定规范 v1](./parameter-binding.md) — 参数推断、类型转换、绑定规则
-- [WebSocket 规范](./websocket.md) — DSL / `@WebSocket` 入口、握手与 Origin 安全、线程与所有权、关闭与停机、本地源码依赖开发方式 **(Draft v1；实施前置)**
+- [WebSocket 规范](./websocket.md) — 握手快照、可取消等待隔离、关闭结果、单消费者语义、路由入站策略、三种入口及一致性验收 **(Draft v1 r12；契约待实施，API 未冻结)**
 
 ## 安全
 
