@@ -12,9 +12,8 @@ Neton 生态的网络基础库：Kotlin/Native 上的 I/O、协议与传输，Ma
 - [路线图](./roadmap.md)：按退出条件推进的阶段与当前缺口。
 - [安全策略](./security.md)（草案）
 - [发布记录](./releases.md)
-- 支持声明与证据索引：
-  - [quic](./libraries/quic.md)
-  - io、http、websocket、http3、tls、msgtrans：待建（按 quic 的格式）
+- 支持声明与证据索引：[io](./libraries/io.md)、[http](./libraries/http.md)、[websocket](./libraries/websocket.md)、[quic](./libraries/quic.md)、
+  [http3](./libraries/http3.md)、[tls](./libraries/tls.md)、[msgtrans](./libraries/msgtrans.md)
 
 ## 库
 

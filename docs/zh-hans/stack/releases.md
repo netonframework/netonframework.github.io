@@ -18,7 +18,7 @@
 
 | 坐标 | 版本 | 标签 / 提交 | 依赖 | 工具链 | 发版提交的 CI |
 |---|---|---|---|---|---|
-| `msgtrans` | 0.4.0 | v0.4.0 / 68921a3 | io 0.3.3 | Kotlin 2.4.20 | 37961081909、37961080830、37961069337 通过；**37961081168 失败**：`interop with msgtrans-rust (iouring)` 中 "1. Kotlin client -> Rust server, ws" 的 Rust 服务端未在等待时间内退出（其余用例通过）。同代码的 ba0a4be（37955205087）全部通过。**未解释，进入路线图** |
+| `msgtrans` | 0.4.0 | v0.4.0 / 68921a3 | io 0.3.3 | Kotlin 2.4.20 | 37961081909、37961080830、37961069337 通过；**37961081168 失败**：`interop with msgtrans-rust (iouring)` 中 "1. Kotlin client -> Rust server, ws (Rust)" 记为失败，而 Rust 服务端已正常退出。**已查明为互通脚本的缺陷**（在 `$(...)` 子 shell 中 `wait` 父 shell 的子进程），产品无关；修正 99a5cd5 |
 | `msgtrans-websocket` | 0.1.0 | msgtrans-websocket-v0.1.0 / 68921a3 | msgtrans 0.4.0、websocket 0.2.0 | Kotlin 2.4.20 | 同上 |
 | `msgtrans-quic` | 0.1.1 | msgtrans-quic-v0.1.1 / 68921a3 | msgtrans 0.4.0、quic 0.2.0、io 0.3.3 | Kotlin 2.4.20、OpenSSL 4.0.2 | 同上 |
 
