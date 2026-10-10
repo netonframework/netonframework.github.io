@@ -1309,7 +1309,7 @@ maxHandshakeSnapshotBytes = 65536 # r12：复制前限制保留字符串总量�
 
 ### 2026-10-11 实施记录（不等于全部验收）
 
-- `neton-main-integration` 已实现握手快照、`awaitClosed`、分离的关闭结果、Handler 对象入口及连接级 `sessionId`。此 `sessionId` 是 WebSocket 连接标识，不是 §16 的登录会话标识；应用索引应明确命名为 connectionId，不能用它代替认证会话 ID。
+- `neton-main-integration` 已实现握手快照、`awaitClosed`、分离的关闭结果、Handler 对象入口及连接级 `connectionId`（原字段 `sessionId` 已更名，不保留混淆语义的别名）。`sessionId` 专指现有认证体系的登录会话；同一登录会话可有多个连接，各自有不同订阅。断线重连产生新的 `connectionId`，不因此新建登录会话；订阅恢复须由业务重新授权，连接 ID 不是认证凭据。
 - `BACKPRESSURE`、`REJECT_DATA`、`DISCARD_DATA` 已接入 DSL、注解生成代码及默认 provider。后两项按路由校验引擎能力，不支持则启动失败。
 - 协议库在分配数据帧负载前执行拒绝；活跃丢弃增量校验掩码、分片、消息上限及 UTF-8，不进行完整消息重组，不复用关闭丢弃语义。当前不支持压缩与非交付策略组合。
 - 丢弃每次最多处理 32 个步骤，每步最多消费 16 KiB；达到预算后驱动 yield 并继续处理缓冲数据，不错误等待下一次网络读取。此机制已测试，但不代表大规模混合负载 p99 已验收。
