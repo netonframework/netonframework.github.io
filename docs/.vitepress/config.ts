@@ -133,7 +133,7 @@ export default defineConfig({
   base: "/",
   lastUpdated: true,
   // Internal contracts stay in the repository but are not published until all locales are ready.
-  srcExclude: ["zh-hans/spec/**", "zh-hans/api/**"],
+  srcExclude: ["zh-hans/spec/**", "zh-hans/api/**", "zh-hans/stack/**"],
 
   sitemap: {
     hostname: HOSTNAME,
