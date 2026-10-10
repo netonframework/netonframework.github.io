@@ -1310,3 +1310,44 @@ maxHandshakeSnapshotBytes = 65536 # r12：复制前限制保留字符串总量�
 - [RFC 6455 §7.1.5、§7.4.1](https://www.rfc-editor.org/rfc/rfc6455.html#section-7.4.1)：未携带状态码的 Close、本地保留码、1003 与 1008 的语义。
 - [kotlinx.coroutines Channel 契约](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-channel/)：prompt cancellation 与 undelivered elements；不能从“可续读”推出“任意取消不丢消息”。
 - 第三方框架是设计参考，不是本实现的兼容性证明；本规范的行为由版本化一致性套件验证。
+
+## 十六、应用装配与管理员/会员身份域
+
+### 16.1 职责与当前接入状态
+
+- neton-websocket 是通用通信能力，不属于 module-system。application 安装组件与全局资源配置；system 与 member 各自声明端点、握手授权与消息业务。会员授权不得借用管理员角色放行逻辑。
+- 端点可分别位于 /admin/ws 与 /app/ws，沿用当前 application 的 admin/app 路由组；路径和路由组只选择策略，不证明 Token 属于该身份域。
+- 2026-10-11 核对：application 的 includeBuild("../neton") 所指框架未包含 neton-websocket，WebSocket 实现在其他工作区。未完成框架整合、能力校验与以下验收之前，不注册生产 WebSocket 路由，不把规范写成已接入。
+- 当前 member 模块已有 system/infra 依赖；本规范不借 WebSocket 扩大这项依赖，也不在本轮重构其既有短信、配置等协作。
+
+### 16.2 认证域不能从用户 ID 或路由推断
+
+- 管理员和内置会员当前共用 JWT 签验基础设施。只有 Identity(id, roles, permissions) 不足以证明身份域；禁止根据 id 存在于哪张表、是否有某个角色、请求路径或未经验证的 claim 自动提升身份。
+- WebSocket 接入前，认证结果必须带有来自可信验证器的身份域及会话标识。可采用独立签验配置，或严格校验签名内的 issuer/audience/realm 与 access-token 类型；只有通过验证后的值可以参与授权。refresh token 不能用于握手。
+- 旧 Token 缺少域字段时必须有显式迁移策略；不能静默视为管理员，也不能为了兼容让同一 Token 通行两域。当前验证器丢失域/会话元数据的路径需先补齐，不从 Session 的请求头白名单反向解析 Token。
+- 连接索引至少是 (identityDomain, userId, sessionId, connectionId)，有租户时再加 tenantId。相同数字 ID 的管理员和会员互不关联；同一会话允许多个连接，同一用户允许多个设备。
+- 这些元数据属于应用认证及连接管理契约，不向通用 Identity 强塞 system/member 枚举，不保留原 HttpContext 或原始凭据。具体认证结果承载 API 随框架整合另行实现和测试。
+
+### 16.3 认证、权限与业务资源检查
+
+- 握手复用 HTTP 安全链，在 101 前完成身份域、账户状态、Origin 与路由准入检查。浏览器 Cookie 认证不能以 CORS 代替 WebSocket Origin 检查。
+- Identity.hasPermission 是精确集合查询，不是应用授权服务。system 的通配权限仍由 WildcardPermissionEvaluator 解释；快照包含 *:*:* 不代表直接 hasPermission("system:user:query") 会返回 true。
+- system 权限评估器只能在应用配置器注册一次，不得被 DSL 或硬编码 super_admin 角色判断覆盖。角色声明与权限从同一份启用角色结果生成；禁用角色不参加菜单查询，也不产生超级管理员通配。
+- member 每次订阅/发送/资源操作使用自己的账户状态、资源归属和会话成员资格检查；不得把“握手已登录”视为任意频道或用户的访问权。
+- HTTP 和 WebSocket 的业务操作调用同一业务授权逻辑，不复制一份 WebSocket 专用 RBAC 算法。涉及当前权限的操作不得只信握手时快照。
+
+### 16.4 撤权与关闭
+
+- 新签令牌过滤禁用角色不等于撤销旧 JWT；已签令牌和已建立连接的权限不会自动更新。必须明确权限版本/会话撤销查询的策略、缓存期限及生效上限。
+- 登出单设备按域+sessionId 处理；登出全端、封禁按域+userId（及租户）处理，不能只按裸 userId 广播关闭。退出/撤权通知丢失时还需期限或再验证兜底。
+- 敏感操作在执行前校验当前授权。关闭连接不回滚已经提交的业务操作；并发撤权与数据库提交的保证由业务事务定义。
+- 撤权关闭用 1008，原因不包含 Token 或敏感权限明细；心跳健康不代表认证仍然有效。
+
+### 16.5 接入验收门槛
+
+- 管理员/会员相同 id，分别建立多设备、多连接：发送、订阅、登出与封禁均不串域。
+- 两域凭据交叉握手、refresh token 握手、缺域旧凭据均按显式策略拒绝；不通过手工构造 Identity 替代真实认证链验收。
+- 自定义超级管理员代码和禁用超级管理员策略正确；模块/资源通配与精确权限一致；禁用角色不出现在新签 Token、菜单和权限结果中。
+- 会员拥有自己的资源可以操作，其他用户资源被拒绝；同名管理员角色不改变会员授权结果。
+- 登录后撤权、过期、登出、设备切换，在规定期限内拒绝敏感操作并回收目标连接；其他身份域及非目标设备不受影响。
+- 真实 WS/WSS、Origin、升级失败回滚、长连接资源回收、普通 HTTP 不回退均通过后，才声明应用已接入。
