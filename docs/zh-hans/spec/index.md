@@ -24,6 +24,8 @@
 
 ## 安全
 
+- [Neton Application 生态规范](./application/index.md) — 应用架构、RBAC、MFA、防滥用及工程交付（**应用层**）
+
 - [安全规范 v1](./security.md) — Identity、Authenticator、Guard、@Permission、PermissionEvaluator、JWT 认证器、@CurrentUser 注入（**框架层**）
 
 ## 日志
