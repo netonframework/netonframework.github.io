@@ -341,6 +341,8 @@ Controller 由现有依赖注入创建，不要求继承基类。连接状态放
 ```kotlin
 package neton.ws   // neton-websocket 模块
 
+import neton.core.interfaces.Identity
+
 interface WebSocketSession {
     val handshake: HandshakeInfo
     val subprotocol: String? get() = handshake.subprotocol
@@ -358,16 +360,10 @@ interface HandshakeInfo {
     val peerAddress: String            // transport 对端，不由转发头推导
     val isSecure: Boolean             // 实际 transport TLS 状态
     val subprotocol: String?
-    val identity: HandshakeIdentity?  // 握手时的快照，不是动态授权句柄
+    val identity: Identity?          // 框架创建的独立只读快照，不是原身份对象
     fun pathParam(name: String): String?
     fun queryParams(name: String): List<String>
     fun headerValues(name: String): List<String> // 仅显式保留的头，名称不区分大小写
-}
-
-interface HandshakeIdentity {
-    val id: String
-    val roles: Set<String>
-    val permissions: Set<String>
 }
 
 sealed interface WebSocketMessage {
@@ -390,6 +386,8 @@ sealed interface WebSocketMessage {
 
 - 101 之前，从已完成鉴权/参数绑定的 HTTP 请求生成独立快照。不得保留 `HttpContext`、`HttpResponse`、可写 attributes、请求体、原始 Identity 对象或捕获它们的查询闭包。
 - 路径、路径参数、查询参数与身份的 id/roles/permissions 按值复制。集合必须深拷贝并防止修改内部状态；Kotlin `List`/`Set` 类型本身不等于不可变，getter 返回防御性副本或真正不可变实现。
+- 身份快照由框架内部的不可变实现实现 `neton.core.interfaces.Identity`，不新增公开的 HandshakeIdentity 平行类型。业务可继续调用 hasRole、hasPermission、hasAnyRole、hasAllRoles、hasAnyPermission、hasAllPermissions；这些方法只基于快照集合，沿用 Identity 的默认语义。
+- 禁止通过 `Identity by original` 或闭包转发实现快照。原对象重写的权限方法、自定义 PermissionEvaluator、额外业务字段不复制、不调用；本接口复用的是数据与集合判断契约，不是动态授权机制。需要动态权限的业务必须显式调用自己的授权服务。
 - `handshakeHeaderNames` 是全局显式白名单，默认空集；不自动保留 Cookie、Authorization 或所有请求头。必要字段可显式配置，但不得因此自动记录到日志。鉴权和 Origin 检查使用完整 HTTP 请求，不受保留白名单影响。
 - 增加 `maxHandshakeSnapshotBytes`（默认 65536），按保留字符串 UTF-8 字节累计，复制前检查；超限在 101 前返回 503，原因记 resource pressure，预留配额回滚。该值限制保留数据量，不是堆大小；快照数量受连接数上限约束。
 - `@CurrentUser` 仍允许应用在握手前绑定自身的业务对象；应用保留该对象的生命周期和内存由应用负责，不等于 Session 暴露原 HTTP context。
@@ -1297,6 +1295,7 @@ maxHandshakeSnapshotBytes = 65536 # r12：复制前限制保留字符串总量�
 **r12 确定性验收（新增，全部是待实施/验证，不是完成声明）**
 - 两个 awaitClosed 等待者中取消一个，另一个仍获得最终结果；关闭后重复等待结果相同；公开接口没有可 cancel 的共享 Deferred
 - 修改原请求集合和身份 roles/permissions 不改变快照；尝试修改返回集合不改变内部快照；未列白名单的凭据头不可读取；超限在 101 前失败且配额回滚
+- 身份快照可传给接收 Identity 的函数；六个权限辅助方法均按快照集合返回结果。用重写方法会计数或抛异常的原 Identity 验证：生成快照和调用辅助方法不转发原方法，修改原集合也不改变结果；未认证时 identity 为 null
 - 通过对象保留/弱引用诊断确认 Session 不持有 HttpContext/HttpResponse，而不只检查 public getter 的类型
 - take(1) 后再次 collect 读取后续数据；第二个并发 collect 立即失败，第一个继续正常工作
 - 在出队后交付前取消收集者：预算归零、已取走消息不重放、未取走消息可续读；在业务处理期间取消也不自动重放
