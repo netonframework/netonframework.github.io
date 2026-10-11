@@ -116,7 +116,7 @@ Controller  ──  HTTP 路由、参数绑定、@Permission、统一响应包�
 
 | 路由组 | 挂载路径 | 用途 | requireAuth |
 |--------|----------|------|-------------|
-| `admin` | `/admin` | 管理后台 API（neton-application-admin 对接） | true |
+| `admin` | `/admin` | 管理后台 API（neton-application-front 对接） | true |
 | `app` | `/app` | C 端/移动端 API（会员、支付等） | true |
 | `open` | `/platform` | 开放平台 API（签名计费等） | 按需 |
 
@@ -160,8 +160,8 @@ port = 8080
 host = "0.0.0.0"
 
 [database]
-driver = "MYSQL"   # 或 SQLITE、POSTGRESQL
-uri = "mysql://root:123456@localhost:3306/neton-application"
+driver = "POSTGRESQL"   # 只支持 PostgreSQL，其他驱动启动即拒绝
+uri = "postgresql://postgres:postgres@localhost:5432/neton-application"
 
 [logging]
 level = "INFO"
@@ -174,8 +174,8 @@ level = "INFO"
 
 ```toml
 [default]
-driver = "MYSQL"
-uri = "mysql://root:123456@localhost:3306/neton-application"
+driver = "POSTGRESQL"
+uri = "postgresql://postgres:postgres@localhost:5432/neton-application"
 debug = false
 ```
 
@@ -217,7 +217,7 @@ mount = "/platform"
 - **业务/校验错误**：如 400，`code` 为 4xx，`msg` 为错误信息，`data` 常为 `null`。
 - **服务端错误**：500 时 `code = 500`，`msg = "Internal Server Error"`，`data = null`。
 
-前端（neton-application-admin）应统一根据 `code === 0` 判断成功，再使用 `data`。
+前端应统一根据 `code === 0` 判断成功，再使用 `data`。
 
 ### 5.2 分页规范
 
@@ -320,13 +320,13 @@ cd neton-application/application
 ### 7.4 验证
 
 ```bash
-curl http://localhost:8080/
-# {"status":"ok","service":"neton-application","version":"1.0.0"}
+curl http://localhost:8080/admin/system/health/live    # 进程存活
+curl http://localhost:8080/admin/system/health/ready   # 数据库与 Redis 可用，否则 503
 ```
 
 ---
 
-## 八、与前端对接（neton-application-admin）
+## 八、与前端对接（neton-application-front）
 
 ### 8.1 对接关系
 
