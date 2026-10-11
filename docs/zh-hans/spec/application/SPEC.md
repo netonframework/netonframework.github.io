@@ -23,18 +23,18 @@
 |------|------|
 | **定位** | 通用后台管理脚手架后端，对标 ruoyi-vue-pro 裁剪版（无 mall/risk） |
 | **运行形态** | 单进程、单可执行文件，无 JVM 依赖 |
-| **对接前端** | **neton-application-admin**（Vue3 + Ant Design Vue）为官方对接管理端 |
+| **对接前端** | **neton-application-front**（React 19 + Next.js）为官方管理端；**neton-application-admin**（Vue3）为双轨期旧版，逐步下线 |
 | **运行指标** | 冷启动 ~150ms（debug）/ ~3ms（release），内存约 ~20MB |
 
 ### 技术栈
 
 | 项目 | 选型 |
 |------|------|
-| 语言 | Kotlin 2.3 (Multiplatform) |
+| 语言 | Kotlin 2.4.20 (Multiplatform) |
 | 框架 | Neton 1.0.0-beta1 |
 | 编译 | Kotlin/Native → 原生二进制（.kexe） |
-| 数据库 | MySQL / PostgreSQL / SQLite（配置切换） |
-| 认证 | JWT（AccessToken + RefreshToken） |
+| 数据库 | **PostgreSQL**（发行版唯一支持的数据库，见 §6.1） |
+| 认证 | 身份域隔离的 JWT + 服务端会话（见 [身份域与会话边界](identity-realm.md)） |
 | 构建 | Gradle 8.14 + KSP |
 | 日志 | 结构化 JSON，异步写入，多 Sink |
 
@@ -44,64 +44,50 @@
 
 ### 2.1 多仓库与 Composite Build
 
-实际为**多仓库 + Gradle Composite Build**，主仓库与扩展模块分离：
+实际为**多仓库 + Gradle Composite Build**，每个模块一个仓库，发行版只负责装配：
 
-| 仓库 | 内容 | 引入方式 |
-|------|------|---------|
-| `neton` | 框架（neton-core, neton-http, neton-database 等） | `includeBuild("../neton")` |
-| `neton-application` | 主应用：module-system、module-infra、application 入口 | 根项目 |
-| `neton-application-module-member` | 会员模块 | `includeBuild("../neton-application-module-member")` |
-| `neton-application-module-payment` | 支付模块 | `includeBuild("../neton-application-module-payment")` |
-| `neton-application-module-platform` | 开放平台模块 | `includeBuild("../neton-application-module-platform")` |
-| `neton-application-admin` | 管理端前端（Vue3 + Ant Design Vue） | 独立仓库，通过 HTTP 对接 |
+| 仓库 | 内容 |
+|------|------|
+| `neton` | 框架（neton-core、neton-http、neton-database、neton-security 等） |
+| `neton-application` | 通用发行版：application 入口、配置、CI；不含业务模块代码 |
+| `neton-application-module-system` | 管理员身份、认证与会话、RBAC、MFA、验证码、审计、配置 |
+| `neton-application-module-infra` | 文件、定时任务、API 日志、Redis 监控等基础设施 |
+| `neton-application-module-account` | 终端用户账号：注册登录、资料、手机 / 邮箱 / 密码、账号会话 |
+| `neton-application-module-member` | 会员成长：等级、积分、签到、邀请、分组标签（依赖 account） |
+| `neton-application-module-payment` / `-platform` / `-cs` | 支付、开放平台、客服 |
+| `neton-application-front`（及 `-front-*` 模块） | 管理端前端壳与各模块页面 |
 
-目录约定（与 neton 同级）：
+目录约定：所有仓库位于同一工作区，`Neton/` 与 `privchat/` 同级；`settings.gradle.kts` 与框架的
+`includeBuild` 都按这个布局写相对路径。干净环境的检出清单与锁定版本见
+`neton-application/scripts/ci/dependencies.lock`。
 
-```
-projects/
-├── neton/                           # 框架
-├── neton-application/               # 本仓库
-├── neton-application-module-member/
-├── neton-application-module-payment/
-├── neton-application-module-platform/
-└── neton-application-admin/         # 管理前端
-```
-
-### 2.2 主仓库模块结构
+### 2.2 发行版结构
 
 ```
 neton-application/
-├── application/                     # 应用入口
-│   ├── src/commonMain/kotlin/
-│   │   ├── Main.kt                  # 启动入口
-│   │   ├── config/                  # SecurityConfig 等
-│   │   └── controller/              # 根路径 Controller（如健康检查）
-│   └── config/                      # 运行时配置（TOML）
-│       ├── application.conf         # 应用名、服务端口、日志等
-│       ├── database.conf            # 数据库驱动与 URI
-│       └── routing.conf             # 路由组与挂载路径
-├── module-system/                   # 系统管理（核心，被所有模块依赖）
-├── module-infra/                    # 基础设施（依赖 system）
-├── sql/                             # 主库迁移脚本
-│   ├── mysql/
-│   ├── postgresql/
-│   └── sqlite/
-├── build.gradle.kts
-├── settings.gradle.kts
-└── gradle.properties
+├── application/
+│   ├── src/commonMain/kotlin/Main.kt   # 启动入口（只装配模块与基础设施 DSL）
+│   └── config/                         # 运行时配置（TOML）：application / database / routing …
+├── scripts/ci/                         # 依赖锁定与检出脚本
+├── tests/security/                     # 身份域与会话 E2E
+├── build.gradle.kts / settings.gradle.kts
 ```
 
-扩展模块（member / payment / platform）各自仓库内含 `sql/mysql`、`sql/postgresql`、`sql/sqlite`，需在**同一数据库**上按需执行。
+鉴权装配（认证器、身份域、权限评估器）由 module-system 的 `SystemSecurityConfig` 提供，发行版不再自带
+SecurityConfig。迁移脚本在各模块仓库的 `sql/postgresql/`，经 `application.kexe migrate up` 显式执行，
+启动只检查不执行。
 
 ### 2.3 模块依赖关系
 
 ```
 application
-├── module-system        ← 核心（用户/角色/菜单/权限/字典/日志/消息等）
-├── module-infra         ← 依赖 system（配置/文件/定时任务/API 日志/Redis 监控）
-├── module-member        ← 依赖 system（会员认证/等级/积分/签到/地址/分组标签）
-├── module-payment       ← 依赖 system（支付应用/渠道/订单/退款/钱包/充值/转账）
-└── module-platform      ← 依赖 system（客户端/API 定义/授权/计费/日志/统计）
+├── module-system        ← 核心（管理员、认证、RBAC、MFA、验证码、审计、配置）
+├── module-infra         ← 依赖 system
+├── module-account       ← 依赖 system、infra（终端用户身份域）
+├── module-member        ← 依赖 account（会员成长）
+├── module-payment       ← 依赖 system、account
+├── module-platform      ← 依赖 system
+└── module-cs            ← 依赖 account、payment
 ```
 
 ---
@@ -117,7 +103,7 @@ Controller  ──  HTTP 路由、参数绑定、@Permission、统一响应包�
      │
    Table    ──  数据访问（KSP 生成 *TableImpl，CRUD + query/page）
      │
-   DB       ──  MySQL / PostgreSQL / SQLite（由 database.conf 指定）
+   DB       ──  PostgreSQL（由 database.conf 指定）
 ```
 
 - **Controller**：仅做参数解析与调用 Logic，不直接操作 Table。
@@ -145,8 +131,9 @@ Controller  ──  HTTP 路由、参数绑定、@Permission、统一响应包�
 
 ### 3.3 安全与认证
 
-- **认证方式**：JWT，Header `Authorization: Bearer <accessToken>`。
-- **配置**：`SecurityConfig` 中注册 JWT Authenticator、绑定默认 Guard、设置 PermissionEvaluator。
+- **认证方式**：JWT，`Authorization: Bearer <accessToken>`；管理端浏览器用 HttpOnly 会话 Cookie，凭 Cookie 的写请求须带 `X-Neton-Csrf: 1`。
+- **身份域**：`/admin` 只认管理员令牌，`/app`、`/manage` 只认账号令牌，refresh 令牌不能访问接口；规则见 [身份域与会话边界](identity-realm.md)。
+- **装配**：module-system 的 `SystemSecurityConfig` 注册认证器、默认 Guard 与通配权限评估器；JWT 密钥只能由 `NETON_SECURITY__JWT__SECRETKEY` 注入。
 - **超级管理员**：角色码 `super_admin` 在 PermissionEvaluator 中视为拥有所有权限，不依赖菜单权限数据。
 
 默认账号（以 init_data 为准）：用户名 `admin`，登录口令 `admin123`；数据库中保存的是框架标准哈希值（生产请立即修改并更换 JWT 密钥）。
@@ -259,7 +246,8 @@ mount = "/platform"
 |------|------|------|------|
 | 登录 | POST | `/admin/system/auth/login` | Body: `{"username","password"}`，返回 accessToken、refreshToken 等 |
 | 登出 | POST | `/admin/system/auth/logout` | 需 Bearer Token |
-| 刷新 Token | POST | `/admin/system/auth/refresh-token` | Query: `refreshToken` |
+| 刷新 Token | POST | `/admin/system/auth/refresh-token` | Body: `{"refreshToken"}`；refresh 令牌只能用一次 |
+| 全端退出 | POST | `/admin/system/auth/logout-all` | 作废该管理员所有会话 |
 | 获取权限信息 | GET | `/admin/system/auth/get-permission-info` | 需 Bearer Token，返回 roles、permissions、menus |
 
 ### 5.4 错误与异常
@@ -274,8 +262,9 @@ mount = "/platform"
 
 ### 6.1 数据库支持
 
-- 支持 **MySQL**、**PostgreSQL**、**SQLite**，通过 `application.conf` / `database.conf` 的 `driver` 与 `uri` 切换。
-- 各模块（含扩展模块）提供 `sql/mysql`、`sql/postgresql`、`sql/sqlite` 下脚本，按库类型执行对应脚本。
+- **只支持 PostgreSQL。** 各模块只提供 `sql/postgresql/` 迁移，MFA、会话版本等依赖 PostgreSQL 的
+  `ON CONFLICT` / `FOR UPDATE`。`database.conf` 配成其他驱动时 module-system 在启动时拒绝并说明原因。
+- 迁移由 `application.kexe migrate up` 显式执行，已执行的脚本有校验和，禁止修改。
 
 ### 6.2 脚本命名与顺序
 
@@ -297,7 +286,8 @@ mount = "/platform"
 
 - **JDK 17+**（仅构建需要，运行时不需要 JVM）
 - **Gradle**：使用项目 wrapper
-- **MySQL**（或 PostgreSQL/SQLite）：按所选驱动提前建库并执行迁移脚本
+- **PostgreSQL** 与 **Redis**：提前建库，用 `application.kexe migrate up` 执行迁移
+- **JWT 密钥**：环境变量 `NETON_SECURITY__JWT__SECRETKEY`，至少 32 个随机字符（占位值会被拒绝启动）
 
 ### 7.2 编译
 
@@ -340,23 +330,18 @@ curl http://localhost:8080/
 
 ### 8.1 对接关系
 
-- **管理端前端**：**neton-application-admin** 为官方对接前端，与后端模块一一对应（System / Infra / Member / Pay / Platform）。
+- **管理端前端**：**neton-application-front**（React + Next.js）为官方管理端，模块页面与后端模块一一对应；
+  vben 版（neton-application-admin）为双轨期旧版。
 - **后端前缀**：管理端接口统一为 **`/admin`**，例如 `/admin/system/user/page`。
+- 前端默认同源访问后端（nginx 反代 `/admin/`）；会话用 HttpOnly Cookie，不在浏览器存令牌。
 
-### 8.2 前端开发环境代理
+### 8.2 联调顺序
 
-前端开发时通过 Vite 代理将 `/admin` 转到后端 `/admin`，避免跨域并统一前缀：
-
-- 前端请求：`/admin/system/auth/login` → 代理到 `http://127.0.0.1:8080/admin/system/auth/login`
-- 配置见 neton-application-admin 的 `apps/web-antd/vite.config.mts`（proxy `/admin` → target 8080，rewrite 为 `/admin`）。
-
-### 8.3 联调顺序
-
-1. 启动数据库（如 MySQL）。
-2. 执行主库 + 所需扩展库的 SQL 脚本。
-3. 启动后端：`cd neton-application/application && ./build/.../application.kexe`。
-4. 启动前端：`cd neton-application-admin && pnpm install && pnpm dev`。
-5. 使用默认账号登录管理端（如 `admin` / `admin123`）。
+1. 启动 PostgreSQL 与 Redis。
+2. `NETON_SECURITY__JWT__SECRETKEY=<随机串> application.kexe migrate up`。
+3. 启动后端：`application.kexe`（同样需要上述环境变量）。
+4. 启动前端：`cd neton-application-front && pnpm install && pnpm dev`。
+5. 使用默认账号登录（`admin` / `admin123`），**首次登录后立即修改密码**。
 
 ---
 

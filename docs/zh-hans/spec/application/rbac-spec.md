@@ -402,42 +402,31 @@ super_admin_codes = ["super_admin", "root"]
 
 ## 八、缓存策略
 
-### 8.1 缓存目标
+### 8.1 目标
 
-`PermissionLogic.getPermissionInfo(userId)` 每次查 5+ 张表，**必须缓存**。
+- 撤权必须**立即**生效：角色停用、撤菜单、菜单停用、用户移出角色之后，持旧令牌调原接口立刻 403，
+  不能等令牌过期（评审 R05）。前端刷新菜单撤不掉后端的授权。
+- 多实例一致；每次请求的数据库开销有界。
 
-### 8.2 缓存键
+### 8.2 决议：令牌不携带权限，按「授权版本」解析（2026-10-11）
 
-```
-rbac:permission_info:<userId>
-```
+- 管理员令牌**不再写入** roles / perms。每次请求由管理员身份域（`security.AdminTokenRealm`）按用户解析
+  授权，结果按「用户 + 全局授权版本」缓存在进程内。
+- 全局授权版本存在 `system_authz_version`（单行）。下列写操作之后加一，所有实例的缓存同时失效，无需广播：
 
-### 8.3 缓存值
+| 写操作 | 位置 |
+|---------|------|
+| 角色分配菜单 | `PermissionLogic.assignRoleMenu` / `RoleLogic.assignMenus` |
+| 用户分配角色 | `PermissionLogic.assignUserRole` |
+| 角色修改（含启停）/ 删除 | `RoleLogic.update` / `delete` |
+| 菜单修改（含启停、改权限串）/ 删除 | `MenuLogic.update` / `delete` |
 
-完整 `PermissionInfoVO` 序列化（JSON）。
-
-### 8.4 TTL
-
-- 默认 **15 分钟**
-- 可通过 `config/security.conf` 覆盖：`security.permission_cache_ttl_seconds`
-- 设置为 `0` 表示禁用缓存（dev 环境推荐）
-
-### 8.5 失效时机（必须主动驱逐）
-
-| 触发事件 | 驱逐范围 |
-|---------|---------|
-| `assignUserRole(userId, ...)` | `rbac:permission_info:<userId>` |
-| `assignRoleMenu(roleId, ...)` | 所有持有该 roleId 的用户：`rbac:permission_info:<allUserIdsWithRole>` |
-| 角色 `status` 变更 | 同上 |
-| 菜单 `status` 变更 | 全量驱逐 `rbac:permission_info:*`（影响面太广，简单粗暴） |
-| 菜单删除 | 全量驱逐 |
-| 用户主动登出 | 自身 key |
-
-### 8.6 实现位置
-
-- 缓存层使用框架的 `neton-cache`（L1 + L2）
-- 驱逐逻辑写在 `PermissionLogic` / `RoleLogic` / `MenuLogic` 的写操作之后
-- **禁止**通过定时全量刷新做"懒失效"，必须事件驱逐
+- 授权版本与账号状态、会话版本、MFA 状态在同一条 SQL 里读出（`AdminSessionLogic.accessState`），
+  管理员每个请求一次查询；版本未变时不再访问权限表。
+- **为什么不用 neton-cache**：版本号方案天然多实例一致、没有 TTL 窗口；neton-cache 当时正在大改，
+  不宜作为安全边界的依赖。`getPermissionInfo`（前端菜单树）仍按原方式实时查询，它不参与授权判定。
+- 改动权限相关表的新代码必须调用 `AdminSessionLogic.bumpAuthorization()`，否则撤权会退化为「等待下一次
+  其他写操作」。验收见 `neton-application/tests/security/realm-session-e2e.sh` 的「撤权即时生效」。
 
 ---
 
