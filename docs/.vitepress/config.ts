@@ -126,13 +126,36 @@ const zhGuideSidebar = [
   },
 ];
 
+function ecosystemSidebar(prefix: string, zh: boolean) {
+  const link = (slug: string) => `${prefix}/ecosystem/${slug}`;
+  return [
+    { text: zh ? "技术栈" : "Technology stack", items: [
+      { text: zh ? "全栈概览" : "Overview", link: link("") },
+      { text: zh ? "接入与版本" : "Integration and versions", link: link("versions") },
+      { text: zh ? "支持与验证" : "Support and validation", link: link("support") },
+    ] },
+    { text: zh ? "网络与协议库" : "Networking libraries", items: [
+      { text: "I/O", link: link("io") },
+      { text: "HTTP/1.1 & HTTP/2", link: link("http") },
+      { text: "TLS", link: link("tls") },
+      { text: "OpenSSL Kotlin", link: link("openssl") },
+      { text: "WebSocket", link: link("websocket") },
+      { text: "QUIC", link: link("quic") },
+      { text: "HTTP/3", link: link("http3") },
+    ] },
+    { text: zh ? "RPC 与消息" : "RPC and messaging", items: [
+      { text: "msgtrans", link: link("msgtrans") },
+    ] },
+  ];
+}
+
 export default defineConfig({
   // 兜底值；每个 locale 用自己的完整标题覆盖（见下方 locales）。
   // 浏览器标签与搜索结果里出现的是那句完整定位，导航栏用 themeConfig.siteTitle 保持短名。
   title: "Neton",
   base: "/",
   lastUpdated: true,
-  // Internal contracts stay in the repository but are not published until all locales are ready.
+  // Internal contracts/audits stay private to the docs build; public library guides live in ecosystem/.
   srcExclude: ["zh-hans/spec/**", "zh-hans/api/**", "zh-hans/stack/**"],
 
   sitemap: {
@@ -178,23 +201,25 @@ export default defineConfig({
     root: {
       label: "English",
       lang: "en-US",
-      title: "Neton - A modern Kotlin/Native web framework",
+      title: "Neton - Kotlin/Native framework and networking stack",
       description:
-        "Neton is a Kotlin/Native server-side framework: routing, data access, caching, security, " +
-        "scheduled jobs and domain events, compiled to a native binary with no JVM and no reflection.",
+        "A Kotlin/Native application framework and independent I/O, HTTP, WebSocket, QUIC, HTTP/3, TLS and messaging libraries.",
       themeConfig: {
         // 导航栏只放短名；完整定位句留给 <title> 与搜索结果。
         siteTitle: "Neton",
         nav: [
           { text: "Home", link: "/" },
-          { text: "Guide", link: "/guide/" },
+          { text: "Framework", link: "/guide/" },
+          { text: "Protocol stack", link: "/ecosystem/" },
+          { text: "RPC / Messaging", link: "/ecosystem/msgtrans" },
           { text: "1.0 Public Beta", link: "/releases/1.0.0" },
         ],
         sidebar: {
           "/guide/": enGuideSidebar,
+          "/ecosystem/": ecosystemSidebar("", false),
         },
         footer: {
-          message: "Neton Framework Documentation",
+          message: "Neton Framework & Networking Documentation",
           copyright: "Copyright 2025-present",
         },
         outline: { level: [2, 3], label: "On this page" },
@@ -205,22 +230,24 @@ export default defineConfig({
       label: "简体中文",
       lang: "zh-Hans",
       link: "/zh-hans/",
-      title: "Neton - 高性能 Kotlin/Native 服务端应用框架",
+      title: "Neton - Kotlin/Native 应用框架与网络协议栈",
       description:
-        "Neton 是 Kotlin/Native 服务端框架：路由、数据访问、缓存、安全、定时任务、领域事件一应俱全，" +
-        "编译为原生二进制，无 JVM、零反射。",
+        "Neton 提供 Kotlin/Native 应用框架，以及独立的 I/O、HTTP、WebSocket、QUIC、HTTP/3、TLS 和消息传输库。",
       themeConfig: {
         siteTitle: "Neton",
         nav: [
           { text: "首页", link: "/zh-hans/" },
-          { text: "用户指南", link: "/zh-hans/guide/" },
+          { text: "应用框架", link: "/zh-hans/guide/" },
+          { text: "网络协议栈", link: "/zh-hans/ecosystem/" },
+          { text: "RPC / 消息", link: "/zh-hans/ecosystem/msgtrans" },
           { text: "1.0 正式公测", link: "/zh-hans/releases/1.0.0" },
         ],
         sidebar: {
           "/zh-hans/guide/": zhGuideSidebar,
+          "/zh-hans/ecosystem/": ecosystemSidebar("/zh-hans", true),
         },
         footer: {
-          message: "Neton Framework 文档",
+          message: "Neton 框架与网络协议栈文档",
           copyright: "Copyright 2025-present",
         },
         outline: { level: [2, 3], label: "目录" },
