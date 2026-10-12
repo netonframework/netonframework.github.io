@@ -31,4 +31,3 @@ Reviewed on 2026-10-12 at `4d30e9005c3c2b31a25e91b66c298651824474db`. Build-decl
 - [Design and validation records](https://github.com/netonframework/openssl-kotlin/blob/main/VALIDATION.md)
 
 Links follow main and may change. The conclusions here refer to the recorded review revision.
-

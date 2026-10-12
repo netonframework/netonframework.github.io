@@ -31,4 +31,3 @@ README 记录 Autobahn 双向各 517 项：压缩开启时 512 OK、2 NON-STRICT
 - [设计与验证记录](https://github.com/netonframework/websocket/blob/main/SPEC.md)
 
 链接指向仓库 main，可能随开发更新；本页的结论以记录的核对提交为准。
-

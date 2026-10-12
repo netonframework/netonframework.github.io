@@ -31,4 +31,3 @@ Reviewed on 2026-10-12 at `ae552743044cb374a8ecaed78cf4a836e3ee279f`. Build-decl
 - [Design and validation records](https://github.com/netonframework/quic/blob/main/SPEC.md)
 
 Links follow main and may change. The conclusions here refer to the recorded review revision.
-

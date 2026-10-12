@@ -31,4 +31,3 @@ Reviewed on 2026-10-12 at `2b55bb48c62313f766d99a1067df4fd2aa490ec5`. Build-decl
 - [Design and validation records](https://github.com/zoujiaqing/msgtrans-kotlin/blob/main/SPEC.md)
 
 Links follow main and may change. The conclusions here refer to the recorded review revision.
-

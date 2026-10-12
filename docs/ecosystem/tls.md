@@ -31,4 +31,3 @@ Reviewed on 2026-10-12 at `6e32d23efa3421955358336086ebe517b8e3a06f`. Build-decl
 - [Design and validation records](https://github.com/netonframework/tls/blob/main/SPEC.md)
 
 Links follow main and may change. The conclusions here refer to the recorded review revision.
-

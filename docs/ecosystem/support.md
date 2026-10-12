@@ -36,4 +36,3 @@ Targets come from Gradle configuration. Android JVM and Android Native are diffe
 4. Validate performance separately: throughput, tail latency, errors, CPU, memory and slow clients.
 
 Detailed historical audits remain in the internal `docs/zh-hans/stack/` directory of neton-docs, not published as current user guides.
-

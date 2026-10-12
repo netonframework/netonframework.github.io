@@ -31,4 +31,3 @@ Native 目标不含 32 位 Android；JVM 依赖 OpenSSL JNI，不是纯 JVM TLS�
 - [设计与验证记录](https://github.com/netonframework/tls/blob/main/SPEC.md)
 
 链接指向仓库 main，可能随开发更新；本页的结论以记录的核对提交为准。
-

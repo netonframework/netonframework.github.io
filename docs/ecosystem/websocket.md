@@ -31,4 +31,3 @@ Reviewed on 2026-10-12 at `c34cbecba7fba2be6084e8f97cc19dea463047d0`. Build-decl
 - [Design and validation records](https://github.com/netonframework/websocket/blob/main/SPEC.md)
 
 Links follow main and may change. The conclusions here refer to the recorded review revision.
-

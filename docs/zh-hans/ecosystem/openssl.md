@@ -31,4 +31,3 @@ OpenSSL 的 Kotlin 封装，不是自研密码算法或自研 TLS 实现。
 - [设计与验证记录](https://github.com/netonframework/openssl-kotlin/blob/main/VALIDATION.md)
 
 链接指向仓库 main，可能随开发更新；本页的结论以记录的核对提交为准。
-

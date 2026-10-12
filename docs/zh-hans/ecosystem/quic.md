@@ -31,4 +31,3 @@ SPEC §11.18 记录 quinn、quic-go、ngtcp2 多方向互通，也保留 handsha
 - [设计与验证记录](https://github.com/netonframework/quic/blob/main/SPEC.md)
 
 链接指向仓库 main，可能随开发更新；本页的结论以记录的核对提交为准。
-

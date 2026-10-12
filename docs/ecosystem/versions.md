@@ -41,4 +41,3 @@ Keep test doubles, test certificates, `io-testkit` and `quic-testkit` out of pro
 ## Documentation ownership
 
 User guides live in neton-docs; KDoc, implementation specifications and raw validation records stay with code. Update both public languages together, recording dates, revisions, limitations and evidence. Do not copy entire SPECs or promote internal draft plans into user-facing commitments.
-

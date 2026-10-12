@@ -33,4 +33,3 @@ Framework and protocol APIs are distinct: `com.netonstream:neton-http` integrate
 The stack contains custom I/O, HTTP, WebSocket, QUIC and HTTP/3 implementations, with differing platform coverage and release progress. Read the [support matrix](./support.md) and [integration/version guide](./versions.md).
 
 This overview reflects a source review on 2026-10-12. Validate production deployments on their target platforms. Performance claims need workloads, hardware, build versions and error metrics.
-

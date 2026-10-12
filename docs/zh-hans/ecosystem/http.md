@@ -31,4 +31,3 @@ SPEC/README 记录 h2spec 145/145、curl 互通、走私向量及流式上传测
 - [设计与验证记录](https://github.com/netonframework/http/blob/main/SPEC.md)
 
 链接指向仓库 main，可能随开发更新；本页的结论以记录的核对提交为准。
-

@@ -33,4 +33,3 @@ JVM UDP 每次接收一个数据报，不提供 GSO/GRO、逐数据报 ECN、源
 - [设计与验证记录](https://github.com/netonframework/io/blob/main/SPEC.md)
 
 链接指向仓库 main，可能随开发更新；本页的结论以记录的核对提交为准。
-

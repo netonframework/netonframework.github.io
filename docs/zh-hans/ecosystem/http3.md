@@ -31,4 +31,3 @@ README 记录 h3spec 49/49，以及 h3/h3-quinn、aioquic 的指定场景互通�
 - [设计与验证记录](https://github.com/netonframework/http3/blob/main/SPEC.md)
 
 链接指向仓库 main，可能随开发更新；本页的结论以记录的核对提交为准。
-
