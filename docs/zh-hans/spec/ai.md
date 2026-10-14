@@ -158,21 +158,33 @@ files、batches、fine-tuning、evals、assistants、vector stores、containers�
 - Anthropic `cache_control`（含 TTL）；
 - 未被 IR 建模的未知字段：保留原始 JSON，同协议回写时补回。
 
-### 4.5 Gemini thought signature（已定，2026-10-14）
+### 4.5 Gemini thought signature
 
-**结论：按必需处理。** Google 现行文档要求原样回传签名，但没有逐个型号写明缺失时的后果。社区多处报告，Gemini 3 对当前轮的 `functionCall` 部分做严格校验，缺签名时返回 400（"Function call is missing a thought_signature in functionCall parts"）；Gemini 2.5 不会报错，只是质量下降。依据用户规定的"无法判断时参照 new-api 最新版"，策略对齐 new-api `main`（`1b63c28`，2026-10-14）：
+分成两条**独立**的规则。前一条已定，后一条是有损的兼容模式，不能混为一谈。
 
-| 情况 | 处理 |
-|---|---|
-| 同协议（Gemini 入、Gemini 出） | 原样透传，签名自然保留 |
-| 历史里有真实签名（IR 元数据 `gemini.thoughtSignature`） | 原样写回，**不得**用占位值覆盖 |
-| 跨协议转到 Gemini、历史里没有真实签名 | 写入绕过占位值 `context_engineering_is_the_way_to_go`，规则同 new-api：每条 assistant 消息的**第一个** `functionCall` 部分；没有 `functionCall` 时写到第一个文本部分；从 assistant 消息里解析出的内联图片部分也写入。Responses 的每个 `function_call` 条目单独写入 |
-| 开关 | 厂商配置文件的 `gemini.functionCallThoughtSignature`，**默认开启**（与 new-api 默认一致） |
-| `functionResponse` 的 `id` | 默认移除（对齐 new-api 的 `RemoveFunctionResponseIdEnabled = true`） |
+**依据**：Google 现行文档要求原样回传签名，并区分了 `generateContent` 与 Interactions API 的签名位置和状态管理方式（Interactions 有状态模式由服务端管理签名），没有逐个型号写明缺失时的后果。社区报告称 Gemini 3 在 `generateContent` 下会严格校验当前轮的 `functionCall` 签名，缺失时返回 400；这一点**尚未实测**。
 
-- 每次写入占位值都产生诊断 `gemini_thought_signature_bypassed`（`warning` 级）。
-- **改进项（new-api 没有）**：Gemini 响应转成其他协议时，把真实签名记入 IR 元数据，回到 Gemini 时优先使用真实签名。客户端是 OpenAI 格式时，可选地在 `tool_calls[].extra_content.google.thought_signature` 中输出并接收签名。这个字段路径目前只有社区报告佐证，所以默认关闭，以 golden test 加真实上游冒烟测试确认后再开启。
-- 占位值属于非公开约定，Google 可能调整。由真实上游冒烟测试持续监控。
+#### 4.5.1 规则一：保留真实签名（已定，始终执行）
+
+- 签名**绑定到原来的内容块**：`functionCall` 部分按调用 ID 绑定，其他部分按它在本轮中的位置绑定。不做消息级字段，**不按工具名称查找复用**。
+- 原样保存，不修改、不覆盖；同协议透传时自然保留。
+- **只在一次转换内保留，不等于多轮往返无损。** 下一轮请求由客户端重新发起，签名要能回来，必须走下面某种跨请求机制。
+
+**跨请求回传机制**（按优先级）：
+
+| 机制 | 条件 | 说明 |
+|---|---|---|
+| A. 客户端回带 | 客户端协议有可原样回传的位置 | OpenAI 格式：`tool_calls[].extra_content.google.thought_signature`（Google OpenAI 兼容接口的约定，目前只有社区报告佐证）。Anthropic 格式：thinking 块的 `signature`（Anthropic 客户端本来就必须原样回传它）。Responses 格式：reasoning 条目的 `encrypted_content`。后两种都是**不透明字段**，签名经编码后放入，回来时校验来源再解码。每种都要先经 golden test 与真实客户端验证，验证前默认关闭 |
+| B. 宿主状态存储 | 宿主提供 `ThoughtSignatureStore` 实现 | 框架定义接口：按"租户 + 调用 ID（或响应 ID + 部分位置）"存取，**必须有容量上限、过期时间、租户隔离**。框架不提供默认的进程内实现，避免多实例部署下悄悄失效 |
+| C. 都没有 | — | 签名丢失。产生 `error` 级诊断 `gemini_thought_signature_missing`，按 §5.3 的策略处理 |
+
+#### 4.5.2 规则二：缺失时补占位值（有损兼容模式，默认关闭）
+
+- 模式名 `newApiCompatible`。行为对齐 new-api `main`（`1b63c28`，2026-10-14）：只用于 `generateContent`，**不用于 Interactions API**；每条 assistant 消息的第一个 `functionCall` 部分写入占位值 `context_engineering_is_the_way_to_go`；没有 `functionCall` 时写到第一个文本部分；从 assistant 消息解析出的内联图片部分也写入；Responses 的每个 `function_call` 条目单独写入。**已有真实签名的部分一律不写。**
+- **这是有损降级**：只是让请求通过校验，**不会恢复模型原来的推理状态**，回答质量可能下降。不得宣称为修复或无损往返。
+- 每次写入都产生 `error` 级诊断 `gemini_thought_signature_bypassed`。启用该模式时，应用须同时把它加入损耗策略的已授权降级列表（§5.3），否则 `safe` 会拒绝这次转换。
+- 开启条件：按接口与模型在厂商配置文件或渠道上开启，并且**先经真实上游验证**。占位值是非公开约定，Google 可能调整，必须由真实上游冒烟测试持续监控。
+- `functionResponse.id` 的处理**不照搬** new-api 的"默认删除"：只有在同名工具并行调用、结果乱序返回的测试中，调用与结果仍能正确对应，才可以删除。
 
 ---
 
@@ -198,6 +210,9 @@ files、batches、fine-tuning、evals、assistants、vector stores、containers�
 ### 5.3 损耗策略
 
 请求阶段按策略处理：`allow`（默认，完成转换并返回诊断）、`safe`（出现 `error` 级诊断时拒绝转换）、`strict`（出现任何诊断都拒绝）。响应与流式转换在三种策略下都完成转换并返回诊断。具体用哪种策略由应用决定（如按渠道配置）。
+
+- **已授权降级**：应用可以给策略附带一个诊断代码白名单 `allowedLosses`。`safe` 与 `strict` 对白名单内的代码放行，但诊断照常记录。显式开启某个兼容模式时，由应用把对应代码加入白名单，例如 `newApiCompatible` 对应 `gemini_thought_signature_bypassed`（§4.5.2）。
+- **必要状态缺失属于 `error` 级**：推理签名、工具调用与结果的对应关系等丢失，会改变模型的行为，不是展示层面的差异。
 
 ### 5.4 宿主钩子
 
@@ -309,7 +324,8 @@ data class Usage(
 ## 十三、验收
 
 - **保真**：同协议透传字节等价（只改模型名）；四协议自身往返无损；4×4 转换的 golden test（请求、非流式、流式）。
-- **最新特性往返**：推理签名、Gemini thought signature（含 §4.5 的占位规则：第一个 functionCall、无调用时第一个文本、真实签名不被覆盖）、Responses 加密推理与 item ID、`cache_control` 及 TTL。
+- **最新特性往返**：推理签名、Responses 加密推理与 item ID、`cache_control` 及 TTL。
+- **Gemini 签名完整链路**（§4.5）：非流式、流式、并行工具调用、多步工具调用，以及**下一轮请求**的完整往返；三种回传通道与状态存储（含过期、容量、租户隔离）；缺失时按策略拒绝或降级；同名工具并行、结果乱序时调用与结果仍能对应。最后用真实上游验证占位兼容，**不能只断言生成的 JSON 里有那个字符串**。
 - **用量**：完整、部分、未知三种状态；取消与截断；缓存写入 5 分钟与 1 小时拆分；推理 token；`raw` 原样保留。
 - **错误**：分类与回退判断；按客户端协议渲染；内部异常不外泄。
 - **厂商配置**：每个内置配置的方言请求快照；新增厂商只改配置即可接入。
@@ -321,6 +337,6 @@ data class Usage(
 
 | 项 | 决定时机 |
 |---|---|
-| Gemini thought signature | **已定**，见 §4.5：按必需处理，策略对齐 new-api 最新版 |
+| Gemini thought signature | 规则一（保留真实签名）已定。待定：跨请求回传机制 A 的三种通道哪些可用；规则二（占位兼容）在各接口、各模型上是否需要、是否有效。都以真实上游验证为准（§4.5） |
 | 实时协议的用量提取与计费事实的具体口径 | 第 6 步 |
 | 是否把 `neton.ai.protocol` 拆成独立模块 | 第 4 步后视依赖情况而定 |
