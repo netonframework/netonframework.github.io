@@ -83,9 +83,9 @@ neton-ai 只提供 AI 领域特有的部分：协议、转换、用量事实、�
 | 2 | 完成 | `ProtocolConverter` / `StreamConverter`：诊断与损耗策略、用量完整性、错误按客户端协议渲染 |
 | 3 | 完成 | SigV4、AWS event-stream、Google 服务账号令牌、Bedrock / Vertex / Azure 路径与报文；17 家厂商配置（取值按各家 2026-10-15 的官方文档，出处写在代码注释里） |
 | 4 | 完成 | gateway 的编解码、SSE 分帧、UTF-8 解码、SigV4、event-stream 改用本层；原有编解码测试改为对本层的行为等价测试；gateway 单测与 harness 端到端 200 个场景全部通过 |
-| 5 | 部分 | Anthropic 结构化输出（`output_config.format`，兼容读取已废弃的 `output_format`）已完成；Bedrock Converse、gateway 跨协议 Responses 入站未做 |
-| 6 | 未开始 | |
-| 7 | 部分 | SDK 已建立在 IR 之上：有序内容块、推理、多模态、`providerOptions`、结构化输出参数、Gemini 与 Responses provider；Agent 能力未做 |
+| 5 | 完成 | Anthropic 结构化输出（`output_config.format`，兼容读取已废弃的 `output_format`）；Bedrock Converse 作为第五种报文格式（Bedrock 上所有模型）；gateway 的 `/v1/responses` 可打非 OpenAI 上游（只桥接无状态请求，见 gateway 文档） |
+| 6 | 部分 | 非文本端点的用量提取（token + 按件单位：图片数、音频秒数、输入字符、检索单位）；multipart 处理；`RealtimeBridge`（Realtime 与 Responses WebSocket 的双向转发、事件改写与拒绝、用量提取），与 socket 实现无关。gateway 的实时端点接线等 neton-websocket 提供客户端（含 TLS）后再做 |
+| 7 | 完成 | SDK 建立在 IR 之上（有序内容块、推理、多模态、`providerOptions`、Gemini 与 Responses provider）；`generateObject` / `streamObject`（拒绝、截断、非法输出、调用失败分开报告，流式半成品不作为结果）；`AiAgentOptions`（停止条件、`prepareStep`、观测回调、工具授权与审批分离、工具调用上下文、显式声明的并行与并发上限、每步明细）；从序列化描述生成 schema；MCP 客户端（Streamable HTTP）；测试替身 `ScriptedAiProvider` |
 
 迁移 gateway 时，按既有生产行为与官方规范定下的细节：
 
@@ -107,6 +107,8 @@ neton-ai 只提供 AI 领域特有的部分：协议、转换、用量事实、�
 ## 三、协议与端点覆盖
 
 ### 3.1 文本协议（v1 必须）
+
+> 实现中另加了第五种：Amazon Bedrock Converse（`WireFormat.BEDROCK_CONVERSE`），它是 Bedrock 上所有模型共用的接口，接入它才覆盖 Nova、Llama、Mistral 等非 Anthropic 模型。
 
 | 协议 | 端点 | 入站 | 上游 |
 |---|---|---|---|
