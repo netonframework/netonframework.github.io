@@ -158,6 +158,22 @@ files、batches、fine-tuning、evals、assistants、vector stores、containers�
 - Anthropic `cache_control`（含 TTL）；
 - 未被 IR 建模的未知字段：保留原始 JSON，同协议回写时补回。
 
+### 4.5 Gemini thought signature（已定，2026-10-14）
+
+**结论：按必需处理。** Google 现行文档要求原样回传签名，但没有逐个型号写明缺失时的后果。社区多处报告，Gemini 3 对当前轮的 `functionCall` 部分做严格校验，缺签名时返回 400（"Function call is missing a thought_signature in functionCall parts"）；Gemini 2.5 不会报错，只是质量下降。依据用户规定的"无法判断时参照 new-api 最新版"，策略对齐 new-api `main`（`1b63c28`，2026-10-14）：
+
+| 情况 | 处理 |
+|---|---|
+| 同协议（Gemini 入、Gemini 出） | 原样透传，签名自然保留 |
+| 历史里有真实签名（IR 元数据 `gemini.thoughtSignature`） | 原样写回，**不得**用占位值覆盖 |
+| 跨协议转到 Gemini、历史里没有真实签名 | 写入绕过占位值 `context_engineering_is_the_way_to_go`，规则同 new-api：每条 assistant 消息的**第一个** `functionCall` 部分；没有 `functionCall` 时写到第一个文本部分；从 assistant 消息里解析出的内联图片部分也写入。Responses 的每个 `function_call` 条目单独写入 |
+| 开关 | 厂商配置文件的 `gemini.functionCallThoughtSignature`，**默认开启**（与 new-api 默认一致） |
+| `functionResponse` 的 `id` | 默认移除（对齐 new-api 的 `RemoveFunctionResponseIdEnabled = true`） |
+
+- 每次写入占位值都产生诊断 `gemini_thought_signature_bypassed`（`warning` 级）。
+- **改进项（new-api 没有）**：Gemini 响应转成其他协议时，把真实签名记入 IR 元数据，回到 Gemini 时优先使用真实签名。客户端是 OpenAI 格式时，可选地在 `tool_calls[].extra_content.google.thought_signature` 中输出并接收签名。这个字段路径目前只有社区报告佐证，所以默认关闭，以 golden test 加真实上游冒烟测试确认后再开启。
+- 占位值属于非公开约定，Google 可能调整。由真实上游冒烟测试持续监控。
+
 ---
 
 ## 五、转换、诊断与损耗策略
@@ -293,7 +309,7 @@ data class Usage(
 ## 十三、验收
 
 - **保真**：同协议透传字节等价（只改模型名）；四协议自身往返无损；4×4 转换的 golden test（请求、非流式、流式）。
-- **最新特性往返**：推理签名、Gemini thought signature、Responses 加密推理与 item ID、`cache_control` 及 TTL。
+- **最新特性往返**：推理签名、Gemini thought signature（含 §4.5 的占位规则：第一个 functionCall、无调用时第一个文本、真实签名不被覆盖）、Responses 加密推理与 item ID、`cache_control` 及 TTL。
 - **用量**：完整、部分、未知三种状态；取消与截断；缓存写入 5 分钟与 1 小时拆分；推理 token；`raw` 原样保留。
 - **错误**：分类与回退判断；按客户端协议渲染；内部异常不外泄。
 - **厂商配置**：每个内置配置的方言请求快照；新增厂商只改配置即可接入。
@@ -305,6 +321,6 @@ data class Usage(
 
 | 项 | 决定时机 |
 |---|---|
-| Gemini thought signature 在各型号上是否为多轮工具调用的必需项（缺失时是否报错） | 第 1 步前按 Google 最新文档核实 |
+| Gemini thought signature | **已定**，见 §4.5：按必需处理，策略对齐 new-api 最新版 |
 | 实时协议的用量提取与计费事实的具体口径 | 第 6 步 |
 | 是否把 `neton.ai.protocol` 拆成独立模块 | 第 4 步后视依赖情况而定 |
