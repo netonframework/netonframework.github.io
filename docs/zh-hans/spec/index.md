@@ -22,6 +22,10 @@
 - [参数绑定规范 v1](./parameter-binding.md) — 参数推断、类型转换、绑定规则
 - [WebSocket 规范](./websocket.md) — 握手快照、可取消等待隔离、关闭结果、单消费者语义、路由入站策略、三种入口及一致性验收 **(Draft v1 r12；契约待实施，API 未冻结)**
 
+## AI
+
+- [neton-ai 规范：协议层与模型接入](./ai.md) — 四协议无损报文模型与统一中间表示、跨协议转换与诊断、流式与用量事实、托管上游、厂商配置文件、SDK 层边界 **(Draft v1)**
+
 ## 安全
 
 - [Neton Application 生态规范](./application/index.md) — 应用架构、RBAC、MFA、防滥用及工程交付（**应用层**）
