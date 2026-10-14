@@ -72,7 +72,29 @@ neton-ai 只提供 AI 领域特有的部分：协议、转换、用量事实、�
 
 `neton-application-module-gateway/logic/protocol`（约 2,300 行）：OpenAI、Azure、Anthropic、Gemini、Bedrock、Vertex 六类上游；以 **OpenAI Chat Completions 为转换中枢**；SSE 分帧、AWS event-stream、SigV4、Vertex OAuth、multipart。其保真矩阵自述的有损项：`cache_control`、Anthropic 服务端工具、Gemini thought signature、`n>1`；Responses 只能同协议；Anthropic 结构化输出未做。这些能力是通用协议能力，应下沉到本层（§12 第 4 步）。
 
-### 2.3 主流项目的实际标准
+### 2.3 实施进度（2026-10-15）
+
+§2.1 的三个 P0 已修复：工具异常只回稳定错误码（`AiToolException` 可显式给出可公开的信息）；流式用量由厂商配置文件决定是否请求；块顺序由 IR 保持。
+
+| 步 | 状态 | 说明 |
+|---|---|---|
+| 0 | 完成 | 三个 P0 都有回归测试 |
+| 1 | 完成 | `neton.ai.protocol`：IR、四协议编解码、自身往返 golden test、§4.4 保留项测试 |
+| 2 | 完成 | `ProtocolConverter` / `StreamConverter`：诊断与损耗策略、用量完整性、错误按客户端协议渲染 |
+| 3 | 完成 | SigV4、AWS event-stream、Google 服务账号令牌、Bedrock / Vertex / Azure 路径与报文；17 家厂商配置（取值按各家 2026-10-15 的官方文档，出处写在代码注释里） |
+| 4 | 完成 | gateway 的编解码、SSE 分帧、UTF-8 解码、SigV4、event-stream 改用本层；原有编解码测试改为对本层的行为等价测试 |
+| 5–6 | 未开始 | |
+| 7 | 部分 | SDK 已建立在 IR 之上：有序内容块、推理、多模态、`providerOptions`、结构化输出参数、Gemini 与 Responses provider；Agent 能力未做 |
+
+迁移 gateway 时，按既有生产行为与官方规范定下的细节：
+
+- 开启 thinking 而 `max_tokens` 不够容纳预算时，把 `max_tokens` 抬到「预算 + 1024」，不放弃推理；开启 thinking 时不发送 `temperature` / `top_k`。
+- 写往 OpenAI Chat 的纯文本内容合并为字符串（多段以换行连接），因为不少兼容服务不接受数组形式。
+- OpenAI 的 `json_schema` 写到 Gemini 的 `responseJsonSchema`（接受 JSON Schema），不写只认 OpenAPI 子集的 `responseSchema`。
+- Gemini 没有调用 ID 时按出现顺序生成内部 ID，只用于回配，不写出；发给客户端的响应带上真实 ID，发给上游只写来自 Gemini 的 ID。
+- 上游流里出现无法解析的数据时以错误结束，不跳过。
+
+### 2.4 主流项目的实际标准
 
 - **new-api**：入站支持 OpenAI Chat 与 Responses、Anthropic Messages、Gemini（含 `streamGenerateContent`）、Realtime 与 Responses 的 WebSocket、图片生成与编辑、语音合成、转写、翻译、embeddings、rerank，以及任务插件。上游包括 OpenAI、Anthropic、Gemini、Azure、Bedrock、Vertex、DeepSeek、Qwen 和其他兼容服务。其 **RelayKit 是一个独立构建的协议模块**：四协议两两互转（请求、非流式、流式），每个结果带质量等级、实际路径和诊断；有损耗策略（allow / safe / strict）、媒体解析钩子、统一 usage（含 Claude 缓存写入的 5 分钟与 1 小时拆分），并附带上游原始 usage 供计费；HTTP、SSE 读写、渠道、鉴权、计费由宿主完成。
 - **LiteLLM**：端点族更宽（files、batches、vector stores、assistants、OCR、search 等），作为覆盖面的上限参照，不作为本期目标。
@@ -249,7 +271,8 @@ files、batches、fine-tuning、evals、assistants、vector stores、containers�
 ## 六、流式
 
 - 提供 SSE 解析与输出、AWS event-stream 解帧、增量 UTF-8 解码。读写 socket 由宿主完成。
-- **每条流一个 `StreamState`**：负责工具参数拼接、按块顺序开闭（先关后开）、用量累加、终止状态。上游结束后**必须**调用 `finalize`，部分转换器在这一步补发终止事件与最终用量。
+- **每条流一个状态**（`StreamConverter`）：负责工具参数拼接、块的开闭、用量累加、终止状态。上游结束后**必须**调用 `finish`，部分转换器在这一步补发终止事件与最终用量。
+- 上游可能交错发送多个块（Anthropic 的多个 content block、OpenAI 并行工具调用的参数），IR 允许同时打开多个块、按序号寻址；要求块连续输出的目标协议（Anthropic、Responses）由编码器重新排成「一个块完整输出后再输出下一个」。
 - 上游中途出错时，按**目标协议**的格式生成错误事件。目标是 Responses 时可选附带 `sequence_number`。
 - 被取消或截断的流，用量记为 `PARTIAL`（§7）。
 
