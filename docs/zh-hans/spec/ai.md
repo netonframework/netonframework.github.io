@@ -82,8 +82,9 @@ neton-ai 只提供 AI 领域特有的部分：协议、转换、用量事实、�
 | 1 | 完成 | `neton.ai.protocol`：IR、四协议编解码、自身往返 golden test、§4.4 保留项测试 |
 | 2 | 完成 | `ProtocolConverter` / `StreamConverter`：诊断与损耗策略、用量完整性、错误按客户端协议渲染 |
 | 3 | 完成 | SigV4、AWS event-stream、Google 服务账号令牌、Bedrock / Vertex / Azure 路径与报文；17 家厂商配置（取值按各家 2026-10-15 的官方文档，出处写在代码注释里） |
-| 4 | 完成 | gateway 的编解码、SSE 分帧、UTF-8 解码、SigV4、event-stream 改用本层；原有编解码测试改为对本层的行为等价测试 |
-| 5–6 | 未开始 | |
+| 4 | 完成 | gateway 的编解码、SSE 分帧、UTF-8 解码、SigV4、event-stream 改用本层；原有编解码测试改为对本层的行为等价测试；gateway 单测与 harness 端到端 200 个场景全部通过 |
+| 5 | 部分 | Anthropic 结构化输出（`output_config.format`，兼容读取已废弃的 `output_format`）已完成；Bedrock Converse、gateway 跨协议 Responses 入站未做 |
+| 6 | 未开始 | |
 | 7 | 部分 | SDK 已建立在 IR 之上：有序内容块、推理、多模态、`providerOptions`、结构化输出参数、Gemini 与 Responses provider；Agent 能力未做 |
 
 迁移 gateway 时，按既有生产行为与官方规范定下的细节：
