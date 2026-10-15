@@ -22,6 +22,10 @@
 > Client 用 `HttpClient.createWith(::createHyper4kHttpClient) { }` /
 > `createWith(::createKtorHttpClient)`，二者都**不再**声明无参入口。§二～§四、§5.3、§5.4、
 > §七 已按此改写；§一、§九～§十一 是 hyper4k 时代的问题陈述与落地记录，保留原文。
+>
+> **修订（2026-10-16，所有组件默认自研网络栈）**：新增规则 5——Server、Client、SMTP、WebSocket
+> 的默认实现都在自研 io / http / tls / websocket 上；SMTP 已从 `neton-http-ktor`（libcurl / Ktor
+> socket）移入 `neton-http`；框架示例与全部官方宿主已去掉 hyper4k / Ktor 依赖。
 
 ---
 
@@ -46,7 +50,7 @@
 
 ## 二、设计原则
 
-四条规则。缺任何一条，「删掉 Ktor 也稳定」都不成立。
+五条规则。缺任何一条，「删掉 Ktor 也稳定」都不成立。
 
 ### 规则 1：默认引擎 = Server + Client 一起交付
 
@@ -87,6 +91,30 @@ fallback（§4.3）随之删除。
 框架任何模块（storage、ai、未来的 webhooks…）发出站请求**只能**经
 `neton.http.client.HttpClient` 接口。`import io.ktor.client` 只允许出现在
 `neton-http-ktor` 目录内。这是一条可 grep 的规则，应进 CI。
+
+### 规则 5：所有组件默认走 Neton 自研网络栈（2026-10-16 冻结）
+
+Neton 的网络能力**默认全部**建立在自研的 Kotlin/Native io / http / tls / websocket 上（协程 reactor，
+不经 Rust 引擎或 Ktor），并都由框架自带，不需要应用引入任何引擎模块：
+
+| 能力 | 默认实现 | 入口 |
+| --- | --- | --- |
+| HTTP Server | `neton-http` 的 `DefaultHttpAdapter` | `http { }` |
+| 出站 HTTP Client | `neton-http` 的内置客户端 | `HttpClient.create { }` |
+| SMTP | `neton-http` 的内置 `SmtpTransport` | `defaultSmtpTransport()` |
+| WebSocket | `neton-websocket` 的默认 provider（netonstream websocket） | `websocket { }` |
+
+约束：
+
+- 框架模块、应用模块（`neton-application-module-*` 等）、官方宿主（neton-application、kedao、
+  privchat-application、NewGate、itwind、Yese、vip-application……）与 `examples/` **不得**依赖
+  `neton-http-hyper4k` / `neton-http-ktor`，也不得在源码里写 `http(::Hyper4kHttpAdapter)`、
+  `http(::KtorHttpAdapter)`、`createWith(::createHyper4kHttpClient)` 这类显式选择。
+- 可选引擎只用于**引擎对比**（benchmark、HttpArena 这类同场比较）与引擎自身的测试；
+  若某个应用确有理由显式选用，必须在装配代码旁写明理由，并同步本表。
+- 新增网络能力（新协议、新出站通道）同样先在自研栈上实现，再考虑适配第三方。
+- 可 grep：上述目录出现 `neton-http-hyper4k`、`neton-http-ktor`、`Hyper4kHttpAdapter`、
+  `KtorHttpAdapter`、`createHyper4kHttpClient`、`createKtorHttpClient` 即违规。
 
 ---
 
