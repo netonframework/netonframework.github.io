@@ -10,7 +10,7 @@
 **负责**：评论与回复、盖楼、楼层号、支持 / 反对、热门评论、精选与置顶、跨对象的热评榜、折叠、举报、敏感词、审核、禁言、限流、「我的评论」「回复我的」。
 
 **不负责**：
-- 被评论对象本身：通过 §8 的解析端口询问对象所在模块。
+- 被评论对象本身：通过 §9 的解析端口询问对象所在模块。
 - 用户资料、等级、勋章：通过装饰端口从 member 等模块读取。
 - 通知下发：只发出事件（被回复、被 @、被赞），由通知或推送模块决定是否提醒。
 
@@ -59,14 +59,14 @@
 
 | 分组 | 字段 |
 | --- | --- |
-| 归属 | id, target_type, target_id, user_id |
+| 归属 | id, target_type, target_id, user_id?（导入的评论可以没有平台账号）, external_author?(jsonb：名称、头像，导入时使用), origin(`native`/`imported`), source_ref?（来源记录，如采集记录 ID） |
 | 树 | parent_id?（回复的是哪条）, root_id（所在顶层评论）, path（祖先 ID 数组，从顶层到父级）, depth, reply_to_user_id? |
 | 楼层 | floor：**每条评论都有楼号**（含回复）。盖楼形态下引用链上每一层都显示自己的楼号；楼中楼形态下只在顶层显示 |
 | 内容 | content（纯文本，最长可配置）, mentions(jsonb：@ 的用户), images(jsonb), emoji 用文本占位符表示，客户端渲染 |
 | 环境 | ip_region（服务端按客户端地址解析，客户端传不进来）, device_tail（客户端上报的机型，限长、过滤，后台可关）, client（app / web / wap） |
 | 互动 | support_count, against_count, reply_count（直接回复数）, descendant_count（整条链下的回复总数） |
 | 排序 | hot_score（§5.2） |
-| 状态 | status：`visible` / `pending`（待审，仅作者本人可见） / `folded`（折叠，§6.4） / `hidden`（管理员隐藏） / `deleted`（作者删除） |
+| 状态 | status：`visible` / `pending`（待审，仅作者本人可见） / `folded`（折叠，§7.4） / `hidden`（管理员隐藏） / `deleted`（作者删除） |
 | 标记 | pinned（对象内置顶）, featured（精选 / 神评）, author_badge（作者 / 编辑 / 官方，由解析端口提供） |
 | 时间 | created_at, updated_at |
 
@@ -123,9 +123,28 @@
 - 只取可见、未折叠、所属对象仍公开的评论；同一对象最多取 K 条，避免一篇文章刷屏。
 - 结果定时计算并缓存。
 
-## 6. 治理
+## 6. 导入
 
-### 6.1 审核模式
+评论可以从外部批量导入（如 [module-collect](collect-module.md) 采到的评论），用于迁移旧站数据或给内容补充讨论。
+
+```kotlin
+interface CommentImporter {
+    /** 按 sourceRef 幂等。replyToSourceRef 指向同批或已导入的另一条评论，用于还原盖楼关系。 */
+    suspend fun import(targetType: String, targetId: String, items: List<ImportedComment>): ImportResult
+}
+// ImportedComment：sourceRef, content, author(名称、头像) 或 userId, publishedAt, likes?, ipRegion?, replyToSourceRef?
+```
+
+- 导入的评论 `origin=imported`：没有平台账号时用 external_author 展示名称和头像；也可以指定平台账号（如迁移旧站用户）。
+- 楼层按原始发布时间顺序分配；同一批里先导入被回复的评论，盖楼关系照常还原。
+- 原始点赞数可以作为初始支持数（按参数决定），之后的投票正常累加。
+- 导入的评论同样过敏感词和审核模式；不触发「被回复 / 被 @」通知。
+- 后台可以按 origin 和来源筛选，批量隐藏或删除某次导入。
+- 导入也会更新对象的评论数，并参与热门评论计算（可配置为不参与）。
+
+## 7. 治理
+
+### 7.1 审核模式
 
 按对象类型配置，单个对象可以覆盖：
 
@@ -135,39 +154,39 @@
 | `pre`（先审后发） | 全部待审，审核通过才可见 |
 | `off` | 不审（只做敏感词拦截） |
 
-### 6.2 敏感词与内容过滤
+### 7.2 敏感词与内容过滤
 
 - 敏感词三种处理：`block` 直接拒绝发布并告知原因、`review` 送审、`mask` 替换成 *** 后发布。
 - 过滤器可替换：`CommentContentFilter` 接口，默认实现是敏感词表（AC 自动机）；可以叠加外部或 AI 内容安全服务。
 
-### 6.3 举报
+### 7.3 举报
 
 举报达到阈值（默认 3 个不同用户）自动转待审；管理员处理时可以一并隐藏、禁言作者。
 
-### 6.4 折叠
+### 7.4 折叠
 
 - 反对数远高于支持数（比例和最低票数可配置）的评论自动折叠，显示「该评论已被折叠，点击查看」。
 - 管理员也可以手动折叠。折叠不同于隐藏：内容仍可点开查看。
 
-### 6.5 禁言
+### 7.5 禁言
 
 - 按全局、对象类型或单个对象禁言，可设到期时间。
 - 被禁言用户发评论时返回明确的错误码和到期时间，客户端据此提示。
 
-### 6.6 删除
+### 7.6 删除
 
 - 作者可删除自己的评论（软删，保留占位和楼号）。
 - 管理员隐藏；对象删除时，相关评论随对象删除事件一并清理。
 
-## 7. 限流与防刷
+## 8. 限流与防刷
 
 - 发评论：按用户、IP 分别限流；同一用户对同一对象重复发送相同内容视为重复提交；新注册账号可配置冷却期。
 - 投票、举报：按用户、IP 限流。
 - 全部经 Neton 路由限流和 Redis 计数实现，阈值在配置里。
 
-## 8. 扩展端口
+## 9. 扩展端口
 
-### 8.1 对象解析（被评论对象所在模块实现）
+### 9.1 对象解析（被评论对象所在模块实现）
 
 ```kotlin
 interface CommentTargetResolver {
@@ -186,7 +205,7 @@ data class CommentTarget(
 
 每个对象类型一个解析器，模块初始化时注册；未注册的类型一律拒绝。
 
-### 8.2 用户装饰
+### 9.2 用户装饰
 
 ```kotlin
 interface CommentUserDecorator {
@@ -197,17 +216,17 @@ interface CommentUserDecorator {
 
 默认实现经 member 适配器读取昵称和头像；有等级、勋章体系的产品自行实现。评论接口批量调用一次，不逐条查。
 
-### 8.3 事件
+### 9.3 事件
 
 `CommentCreated`、`CommentReplied(toUserId)`、`CommentMentioned(userIds)`、`CommentVoted`、`CommentHidden`、`CommentDeleted`、`CommentCountChanged(targetType, targetId, visibleCount)`。
 
 对象所在模块订阅 `CommentCountChanged` 回写自己的评论数；通知模块订阅回复、@、点赞事件。
 
-### 8.4 配置
+### 9.4 配置
 
 按对象类型定义（类型化配置，归 system 的配置体系）：默认展示形态、审核模式、内容最大长度、是否允许图片、热门阈值和条数、折叠规则、楼层深度上限、IP 属地开关、设备小尾巴开关、限流阈值。
 
-## 9. 接口
+## 10. 接口
 
 **App / Web（`/app/comment/*`，读匿名，写需账号令牌）**
 
@@ -227,20 +246,20 @@ interface CommentUserDecorator {
 
 **后台（`/admin/comment/*`）**：按对象 / 用户 / 状态 / 关键词查询；待审队列（通过、隐藏、折叠）；置顶、精选；举报处理；敏感词；禁言；对象评论开关（关闭、锁定）；审核日志；统计。
 
-## 10. 权限点
+## 11. 权限点
 
 `comment:view`、`comment:review`、`comment:feature`（置顶、精选）、`comment:report:handle`、`comment:sensitive:manage`、`comment:ban:manage`、`comment:target:manage`（关闭、锁定对象评论）。
 
-## 11. 后台前端（neton-application-front-comment）
+## 12. 后台前端（neton-application-front-comment）
 
 评论列表（可切换盖楼 / 楼中楼预览）、待审队列、举报、敏感词、禁言、热评榜。沿用 front 的 i18n、权限、资源页规范。
 
-## 12. 分期
+## 13. 分期
 
 | 期 | 内容 |
 | --- | --- |
 | P1 | 评论树与楼层、两种展示形态、支持 / 反对、热度分与热门评论、置顶精选、敏感词、先发后审、举报、删除、限流、我的评论、解析与装饰端口、后台基础页面 |
-| P2 | 热评榜、自动折叠、禁言、先审后发、回复我的与 @、图片评论 |
+| P2 | 热评榜、自动折叠、禁言、先审后发、回复我的与 @、图片评论、评论导入 |
 | P3 | 外部 / AI 内容安全过滤器、风控事件、评论统计报表 |
 
 itwind 第一期用 P1，热评榜随 P2 跟上（IT之家的「热评」频道）。

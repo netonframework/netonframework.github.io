@@ -267,7 +267,7 @@ draft ──提交──► pending ──通过──► published ──下线
 
 ### 10.3 外部写入端口
 
-供其他模块（AI 编辑部、采集、导入工具）交付内容：
+供其他模块交付内容，例如 [module-collect](collect-module.md) 的 `content.draft` 投递端口、产品的 AI 编辑部、导入工具：
 
 ```kotlin
 interface ContentDraftWriter {
