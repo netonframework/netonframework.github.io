@@ -1,7 +1,7 @@
 # Neton 内容平台套件架构
 
 > 标识：NETON-APP-CONTENT-PLATFORM
-> 日期：2026-10-15 · 状态：Draft r3（第二轮评审：定制三分法、媒体关联与授权契约、装配契约基于生成清单、一致性承诺的准确表述、开工顺序）
+> 日期：2026-10-15 · 状态：Draft r3（第二轮评审：定制三分法、媒体关联与授权契约、装配契约基于生成清单、一致性承诺的准确表述、开工顺序；2026-10-15 按首期实现校准：开放分组前缀、事件编解码登记、通用对象事件、媒体 M1、框架已知问题）
 > 范围：内容平台相关开源模块的总体架构、统一契约、对接规则和验收标准。各模块细节见各自规范。
 
 ## 1. 定位
@@ -86,7 +86,7 @@
 | 注册表 | 向另一个模块声明自己的类型、策略、解析器 | 内容类型、上传业务类型、对象解析器、投递端口 |
 | 事件 | 通知别的模块某件事发生了 | `content.item.published` |
 | 配置定义 | 产品调整模块行为 | 类型化配置项 |
-| HTTP 接口 | 客户端、外部系统接入 | `/app/*`、`/admin/*`、`/open/*` |
+| HTTP 接口 | 客户端、外部系统接入 | `/app/*`、`/admin/*`、`/platform/*` |
 
 禁止的做法：
 - 读写别的模块的表。
@@ -153,7 +153,10 @@ data class ObjectRef(val type: String, val id: String)    // ObjectRef("content.
 - 不承诺「恰好一次」：消费方必须按事件 ID 幂等，并能在投递器重启、重复投递后恢复到正确状态。
 - 不承诺全局顺序：同一对象的事件带单调递增的 `subjectVersion`，消费方据此丢弃过期事件。
 - 不允许在事务提交前直接向外部系统发送任何东西；外部副作用一律走可重试投递。
-- 事件信封：`id`、`type`（`<模块>.<实体>.<过去式动作>`）、`version`（载荷版本）、`subject`（ObjectRef）、`subjectVersion`、`actor`、`occurredAt`、`data`（只放 ID 和少量摘要）。
+- 事件信封：`id`、`type`（`<模块>.<实体>.<过去式动作>`）、`version`（载荷版本）、`subject`（ObjectRef）、`subjectVersion`、`actor`、`occurredAt`、`data`（只放 ID 和少量摘要）。实现上是契约库的 `contract.core.SuiteEvent : DomainEvent` 接口（`eventId`、`type`、`subject`、`subjectVersion`、`actor`、`occurredAt`），载荷字段直接是事件类的属性；`eventId` 用 `EventIds.next(now)` 生成。
+- **通用对象事件**（契约库 `contract.core`，任何拥有对象的模块都可发布、任何能力模块都可订阅，双方互不认识）：`ObjectViewed`（`object.viewed`，详情读取时发布，足迹 / 热度用）、`ObjectUnavailable`（`object.unavailable`，`permanent` 区分暂时下线与彻底删除）、`ObjectAvailable`（`object.available`）、`ObjectCounterChanged`（`object.counter_changed`，counter = `comments` / `favorites` / `likes` / `follows`，value 为绝对值，由计数维护方在同一事务内发布、对象拥有方同步回写）。模块不再各自定义「已浏览」「计数变化」之类的同义事件。
+- 发布在 `db.transaction { … bus.publish(event) }` 内进行；监听者实现 `DomainEventListener<E>`，`listenerId` 形如 `<模块>.<用途>`，稳定不变（写进投递记录），按上表选 `DeliveryMode.SYNC` 或 `RETRYABLE`。
+- **事件编解码登记**：可重试投递要把事件序列化进 `DomainEventStore`。infra 在 bootstrap 里绑定默认的 `SerializerDomainEventCodec`；**发布方和订阅方**都在自己的 bootstrap 里登记用到的事件类型：`(ctx.getOrNull(DomainEventCodec::class) as? SerializerDomainEventCodec)?.register(X::class, X.serializer())`（重复登记同一 serializer 无害）。未登记的类型无法走可重试投递。
 - 每个模块在规范里列出自己发布的事件、投递方式和载荷；这些都是公开契约，变更遵循 §10 的版本规则。
 
 ### 5.4 模块实现约定
@@ -162,15 +165,21 @@ data class ObjectRef(val type: String, val id: String)    // ObjectRef("content.
 | --- | --- |
 | 仓库 | 每个模块一个服务端仓库 `neton-application-module-<name>`（根工程是实现，`contract/` 子工程是公开契约，宿主以 `:module-<name>-contract` 装配）和一个后台页面仓库 `neton-application-front-<name>` |
 | 依赖 | 只依赖基础模块（system、infra）的实现，以及其他套件模块的 contract 子工程 |
-| 数据 | 只支持 PostgreSQL；表名以模块名为前缀；只经 migrate 建表和升级；不读别的模块的表。规范里标为 jsonb 的结构化字段，第一期以 `text` 列存 JSON（框架行映射暂不支持 jsonb），需要按字段筛选的走各模块的索引表 |
-| 接口分组 | `/app/<模块>/*`（终端用户，账号令牌）、`/admin/<模块>/*`（后台，管理员令牌）、`/platform/<模块>/*`（外部系统，platform appKey 签名） |
+| 数据 | 只支持 PostgreSQL；表名以模块名为前缀；只经 migrate 建表和升级；不读别的模块的表。结构化字段以 `text` 列存 JSON（框架行映射只支持 Long / Int / Double / Float / Boolean / ByteArray / String，不支持 jsonb），数组同理；需要在 SQL 里取值时临时 `::jsonb`，需要按字段筛选的走各模块的索引表 |
+| 接口分组 | `/app/<模块>/*`（终端用户，账号令牌）、`/admin/<模块>/*`（后台，管理员令牌）、`/platform/<模块>/*`（外部系统，签名鉴权）。分组由 controller 所在包决定（`controller.app.*` / `controller.admin.*` / `controller.open.*`），`@Controller` 只写业务前缀；**开放分组的包名是 `open`，但挂载前缀是 `/platform`，没有 `/open/*` 路径**。套件模块不依赖 platform 模块的实现，开放接口的签名由模块自带（如 collect 的 `collect_workers` + HMAC-SHA256） |
 | 分页 | 终端用户列表用游标分页（`cursor` + `limit`，响应 `{ list, nextCursor }`）；后台表格用页码分页（`pageNo` + `pageSize`） |
 | 写接口 | 幂等语义写进规范（重复收藏、重复投递不产生重复数据）；按用户限流 |
 | 错误 | 消息只写大写下划线机器码，前端按码翻译；访问拒绝统一经契约库的 `AccessDecision.orThrow()` 映射（不存在 404、需登录 401、其余 403） |
 | 校验 | 入参在业务逻辑里显式校验，不只依赖 DTO 注解 |
-| 权限 | `<模块>:<资源>:<动作>`，资源段与路由段一致；只声明，角色由 system 管理；全部出现在后台菜单种子里 |
+| 权限 | `<模块>:<资源>:<动作>`，资源段与后台路由段一致（`/admin/push/topic/page` → `push:topic:query`；带连字符的资源照写，如 `comment:sensitive-word:query`）；动作用 `query` / `create` / `update` / `delete` 及少量业务动作（`send`、`run`、`review`、`retry`……）；只声明，角色由 system 管理；全部出现在后台菜单种子里（页面 type=2 用 query，其余为按钮 type=3），默认授予 `super_admin` |
 | 配置 | system 的类型化配置定义（`SettingDefinition`） |
 | 测试 | 单元测试 + 宿主装配后的真库验证 + 契约测试 |
+| 装配 | 依赖 `ObjectRegistry` 的逻辑类在 `init/<Name>RuntimeBootstrap` 里手工构造并 `ctx.bind`（不用 @Logic，它早于 bootstrap）；共享注册表一律 `bindIfAbsent`，与装配先后无关 |
+
+### 5.5 框架已知问题（2026-10-15）
+
+- **numeric 列让原生数据库驱动崩溃**：查询结果里出现 PostgreSQL `numeric` 列（`SUM`、`AVG` 等聚合的默认返回类型）会让第三方原生驱动 sqlx4k 直接崩溃整个进程，尚未修复。规避：聚合一律显式转型，`SUM(x)::bigint`、`AVG(x)::bigint`，或改用 `double precision`。
+- **出站 HTTP/2 带 Host 头**：hyper4k 客户端在 HTTP/2 请求里仍带 `Host` 与连接类头部，严格的 h2 服务端（如开了 h2 的 nginx）直接返回 400。已在 hyper4k `d436919` 修复（h2 下去掉这些头，HTTP/1.1 不变），但尚未发布版本。影响所有出站请求：collect 抓取、infra `importFromUrl`、push 的 FCM 调用等；发版前遇到这类 400 先按此排查。
 
 ## 6. 媒体标准（infra）
 
@@ -187,15 +196,17 @@ data class MediaRef(val fileId: String)
 ```
 
 - 业务数据存 MediaRef，不存平台托管文件的 URL；展示地址由 infra 按访问者和存储配置生成。
-- 接口响应把 MediaRef 批量展开成 `{ fileId, url, width?, height?, duration?, mimeType, variants?, status }`。
+- 接口响应把 MediaRef 批量展开成 `{ fileId, url, width?, height?, duration?, mimeType, variants?, status }`。M1 实际是 `port.MediaView(fileId, url, mimeType, size, businessType, lifecycle, expiresAt?)`，宽高、时长、派生版本随 M2 / M4。
 
 ### 6.2 关联契约：上传成功不等于可以使用
 
 文件上传后处于**临时**状态，必须经业务模块**确认关联**才进入生命周期：
 
 ```kotlin
-mediaService.attach(fileId, owner = ObjectRef("content.item", "1024"), usage = "content.image", actor)
-mediaService.detach(fileId, owner, usage)
+// port.MediaService（M1）：owner 用 ObjectRef 的 type / id 字符串；actorUserId 为应用账号，后台 / 系统操作传 null
+mediaService.attach(fileId, ownerType = "content.item", ownerId = "1024", usage = "content.image", actorUserId)   // → Attached / Rejected(MediaErrorCode)
+mediaService.detach(fileId, "content.item", "1024", "content.image")
+mediaService.detachAll("content.item", "1024")
 ```
 
 `attach` 时 infra 校验：
@@ -230,14 +241,15 @@ mediaService.detach(fileId, owner, usage)
 
 ### 6.5 现状与补齐
 
-| 能力 | 现状 | 首个闭环是否需要 |
+| 能力 | 现状（2026-10-15） | 首个闭环是否需要 |
 | --- | --- | --- |
 | 单文件上传 + businessType 策略 + 内容寻址 + 公开 / 本人可见 | 已有 | — |
-| 模块注册 businessType | 没有（策略表是内置默认值） | 需要 |
-| 临时文件 → 关联确认（attach / detach）与校验 | 没有 | 需要 |
-| 按引用的委托访问策略、短期签名地址 | 没有 | 需要 |
-| 无引用文件的安全清理（宽限期 + 并发保护） | 没有 | 需要 |
-| 服务端转存外部文件 | 没有 | 需要（采集） |
+| 模块注册 businessType | M1 已实现（`FileBusinessPolicyRegistry`） | 需要 |
+| 临时文件 → 关联确认（attach / detach）与校验 | M1 已实现 | 需要 |
+| 按引用的委托访问策略、短期签名地址 | M1 已实现（唯一绑定的 `port.MediaOwnerAccess`，套件模块 `bindIfAbsent` 同一段代码，经 `ObjectRegistry` 按类型路由） | 需要 |
+| 无引用文件的安全清理（宽限期 + 并发保护） | M1 已实现（`infra-media-cleanup`） | 需要 |
+| 服务端转存外部文件 | M1 已实现（DNS / 重定向型 SSRF 未覆盖，见 infra-media §11） | 需要（采集） |
+| 后台媒体上传与读取 | 已实现（`/admin/infra/media/upload`、`/admin/infra/media/get/{fileId}`） | 需要（后台编辑器） |
 | 图片派生版本 | 只有策略字段 | 按首个产品的需要决定（列表缩略图可先由客户端按原图处理） |
 | 分片 / 断点续传 | 没有 | 不需要；视频或大文件场景启动时排期 |
 | 视频处理（转码、截帧、时长） | 没有（PrivChat 服务端有实现，不在 infra） | 不需要；**视频场景立项时同步排期**，不因编号靠后而无限后置 |
@@ -329,6 +341,8 @@ mediaService.detach(fileId, owner, usage)
 | 5 | 用非文章对象验证复用（§12.2）；然后按实际场景排期分片上传、视频处理、图片派生、search、模块 MCP 与 CLI、catalog / review | 核心模块零改动接入新对象 |
 
 图片派生按首个产品需要安排；视频能力在视频类场景立项时同步排期，不预设为永久后置。
+
+进度（2026-10-15）：步骤 1 完成（`neton-application-contract`）；步骤 3 完成（infra 媒体 M1）；步骤 4 中 content、comment、interaction、collect、push 的 P1 已实现并装配进 itwind，各模块的实现范围见各自规范文首「实现状态」。
 
 ## 12. 验收标准
 
