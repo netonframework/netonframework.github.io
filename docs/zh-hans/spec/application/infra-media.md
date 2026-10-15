@@ -42,7 +42,9 @@ mediaRegistry.register(
             ImageVariant("thumb", width = 360, fit = Fit.COVER, format = "webp"),
             ImageVariant("large", width = 1440, fit = Fit.INSIDE, format = "webp"),
         )),
-        retention = Retention.WhileReferenced(graceDays = 7),
+        usages = setOf("content.image"),            // 可以 attach 到哪些用途
+        reusable = true,                            // 已关联后能否被其他对象再次引用
+        retention = Retention(temporaryHours = 24, orphanedDays = 7),
     )
 )
 ```
@@ -51,7 +53,7 @@ mediaRegistry.register(
 | --- | --- |
 | `PUBLIC` | 任何人可读（头像、公开文章配图） |
 | `OWNER` | 仅上传者可读（反馈附件、证件） |
-| `DELEGATED` | 回调拥有模块的 `MediaAccessPolicy.canRead(viewer, fileId, references)`，拥有模块按引用它的业务对象状态判断 |
+| `DELEGATED` | 按引用判断：调用引用对象所属模块的 `ObjectAccessPolicy`，详见 §7.1 |
 
 - businessType 只能由模块在初始化时注册，未注册的类型拒绝上传。
 - 内置类型保留：`member.avatar`、`feedback.attachment` 等现有类型迁入注册表，code 不变。
