@@ -87,6 +87,15 @@ interface HttpClient {
 
 无参 `HttpClient.create { }` 由 `neton-http` 声明在 `neton.http.client` 包下，落到内置 netonstream 客户端（HTTP/1.1 + HTTP/2 ALPN、真流式、取消、HTTP 代理）。可选引擎显式选择：`HttpClient.createWith(::createHyper4kHttpClient)`（`neton-http-hyper4k`）、`HttpClient.createWith(::createKtorHttpClient)`（`neton-http-ktor`，POSIX 用 CIO、Windows 用 WinHttp）。测试用契约层 testkit 的 `ScriptedHttpClient`，不注入引擎对象。能力声明、一致性套件与引擎入口的完整契约见 [HTTP 引擎规范](./http-engine.md)。
 
+**出站 SMTP（冻结）**：`neton.http.mail.SmtpTransport` 是发信端口（`SmtpAccount` / `SmtpMessage` / `SmtpException` / `MimeBuilder` 同包）。模块只依赖接口，应用装配时 `bind(SmtpTransport::class, defaultSmtpTransport())`。`defaultSmtpTransport()` 由 `neton-http` 在全部 native 目标（POSIX + mingw）提供，实现跑在 Neton 自己的网络栈上（netonstream io + tls，协程化，每次发送一个独立 reactor 线程），不依赖 Ktor、hyper4k 或 libcurl；`neton-http-ktor` 不带任何 SMTP 实现。行为：
+
+1. `ssl=true`：隐式 TLS（465）；`starttls=true`：明文 EHLO 后 `STARTTLS` 再 EHLO（587），服务器未声明 STARTTLS 即失败，**绝不退回明文**；STARTTLS 应答后多出的明文字节视为注入并失败；两者都关才是明文（仅内网中继与测试）；两者同开是配置错误。
+2. 证书按系统信任根校验，SNI 与身份校验用 `SmtpAccount.host`（IP 走 IP 身份）。不提供关闭校验的开关。
+3. `username` 非空才认证：服务器声明 `AUTH PLAIN` 用 PLAIN，否则 `AUTH LOGIN`，都没有即失败。
+4. 每个收件人一条 `RCPT TO`，任一被拒整封失败；DATA 统一 CRLF 并做 dot-stuffing；地址含 CR/LF/尖括号/控制字符在连接前拒绝。
+5. 超时：连接（TCP 与每次 TLS 握手）15 秒，整次发送 60 秒。
+6. 所有失败抛 `SmtpException`，消息含服务器应答但从不含密码（明文或 base64）。
+
 ### 1.4 统一抽象架构
 
 ```mermaid
