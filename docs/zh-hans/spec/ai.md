@@ -374,7 +374,12 @@ data class Usage(
 - 可复用的 `AiAgent`（固定模型、指令、工具等，每次只传对话；无状态，`prepareCall` 可按调用改写）。
 - 批量嵌入（按模型单次上限切分、并发、逐批重试）、图片生成（按单次上限分批并发）、语音合成、语音识别、重排序；`cosineSimilarity`。
 - `pruneMessages`（裁剪推理与已结束的工具轮次，保留区与配对部分不动）、平滑流（按词或行重新切分）。
-- MCP 客户端（Streamable HTTP）：工具映射为动态工具（带标题与行为提示，结果为富输出），另支持资源与提示词。
+- MCP 客户端（Streamable HTTP），按 MCP 最新协议 2026-07-28：
+  - 先发 `server/discover` 协商（1 秒超时），之后每个请求无状态：不握手、不建会话；`params._meta` 携带协议版本、客户端能力与客户端信息；请求头带 `MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name`。
+  - 工具 schema 中 `x-mcp-header` 标注的参数作为 `Mcp-Param-*` 头发送，非纯 ASCII 的值用 `=?base64?…?=` 编码；标注不合法的工具被忽略。
+  - 结果必须带 `resultType`；服务端要求多轮输入（`input_required`）时报错，暂不支持。请求前先检查服务端是否声明了对应能力。
+  - 服务端不认识 `server/discover` 时回退到 legacy 握手（最高 2025-11-25，带会话，关闭时 DELETE）；探测返回 modern 协议错误码（-32020/-32021/-32022）时直接报错，不回退。
+  - 工具映射为动态工具（带标题与行为提示，结果为富输出），另支持资源与提示词。
 - 测试替身 `ScriptedAiProvider`：按 IR 块编写脚本，支持流式切分、延迟、中途失败，记录收到的请求。
 
 ### 10.6 不做
