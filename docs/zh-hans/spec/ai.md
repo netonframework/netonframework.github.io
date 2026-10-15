@@ -385,10 +385,18 @@ data class Usage(
   - 错误按 `McpErrorKind` 分类（Transport/Timeout/Http/Rpc/Protocol/Unsupported/InvalidArgument/SessionExpired/Closed），保留 HTTP 状态、JSON-RPC 错误码与附加数据；`outcomeUnknown` 标出请求可能已执行的情况（断流、超时），映射成工具时据此提示模型先确认再重试。协程取消不被包装。
   - 工具映射为动态工具（带标题与行为提示，结果为富输出），另支持资源与提示词。
 - 测试替身 `ScriptedAiProvider`：按 IR 块编写脚本，支持流式切分、延迟、中途失败，记录收到的请求。
+- 遥测：
+  - `AiConfig.telemetry(...)` 注册客户端级集成，接收每次操作的生命周期事件 `AiTelemetryEvent`：操作开始与结束或失败、步骤、模型调用（含重试）、回退、工具执行。嵌入、图片、语音、转写、rerank 也有操作事件。
+  - 事件是 neton-ai 自己的类型，不绑定任何观测标准的字段名。集成里的异常被隔离，只记日志；取消也会发出失败事件，保证集成为该操作打开的状态都能关闭。
+  - 默认不记录内容：只有 `telemetrySettings` 打开 `recordInputs` / `recordOutputs` 时，事件里才带提示词、工具参数、模型输出与工具结果；凭证与请求头从不进入事件。请求的 `functionId` 标识这类调用。
+  - `GenAiSpans` 是独立适配器，按 OpenTelemetry GenAI 语义约定（版本见 `SEMCONV_VERSION`）把事件转成 span，交给宿主的 `AiSpanExporter` 导出：
+    - 文本生成为 `invoke_agent [functionId]` 根 span，模型调用为 `chat {model}` 子 span，工具执行为 `execute_tool {tool}` 子 span；重试与回退记为 span 事件。
+    - 请求 metadata 里有 W3C `traceparent` 时，根 span 挂到它下面。
+    - 语义约定尚未定义的字段放在 `neton.ai.*` 命名空间。
 
 ### 10.6 不做
 
-UI 与 RSC、UI 消息流、终端 UI、编程代理 harness、Code Mode（需要 JS 沙箱）、workflow。暂不做：流开始后的自动重试、遥测集成（用观测回调与用量记录器接 Neton 日志）、视频生成、文件与 skill 上传、流式转写与翻译、`decide`；MCP 的多轮输入（`input_required`）、sampling / elicitation / roots、OAuth 授权与 stdio 传输（有接入需求时再做）。
+UI 与 RSC、UI 消息流、终端 UI、编程代理 harness、Code Mode（需要 JS 沙箱）、workflow。暂不做：流开始后的自动重试、遥测指标（直方图等由宿主从事件或 span 自行聚合）、视频生成、文件与 skill 上传、流式转写与翻译、`decide`；MCP 的多轮输入（`input_required`）、sampling / elicitation / roots、OAuth 授权与 stdio 传输（有接入需求时再做）。
 
 ---
 
@@ -424,6 +432,11 @@ UI 与 RSC、UI 消息流、终端 UI、编程代理 harness、Code Mode（需�
 - **错误**：分类与回退判断；按客户端协议渲染；内部异常不外泄。
 - **厂商配置**：每个内置配置的方言请求快照；新增厂商只改配置即可接入。
 - **性能**：流式路径的每块分配有上限，纳入基准测试。
+- **真实上游回放**：
+  - 用 Vercel AI SDK 录制的厂商响应（OpenAI Chat/Responses、Anthropic、Gemini、Bedrock、DeepSeek、xAI、Mistral 等，Apache-2.0，`neton-ai/src/commonTest/fixtures/vercel-ai`，附 NOTICE）。
+  - 每个样本都要解码、编码成五种协议再解码，比较文本、推理、工具调用、结束原因与用量。
+  - 目标协议表达不了的部分（custom 工具、refusal 与 content_filter 的互转、推断的结束原因、必填的用量字段）按它能表达的形状比较。
+  - 新录制的样本直接放进目录即可纳入。
 
 ---
 
