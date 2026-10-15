@@ -102,18 +102,18 @@
 ### 3.6 一致性
 
 - **楼号**：在 `comment_targets` 行上原子自增分配，同一对象内唯一、单调递增；事务回滚造成的空号不复用。
-- **游标分页**：最新 / 最早排序以 `(created_at, id)` 为游标键，并发写入不会导致重复或遗漏；最热排序在第一页生成快照（排序结果缓存一段时间），后续页沿用快照，避免热度变化造成跳动。
 - **投票**：以 (comment_id, user_id) 唯一约束保证一人一票，计数按差值在同一事务内更新。
 
-### 3.3 其他表
+### 3.7 分页语义
 
-| 表 | 关键字段 |
-| --- | --- |
-| `comment_votes` | comment_id, user_id, value(+1 支持 / -1 反对), created_at；唯一(comment_id, user_id) |
-| `comment_reports` | comment_id, reporter_id, reason, detail, status(`pending`/`accepted`/`rejected`), handled_by, created_at |
-| `comment_sensitive_words` | word, action(`block` 拒绝 / `review` 送审 / `mask` 替换成 ***), enabled |
-| `comment_user_bans` | user_id, scope(`global` / 某对象类型 / 某对象), until?, reason, operator_id |
-| `comment_review_logs` | comment_id, action, operator_id, reason, created_at |
+| 排序 | 排序键与游标 | 承诺 |
+| --- | --- | --- |
+| 最新 / 最早 | `(created_at, id)`，游标为最后一条的键值 | 遍历期间**一直存在且一直对当前用户可见**的评论，恰好返回一次。遍历开始后新发的评论不会插进已经翻过的页：最新排序下通过「刷新 / 拉取更新」接口单独获取；最早排序下出现在后面的页里 |
+| 最热 | 第一页生成快照（排好序的 ID 列表，默认保留 10 分钟），游标为快照 ID + 位置 | 在快照有效期内按快照顺序翻页，不因热度变化而重复或跳动。快照过期返回专门的错误码，客户端从第一页重新开始 |
+| 回复列表 | `(created_at, id)` | 同最新 / 最早 |
+
+- 遍历期间状态变化的评论（被删除、隐藏、送审、折叠）：已经返回过的不撤回；尚未返回的按返回时的状态处理，可能显示为占位，也可能不出现，取决于 §3.4 的可见性。
+- 不承诺对「无限实时变化的结果集」绝对不遗漏；需要强一致计数的场景用对象的评论数，不用列表条数推算。
 
 ## 4. 盖楼与回复
 
