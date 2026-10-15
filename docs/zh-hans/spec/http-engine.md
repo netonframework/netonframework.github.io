@@ -14,6 +14,14 @@
 >
 > **不在本文**：`HttpContext` / `HttpAdapter` / 路由 / 安全管线的形状（http.md）；
 > hyper4k 的 C ABI 本身（`hyper4k/docs/ABI_V4_CLIENT_TLS.md`）。
+>
+> **修订（2026-10-15，内置引擎成为双向默认）**：`neton-http` 自带 netonstream 引擎
+> （`com.netonstream:io` / `http` / `tls`），**无参 `http { }` 与无参 `HttpClient.create { }`
+> 都由 `neton-http` 自己声明**，应用不再需要任何引擎模块。`neton-http-hyper4k` 与
+> `neton-http-ktor` 降为**显式选择**的可选引擎：Server 用 `http(::XxxHttpAdapter) { }`，
+> Client 用 `HttpClient.createWith(::createHyper4kHttpClient) { }` /
+> `createWith(::createKtorHttpClient)`，二者都**不再**声明无参入口。§二～§四、§5.3、§5.4、
+> §七 已按此改写；§一、§九～§十一 是 hyper4k 时代的问题陈述与落地记录，保留原文。
 
 ---
 
@@ -40,9 +48,10 @@
 
 四条规则。缺任何一条，「删掉 Ktor 也稳定」都不成立。
 
-### 规则 1：一个引擎模块 = Server + Client 一起交付
+### 规则 1：默认引擎 = Server + Client 一起交付
 
-引擎模块**必须同时**提供两个默认入口：
+默认引擎**必须同时**提供两个默认入口。自 2026-10-15 起默认引擎就是 `neton-http` 内置的
+netonstream 引擎，两个入口由 `neton-http` 声明（§4）：
 
 ```kotlin
 // 声明在 neton.http 包
@@ -52,22 +61,26 @@ fun Neton.LaunchBuilder.http(block: HttpConfig.() -> Unit = {})
 fun HttpClient.Companion.create(block: HttpClientConfig.() -> Unit = {}): HttpClient
 ```
 
-**禁止**只提供一半的引擎模块。半个引擎让「谁是默认」取决于依赖图里碰巧有谁，
-正是事实 2 的成因。
+**禁止**只提供一半的默认引擎。半个引擎让「谁是默认」取决于依赖图里碰巧有谁，
+正是事实 2 的成因。可选引擎模块（hyper4k、Ktor）**不得**声明这两个无参入口，只提供
+构造器引用 / 工厂函数供应用显式选择——否则依赖它的应用会得到两个 `create`。
 
-### 规则 2：契约层零引擎，可靠性由一致性套件证明
+### 规则 2：契约与引擎分层，可靠性由一致性套件证明
 
-`neton-http` 不引用任何引擎类型。它提供的是接口、共享管线
+`neton-http` 的**契约部分**（`neton.http.client`、`neton.http.adapter`、`neton.http.conformance`
+等）不引用任何引擎类型；内置引擎在 `neton.http.engine.default`（及其 `client` 子包），
+只经 `expect/actual` 的 `createDefaultHttpAdapter` / `createDefaultHttpClient` 接到无参入口上。它提供的是接口、共享管线
 （`BufferedHttpDispatcher`）、错误模型，以及**两套**引擎无关的一致性套件：
 Server 侧（已有）与 Client 侧（本文新增）。
 
 「两个引擎行为一致」不是承诺，是**每次构建都跑一遍的事实**。删掉一个引擎，
 另一个的通过状态不变——这就是「稳定可靠」的操作性定义。
 
-### 规则 3：聚合只装一个引擎，缺引擎时错误必须可读
+### 规则 3：默认引擎随 `neton-http` 交付，不存在「缺引擎」
 
-`com.netonstream:neton` 恰好装**一个**引擎模块。缺引擎时的编译错误必须说清
-「加哪一行依赖」，不允许停留在 `Unresolved reference`。
+`neton-http` 的全部目标（五个 K/N 目标）都带内置引擎，所以依赖 `neton-http`（或聚合）
+的工程**总有**可用的 `http { }` 与 `HttpClient.create { }`。原先的「缺引擎可读错误」
+fallback（§4.3）随之删除。
 
 ### 规则 4：框架内不允许第二条出站 HTTP 通道
 
@@ -80,36 +93,34 @@ Server 侧（已有）与 Client 侧（本文新增）。
 ## 三、模块形态与依赖方向
 
 ```
-                     ┌──────────────────────────────────────────┐
-                     │ neton-http（契约层，零引擎）                │
-                     │  HttpAdapter · HttpClient · Dispatcher    │
-                     │  安全管线 · 错误模型                        │
-                     │  HttpEngineConformanceSuite   (Server)    │
-                     │  HttpClientConformanceSuite   (Client) ←新 │
-                     │  testkit: ScriptedHttpClient          ←新 │
-                     └────────────────────▲─────────────────────┘
-                                          │ api
-                  ┌───────────────────────┼───────────────────────┐
-                  │                                               │
-   ┌──────────────┴───────────────┐            ┌──────────────────┴──────────────┐
-   │ neton-http-hyper4k           │            │ neton-http-ktor（可整体删除）      │
-   │  Hyper4kHttpAdapter          │            │  KtorHttpAdapter · KtorHttpClient │
-   │  Hyper4kHttpClient      ←新   │            │  同样两个入口                      │
-   │  neton.http.http { }         │            │                                  │
-   │  neton.http.client.          │            │  不进 neton 聚合                   │
-   │    HttpClient.create { } ←新  │            │  不进 BOM（§九）                   │
-   └──────────────▲───────────────┘            └──────────────────────────────────┘
-                  │ api
-   ┌──────────────┴───────────────┐
-   │ neton（聚合）                  │   ← 只装一个引擎
-   └──────────────────────────────┘
+   ┌──────────────────────────────────────────────────────────────┐
+   │ neton-http                                                    │
+   │  契约：HttpAdapter · HttpClient · Dispatcher · 安全管线 · 错误模型 │
+   │        HttpEngineConformanceSuite / HttpClientConformanceSuite │
+   │        testkit: ScriptedHttpClient                             │
+   │  内置引擎（neton.http.engine.default[.client]，netonstream）：   │
+   │        DefaultHttpAdapter · NetonStreamHttpClient              │
+   │  无参入口：neton.http.http { } · neton.http.client.            │
+   │            HttpClient.create { }                               │
+   └──────────────────────────────▲───────────────────────────────┘
+                                  │ api
+              ┌───────────────────┼────────────────────┐
+              │                                        │
+   ┌──────────┴─────────────────┐       ┌──────────────┴──────────────────┐
+   │ neton-http-hyper4k（可选）   │       │ neton-http-ktor（可选，可整体删除） │
+   │  Hyper4kHttpAdapter        │       │  KtorHttpAdapter                 │
+   │  createHyper4kHttpClient   │       │  createKtorHttpClient            │
+   │  无无参入口，调用点显式选择   │       │  无无参入口；不进聚合、不进 BOM    │
+   └────────────────────────────┘       └─────────────────────────────────┘
 ```
+
+（2026-10-15 前的形态是「契约层零引擎 + hyper4k 模块提供两个无参入口」，见 §一。）
 
 **依赖方向冻结**：
 
-- 引擎模块 `api(neton-http)`；应用依赖引擎模块（或聚合），由 `api` 传递拿到契约层。
-- 应用源码**永远不出现**引擎包名。换引擎 = 改一行 build 文件，源码零改动。
-- 契约层**永远不出现**引擎包名。这一条由 CI 的 grep 守卫（§十一）。
+- 可选引擎模块 `api(neton-http)`；应用只依赖 `neton-http`（或聚合）即有默认引擎。
+- 用默认引擎的应用源码**不出现**引擎包名；选可选引擎 = 加依赖 + 在调用点写它的构造器引用 / 工厂。
+- 契约部分**永远不出现**引擎包名。这一条由 CI 的 grep 守卫（§十一）。
 
 > **为什么不是「应用显式 `import neton.http.hyper4k.*`」**
 >
@@ -135,20 +146,29 @@ Server 侧（已有）与 Client 侧（本文新增）。
 | Server | `neton.http` | `Neton.LaunchBuilder.http(block)` 的无参重载 |
 | Client | `neton.http.client` | `HttpClient.Companion.create(block)` 伴生扩展 |
 
-两者都是**编译期重载解析**：契约层只提供带引擎参数的形式
-（`http(::XxxHttpAdapter) { }` / `HttpClient.createWith(factory) { }`），
-无参形式由引擎模块声明在**契约层的包**下。应用 import 契约层的包即可，
-引擎在时命中引擎，不在时编译失败。
+无参形式由 `neton-http` 声明，落到内置引擎：
+
+```kotlin
+// neton-http commonMain, package neton.http.client
+fun HttpClient.Companion.create(block: HttpClientConfig.() -> Unit = {}): HttpClient =
+    createWith(::createDefaultHttpClient, block)
+internal expect fun createDefaultHttpClient(config: HttpClientConfig): HttpClient   // native: netonstream
+```
+
+Server 侧同构（`HttpComponent.kt` 的 `http(adapterFactory = ::createDefaultHttpAdapter)`）。
+选别的引擎 = 在源码里显式传它：`http(::Hyper4kHttpAdapter) { }`、
+`HttpClient.createWith(::createHyper4kHttpClient) { }`、`HttpClient.createWith(::createKtorHttpClient) { }`。
+`createWith` 对任何工厂执行同一套配置校验与能力校验（§5.2）。
 
 ### 4.2 唯一提供方
 
-同一入口**只能由一个模块提供**。两个引擎模块都声明无参 `http { }` 时，同时依赖
-两者的应用会得到重复声明错误。冻结：
+同一入口**只能由一个模块提供**，冻结为 `neton-http`：
 
-- `neton-http-hyper4k` 提供两个入口；
-- `neton-http-ktor` **也**提供两个入口（规则 1），但它**不进聚合、不进 BOM**，
-  只能被显式依赖。显式依赖 Ktor 的应用**不得**同时依赖 hyper4k 引擎模块。
-- 第三方引擎同理。选引擎是二选一，不是叠加。
+- `neton-http` 提供两个无参入口（内置 netonstream 引擎）；
+- `neton-http-hyper4k` 只提供 `Hyper4kHttpAdapter` 与 `createHyper4kHttpClient`，**不**声明无参入口；
+- `neton-http-ktor` 只提供 `KtorHttpAdapter`、`createKtorHttpClient` 与 `createWithEngine`，**不**声明无参
+  入口；仍不进聚合、不进 BOM。
+- 第三方引擎同理。可选引擎可以与内置引擎共存于类路径——选择发生在调用点，不在依赖图。
 
 ### 4.4 需要按需建多个客户端的模块：`HttpClientProvider`
 
@@ -165,9 +185,13 @@ bind(HttpClientProvider::class, HttpClientProvider { HttpClient.create(it) })
 ```
 
 模块从 `NetonContext` 取 provider；没绑定时在启动期报错并给出要加的那一行。
+内置引擎成为默认后，应用侧这一行不变，`HttpClient.create(it)` 直接落到内置客户端。
 由 provider 建出的客户端由**模块**负责关闭（它是模块要来的，不是借的）。
 
-### 4.3 缺引擎时的可读错误（已验证，冻结）
+### 4.3 缺引擎时的可读错误（已删除，保留记录）
+
+> **2026-10-15 删除**：`neton-http` 自带引擎后不存在「缺引擎」，`MissingHttpEngine` 与对应的
+> `@Deprecated(ERROR)` fallback 一并移除。下面是当初的设计与验证记录。
 
 现状：`Unresolved reference 'create'`。目标：
 
@@ -267,13 +291,13 @@ enum class HttpClientCapability {
 
 ### 5.3 能力现状矩阵
 
-| 能力 | Ktor（CIO / WinHttp） | hyper4k client |
-|---|---|---|
-| `HTTP_2` | ❌ CIO 在 Native 上不支持 | 引擎 ✅（ALPN，`HTTP2_REQUIRED` 可拒绝降级）；**neton 层暂不声明**，见下 |
-| `STREAMING_BODY` | ✅ | ✅ `OnChunk` + `PAUSE/resume` 背压 |
-| `CANCELLATION` | ✅ | ✅ `hyper4k_client_cancel`，回调线程安全 |
-| `CUSTOM_CA` | ❌ `HttpClientConfig` 无 CA 选项 | 引擎 ✅；**neton 层暂不声明**，见下 |
-| `PROXY` | ✅ HTTP 代理 | ✅ ABI 4.1：`http://` absolute-form、`https://` CONNECT 隧道；套件 `proxy_url_routes_through_the_proxy` 通过 |
+| 能力 | 内置 netonstream（**默认**） | Ktor（CIO / WinHttp） | hyper4k client |
+|---|---|---|---|
+| `HTTP_2` | ✅ TLS ALPN `h2`/`http/1.1`；套件用 TLS h2 对端覆写 `http2_is_negotiated_when_origin_offers_it`，并断言 h2 请求**不带 `host` 字段** | ❌ CIO 在 Native 上不支持 | 引擎 ✅（ALPN，`HTTP2_REQUIRED` 可拒绝降级）；**neton 层暂不声明**，见下 |
+| `STREAMING_BODY` | ✅ 读帧即 emit，反应器侧有界队列（8）背压 | ✅ | ✅ `OnChunk` + `PAUSE/resume` 背压 |
+| `CANCELLATION` | ✅ Flow 取消 → 关闭响应体：HTTP/1 关连接，HTTP/2 RST 该 stream | ✅ | ✅ `hyper4k_client_cancel`，回调线程安全 |
+| `CUSTOM_CA` | ❌ 引擎可配信任根，但 `HttpClientConfig` 无 CA 选项，不声明 | ❌ `HttpClientConfig` 无 CA 选项 | 引擎 ✅；**neton 层暂不声明**，见下 |
+| `PROXY` | ✅ `https://` 目标走 CONNECT 隧道（TLS 端到端，隧道连接入池）、`http://` 目标 absolute-form；proxy URL 的 userinfo 发 Basic `Proxy-Authorization`；`https://` 代理亦可 | ✅ HTTP 代理 | ✅ ABI 4.1：`http://` absolute-form、`https://` CONNECT 隧道；套件 `proxy_url_routes_through_the_proxy` 通过 |
 
 > ✅ 的依据必须是 Client 一致性套件里对应的测试通过，不是 ABI 文档说有。
 
@@ -319,6 +343,16 @@ Rust 层对 h2/ALPN 与自定义 CA 都有测试，但本套件还没有 h2 / TL
 | `TRUNCATED` | `Network` | 响应已开始但未完整；**已 emit 的 chunk 不撤回** |
 | `OUTCOME_UNKNOWN` | `Network`，`message` 以 `outcome unknown:` 起始 | 非幂等请求在连接中断时的唯一诚实答案；调用方**不得**据此自动重试 |
 | HTTP 4xx/5xx | `request()`：**不映射**，原样返回 `HttpClientResponse`；`stream()`：第一个 chunk 之前抛 `Http(statusCode, body)` | 既有契约。状态码是响应的一部分（S3 的 404 是「不存在」不是错误）；而流式路径若不拦，一个 429 的错误 JSON 会流进 SSE 解析器变成零个事件和一次静默的正常结束 |
+
+**内置 netonstream 客户端的映射**（`NetonStreamHttpClient`）：
+
+| 来源 | `HttpClientError` |
+|---|---|
+| TCP connect 失败（`ConnectException`）、`ConnectError`（含代理拒绝 CONNECT、`maxConnectionsPerHost` 已满）、TLS 握手/证书失败、连接中断（`IoException`、`HttpError` 非超时类） | `Network`，message 带来源 |
+| connect / 代理 CONNECT / TLS 握手超过 `connectMillis`；`requestMillis` 总时限；`socketMillis` 帧间空闲；`HttpError.isTimeout()` | `Timeout`，message 区分 `connect` / `request` / `read idle` |
+| URL 不是绝对 http(s)、非法头名/值 | `Unknown("invalid request…")` |
+| `close()` 时仍在途的请求 / 流 | `Unknown("HttpClient is closed")`——不是网络瞬断，不可被按 `Network` 重试的策略重试 |
+| HTTP 4xx/5xx | 同上表最后一行（`request()` 原样返回；`stream()` 首块前抛 `Http`，错误正文上限 64 KiB） |
 
 `OUTCOME_UNKNOWN` 单列一行是刻意的：它是 ABI v4 §四 的核心语义（RFC 9113
 GOAWAY 边界），映射时**不得**并入普通 `Network` 而丢失「不可自动重试」的信息。
@@ -402,9 +436,42 @@ class ScriptedHttpClient : HttpClient {
 
 ---
 
-## 七、hyper4k Kotlin 客户端封装
+## 七、出站客户端实现
 
-### 7.1 分层
+### 7.0 内置 netonstream 客户端（默认）
+
+位置：`neton-http/src/nativeMain/kotlin/neton/http/engine/default/client/`。
+
+| 层 | 内容 |
+|---|---|
+| `NetonStreamHttpClient` | neton 契约 ↔ `com.netonstream:http` 的翻译；`request()` / `stream()` / 超时 / 错误映射 / Host 规则 |
+| `ClientConnector` | `Connector`：直连 TCP；`https` 目标 TLS（ALPN `h2`,`http/1.1`，SNI / IP 身份校验，系统信任根，进程内共享一个 `TlsContext`）；代理 CONNECT 隧道；`maxConnectionsPerHost` 计数 |
+| `ClientReactor` | 每个客户端一个 neton-io 反应器线程。连接池、连接与响应体都属于创建它们的反应器，调用方可在任意线程，所以每次操作都作为反应器根作用域的**子协程**执行，结果经 Deferred / Channel 回传；`close()` 先取消在途操作（调用方得到 `HttpClient is closed`，不会挂死），再关池、停线程 |
+| 连接池 | `neton.http.client.Client`（hyper-util `legacy::Client` 移植）：按 `scheme://authority` 复用；HTTP/1 一连接一在途请求，HTTP/2 一连接多路复用；空闲 90 s 回收 |
+
+冻结的行为：
+
+- **`Host`**：取自 URL authority，只在 HTTP/1 上由池写入；调用方传入的 `Host` **一律丢弃**。HTTP/2 上 authority
+  走 `:authority` 伪头，旁边再带 `host` 字段会被严格的 nginx 以 400 拒绝——这正是 hyper4k 客户端踩过的坑，
+  套件里有回归断言。
+- **代理**：`https` 目标经 `CONNECT host:port` 隧道后再做 TLS，隧道连接与直连一样入池；`http` 目标按
+  RFC 9112 §3.2.2 发 absolute-form，每个请求独占一条到代理的连接（池会把请求改写成 origin-form，所以这条
+  路径不经池）。代理凭据只发给代理，不进隧道。
+- **超时**：`connectMillis` = TCP connect + 代理 CONNECT + TLS 握手；`requestMillis` = 整个交换含正文（SSE 长流
+  要么调大要么单请求传 0 关闭）；`socketMillis` = 每次等下一帧的空闲上限（单请求传 0 关闭）；单请求的
+  `connectMillis` 约束到响应头为止的时间（与 hyper4k 客户端一致）。
+- **`maxConnectionsPerHost`**：未设置不限；设置后某 authority 已有这么多条连接时，新连接立即以 `Network`
+  失败，不排队。
+
+验证：`NetonStreamClientConformanceTest`（套件 13 项，`CUSTOM_CA` 显式 skipped）+ `NetonStreamHttpClientTest`
+（TLS h1 Host 规则、h2 流式、CONNECT 隧道与凭据、代理拒绝、不受信证书、连接上限、64 个跨线程并发共享一条
+h2 连接、流进行中 `close()`）。
+
+### 7.1–7.4 hyper4k Kotlin 客户端封装（可选引擎）
+
+hyper4k 客户端保留为显式选择：`HttpClient.createWith(::createHyper4kHttpClient) { }`。以下为其设计记录。
+
+#### 7.1 分层
 
 ```
 neton-http-hyper4k ── Hyper4kHttpClient : neton.http.client.HttpClient
@@ -420,7 +487,7 @@ hyper4k (Rust) ─────── hyper4k_client_*  （ABI v4，已完成）
 `Hyper4kHttpClient` 放在 neton 适配模块。两层分开是因为 hyper4k 是独立发布的库
 （`com.netonstream:hyper4k`），它的 Kotlin 面不能依赖 neton 的类型。
 
-### 7.2 `Hyper4kClient`（hyper4k 仓）
+#### 7.2 `Hyper4kClient`（hyper4k 仓）
 
 对 ABI v4 的逐条落实。ABI 文档是权威，这里只写 Kotlin 侧必须承担的义务：
 
@@ -436,7 +503,7 @@ hyper4k (Rust) ─────── hyper4k_client_*  （ABI v4，已完成）
 | 输入切片在 `send` 返回后即可释放 | `memScoped` 内构造 `Hyper4kClientRequest`，返回即释放 |
 | `read_idle_timeout_ms = UINT64_MAX` 表示继承 | `hyper4k_client_request_init` 后再覆盖，**禁止**零初始化结构体 |
 
-### 7.3 `Hyper4kHttpClient`（neton 适配模块）
+#### 7.3 `Hyper4kHttpClient`（neton 适配模块）
 
 | neton 契约 | hyper4k 映射 |
 |---|---|
@@ -454,7 +521,7 @@ hyper4k (Rust) ─────── hyper4k_client_*  （ABI v4，已完成）
 4xx/5xx 与 Ktor 实现一致，攒下（有上限的）错误正文后以 `HttpClientError.Http` 失败，不进 Flow。
 （原先登记的决策点已按 §5.1 落定：新增 `Start` 变体，Ktor、hyper4k 与 neton-ai 的消费方同步更新。）
 
-### 7.4 平台
+#### 7.4 平台
 
 hyper4k 五个 K/N 目标全覆盖，`Hyper4kHttpClient` 因此不需要 `expect/actual`。
 Ktor 实现的 Darwin / CIO / WinHttp 三选一在 hyper4k 路径上**消失**——这是
@@ -572,7 +639,8 @@ broadcastRoom 全部经 hyper4k 出站，端到端通过。这是比一致性套
 - **不**做 Server 侧 TLS（§八）；
 - ~~不做 hyper4k client 的代理支持~~（ABI 4.1 已提供 HTTP 代理；无凭据、无 socks，见 hyper4k ABI 文档 §2.2.1）；
 - **不**做出站连接池参数的公共配置面——ABI v4 有 `max_connections_per_host` 等，
-  v1 用引擎缺省，暴露与否等有真实需求；
+  v1 用引擎缺省，暴露与否等有真实需求；（例外：`HttpClientConfig.maxConnectionsPerHost` 已存在，
+  内置客户端与 Ktor 都遵守，语义见 §7.0）
 - **不**在本文决定 `neton-http-ktor` 的删除时间——§九 只把它变成**可删的**。
 
 ---

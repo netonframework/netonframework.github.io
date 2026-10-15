@@ -43,16 +43,16 @@
 
 `neton-http` 是 Neton 主仓唯一的 HTTP 发布模块，同时承载两类能力：
 
-- **入站 Server**：`HttpComponent`、`HttpAdapter` 实现及请求/响应适配。无参 `http { }` 使用应用所依赖的 adapter 模块提供的引擎（默认 Hyper4k）；其他 Adapter 由应用传入构造器引用。
+- **入站 Server**：`HttpComponent`、`HttpAdapter` 实现及请求/响应适配。无参 `http { }` 使用 `neton-http` 内置的 netonstream 引擎；其他 Adapter（hyper4k、Ktor）由应用传入构造器引用。
 - **出站 Client**：`neton.http.client` 包中的 `HttpClient`、请求/响应模型、错误模型、stream、SSE parser、redaction 与 retry primitive。
 
 **v1 模块规则（冻结）**：
 
 1. 不发布、不依赖独立的 `neton-http-client` 模块；该历史模块已合并进 `neton-http`。
 2. 框架内任何模块（含 `neton-ai`、`neton-storage`）发出站请求只经 `HttpClient` 接口，不直接依赖任何引擎实现（[HTTP 引擎规范](./http-engine.md) 规则 4）。
-3. `HttpClient.create { }` 可脱离 Neton Runtime 独立使用；无参 `create` 由**引擎模块**提供，机制与无参 `http { }` 相同（见下文）。没有 Client 组件层：Client 由应用创建、绑定到 `NetonContext` 并负责关闭。
+3. `HttpClient.create { }` 可脱离 Neton Runtime 独立使用；无参 `create` 由 `neton-http` 提供并落到内置 netonstream 客户端，与无参 `http { }` 相同（见下文）。没有 Client 组件层：Client 由应用创建、绑定到 `NetonContext` 并负责关闭。
 4. Client 由创建方持有并关闭；被交给其他模块的实例只是借用，借用方不得关闭。
-5. 入站 Server 与出站 Client 由**同一个引擎模块**交付；替换引擎模块同时替换两者（[HTTP 引擎规范](./http-engine.md) 规则 1）。
+5. 默认的入站 Server 与出站 Client 是同一个内置引擎（[HTTP 引擎规范](./http-engine.md) 规则 1）；选别的引擎在调用点显式传入，两个方向各自选择。
 
 入站 Adapter 选择规则（冻结）：
 
@@ -85,7 +85,7 @@ interface HttpClient {
 }
 ```
 
-契约层不选择传输实现。无参 `HttpClient.create { }` 由引擎模块声明在 `neton.http.client` 包下：依赖 `neton-http-hyper4k` 时解析到 hyper4k 客户端，依赖 `neton-http-ktor` 时解析到 Ktor 客户端（POSIX 目标用 CIO、Windows 用 WinHttp，属该模块实现细节）。测试用契约层 testkit 的 `ScriptedHttpClient`，不注入引擎对象。能力声明、一致性套件与引擎入口的完整契约见 [HTTP 引擎规范](./http-engine.md)。
+无参 `HttpClient.create { }` 由 `neton-http` 声明在 `neton.http.client` 包下，落到内置 netonstream 客户端（HTTP/1.1 + HTTP/2 ALPN、真流式、取消、HTTP 代理）。可选引擎显式选择：`HttpClient.createWith(::createHyper4kHttpClient)`（`neton-http-hyper4k`）、`HttpClient.createWith(::createKtorHttpClient)`（`neton-http-ktor`，POSIX 用 CIO、Windows 用 WinHttp）。测试用契约层 testkit 的 `ScriptedHttpClient`，不注入引擎对象。能力声明、一致性套件与引擎入口的完整契约见 [HTTP 引擎规范](./http-engine.md)。
 
 ### 1.4 统一抽象架构
 
