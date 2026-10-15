@@ -156,6 +156,22 @@ data class ObjectRef(val type: String, val id: String)    // ObjectRef("content.
 - 事件信封：`id`、`type`（`<模块>.<实体>.<过去式动作>`）、`version`（载荷版本）、`subject`（ObjectRef）、`subjectVersion`、`actor`、`occurredAt`、`data`（只放 ID 和少量摘要）。
 - 每个模块在规范里列出自己发布的事件、投递方式和载荷；这些都是公开契约，变更遵循 §10 的版本规则。
 
+### 5.4 模块实现约定
+
+| 方面 | 约定 |
+| --- | --- |
+| 仓库 | 每个模块一个服务端仓库 `neton-application-module-<name>`（根工程是实现，`contract/` 子工程是公开契约，宿主以 `:module-<name>-contract` 装配）和一个后台页面仓库 `neton-application-front-<name>` |
+| 依赖 | 只依赖基础模块（system、infra）的实现，以及其他套件模块的 contract 子工程 |
+| 数据 | 只支持 PostgreSQL；表名以模块名为前缀；只经 migrate 建表和升级；不读别的模块的表。规范里标为 jsonb 的结构化字段，第一期以 `text` 列存 JSON（框架行映射暂不支持 jsonb），需要按字段筛选的走各模块的索引表 |
+| 接口分组 | `/app/<模块>/*`（终端用户，账号令牌）、`/admin/<模块>/*`（后台，管理员令牌）、`/platform/<模块>/*`（外部系统，platform appKey 签名） |
+| 分页 | 终端用户列表用游标分页（`cursor` + `limit`，响应 `{ list, nextCursor }`）；后台表格用页码分页（`pageNo` + `pageSize`） |
+| 写接口 | 幂等语义写进规范（重复收藏、重复投递不产生重复数据）；按用户限流 |
+| 错误 | 消息只写大写下划线机器码，前端按码翻译；访问拒绝统一经契约库的 `AccessDecision.orThrow()` 映射（不存在 404、需登录 401、其余 403） |
+| 校验 | 入参在业务逻辑里显式校验，不只依赖 DTO 注解 |
+| 权限 | `<模块>:<资源>:<动作>`，资源段与路由段一致；只声明，角色由 system 管理；全部出现在后台菜单种子里 |
+| 配置 | system 的类型化配置定义（`SettingDefinition`） |
+| 测试 | 单元测试 + 宿主装配后的真库验证 + 契约测试 |
+
 ## 6. 媒体标准（infra）
 
 产品图、新闻配图、评论图片、用户头像、视频，**凡是平台托管的文件，一律经 infra 上传、存储和访问**，业务模块只保存媒体引用。分工：
