@@ -117,6 +117,16 @@ ctx.get(FileBusinessPolicyRegistry::class).register(
 - 后台保存路径一律以 `MediaService.attach(…, actorUserId = null)` 关联（不做归属校验）。
 - 不放在 `/admin/infra/file/…`：那里的 `POST /upload`（只登记元数据）与 `GET /get/{id}`（按自增 id 返回元数据）是已有接口，语义不变。
 
+**错误**（App 与后台上传相同，cc002a6）：`message` 只放机器码，便于客户端翻译；具体原因放在字段级错误 `errors: [{ field, message, code }]` 里，`field` 指向出错的表单字段（`file` 或 `businessType`），`code` 与 `message` 相同。
+
+| 机器码 | 场景 | 字段 |
+| --- | --- | --- |
+| `INVALID_CONTENT_TYPE` | 请求不是 multipart/form-data | — |
+| `MISSING_FILE_FIELD` / `MISSING_BUSINESS_TYPE` | 缺表单字段 | `file` / `businessType` |
+| `INVALID_BUSINESS_TYPE` | businessType 未注册 | `businessType` |
+| `INVALID_MIME_TYPE` / `FILE_TOO_LARGE` / `EMPTY_FILE` | 违反该类型的上传策略 | `file` |
+| `FILE_NOT_FOUND` / `FILE_FORBIDDEN` | 读取文件时不存在 / 无权读取 | — |
+
 ### 4.2 分片 / 断点续传（M3，未实现）
 
 大文件和视频使用：
