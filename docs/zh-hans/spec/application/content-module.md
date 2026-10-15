@@ -1,7 +1,7 @@
 # module-content 通用内容模块（CMS）
 
 > 标识：NETON-APP-CONTENT
-> 日期：2026-10-15 · 状态：Draft r2
+> 日期：2026-10-15 · 状态：Draft r3（对齐套件架构 r2：媒体引用、生命周期影响、授权分离、投递保证）
 > 仓库：`neton-application-module-content`（服务端）、`neton-application-front-content`（后台页面）
 > 参照：WordPress、PHPCMS、DedeCMS 的内容建模方式，取其通用部分，去掉模板引擎、静态生成等与 headless 架构无关的部分。
 
@@ -82,7 +82,7 @@ FieldDefinition(
 )
 ```
 
-- **字段类型**：`text`、`textarea`、`rich`（结构化块）、`int`、`decimal`、`bool`、`date`、`datetime`、`select`（单选 / 多选，选项在定义里）、`image`、`images`（图集）、`file`、`url`、`color`、`item_ref`（引用其他内容）、`term_ref`（引用词条）、`json`（逃生口）。
+- **字段类型**：`text`、`textarea`、`rich`（结构化块）、`int`、`decimal`、`bool`、`date`、`datetime`、`select`（单选 / 多选，选项在定义里）、`image`、`images`（图集）、`file`、`video`（以上均存 MediaRef，§5.5）、`url`、`color`、`item_ref`（引用其他内容）、`term_ref`（引用词条）、`json`（逃生口）。
 - 字段类型本身也可扩展：`FieldTypeRegistry.register(...)`，提供校验和后台编辑控件的 key。
 - 值统一存在 `content_items.fields`（jsonb），写入时按定义校验，未定义的键拒绝。
 - **只有标记 `filterable` / `sortable` 的字段**会同步一份到 `content_field_index`（键值索引表），用于按字段筛选和排序；其余字段不建索引，不付额外成本。
@@ -144,7 +144,7 @@ TaxonomyDefinition(
 | --- | --- |
 | 身份 | id, type, slug（类型内唯一）, locale?, translation_group?（多语言版本互相关联，可选） |
 | 标题 | title, subtitle?, title_style?（颜色 / 加粗，DedeCMS 的标题样式） |
-| 列表展示 | summary, cover(jsonb：主图 + 可选多图), list_style?（大图 / 单图 / 三图 / 无图，空则客户端自动判断） |
+| 列表展示 | summary, cover(jsonb：主图 + 可选多图，均为 MediaRef), list_style?（大图 / 单图 / 三图 / 无图，空则客户端自动判断） |
 | 正文 | body（结构化块，见 5.2）, fields（jsonb，类型字段） |
 | 归属 | primary_term_id（主栏目，决定默认链接）, 作者：author_user_id? / author_name, 来源：source_name? / source_url?, origin(`original`/`reprint`/`compiled`) |
 | 状态 | status（§6）, visibility(`public`/`members`/`password`), password_hash?, redirect_url?（跳转型内容） |
@@ -162,14 +162,14 @@ TaxonomyDefinition(
 | --- | --- |
 | `paragraph` | 文本 + 行内标记（粗体、斜体、下划线、删除线、行内代码、链接、@内容引用） |
 | `heading` | 级别 2–4、文本 |
-| `image` | url、宽、高、说明、alt |
-| `gallery` | 图片数组、展示方式 |
+| `image` | media（MediaRef）、说明、alt；宽高由媒体服务提供 |
+| `gallery` | MediaRef 数组、展示方式 |
 | `quote` | 文本、出处 |
 | `list` | 有序 / 无序、条目（可嵌套一层） |
 | `code` | 语言、代码 |
 | `table` | 表头、行 |
 | `divider` | — |
-| `video` / `audio` | url、封面、时长 |
+| `video` / `audio` | media（MediaRef），封面、时长、清晰度由媒体服务提供 |
 | `embed` | provider、url、数据（扩展用；客户端不认识时降级为链接卡片） |
 | `item_card` | 引用站内另一条内容 |
 
@@ -187,21 +187,53 @@ TaxonomyDefinition(
 
 `content_item_relations(item_id, related_id, kind, sort)`：手动指定相关内容、系列上下篇等。没有手动指定时，详情接口按「同标签 > 同栏目」自动补齐。
 
+### 5.5 媒体
+
+- 封面、正文图片、图集、视频、附件都经 infra 媒体能力上传，内容里只存 `MediaRef(fileId)`，不存 URL（套件架构 §6）。
+- 本模块注册上传业务类型：`content.cover`、`content.image`、`content.video`、`content.attachment`，各自规定 MIME、大小、图片派生规格、视频处理规格。
+- 保存版本时向媒体服务登记引用、替换时解除引用，媒体的清理由 infra 按引用计数负责。
+- 接口响应里的媒体由 `MediaService.resolve` 批量展开为地址、宽高、时长、派生版本。会员可见或密码访问的内容，其媒体的访问由本模块的访问策略回调授权。
+- 外部写入（采集等）带来的外链图片，在写入流程里经媒体服务转存为 MediaRef；转存失败的图片按写入方参数决定丢弃或保留占位。
+
 ## 6. 状态、版本与审核
 
 ```
-draft ──提交──► pending ──通过──► published ──下线──► offline
-  ▲               │  └──定时──► scheduled ──到点──┘      │
-  └──── 驳回 ◄────┘                                     ▼
-                                    trash（回收站，可恢复；定期彻底删除）
+draft ──提交──► pending ──通过──► published ──撤回──► withdrawn ──重新发布──► published
+  ▲               │  └──定时──► scheduled ──到点──┘     │                │
+  └──── 驳回 ◄────┘                                      └── 归档 ──► archived
+                     任意非 published 状态 ──删除──► trash（回收站，可恢复；保留期后彻底删除）
 ```
+
+| 状态 | 对外可见 | 说明 |
+| --- | --- | --- |
+| draft | 否 | 草稿，只有编辑可见 |
+| pending | 否 | 待审 |
+| scheduled | 否 | 已通过、等待定时发布 |
+| published | 是 | 线上 |
+| withdrawn | 否 | 撤回：内容有问题临时下线，可修改后重新发布 |
+| archived | 按类型配置（默认只读可见，不进列表和搜索） | 归档：过期内容保留可访问的链接，但不再推荐 |
+| trash | 否 | 回收站 |
+
+- 不在上表箭头里的状态转换一律拒绝；每个转换对应一个权限点（§14）。
+- 已发布内容必须先撤回才能删除，避免误删线上内容。
 
 - **版本**（类型开了 `REVISIONS`）：每次保存生成 `content_revisions` 记录，保存标题、摘要、封面、正文、字段、词条快照。线上只展示 `published_revision_id` 指向的版本；已发布内容再编辑，新版本审核通过前线上保持旧版本。
 - **自动保存**：编辑器每隔一段时间写一个自动保存版本，同一编辑者只保留最新一份，不进版本列表。
 - **编辑锁**：打开编辑时加锁（带心跳），别人打开时提示「xx 正在编辑」，可强制接管。
 - **审核**：类型或栏目要求审核时走 pending；通过、驳回（附原因）、下线都写 `content_review_logs`。审核策略可替换：`ContentPublishPolicy` 决定某次提交是否免审（例如外部写入方的自动发布规则）。
 - **定时**：定时发布、定时下线由 neton-jobs 扫描执行。
-- **删除**：进回收站（`trash`），保留期后由任务彻底删除，删除时发出事件让评论、收藏等关联数据一并清理。
+- **删除**：进回收站（`trash`），保留期后由任务彻底删除。
+
+### 6.1 生命周期影响
+
+内容状态变化时，其他模块的行为由事件驱动、在各自规范中实现，本模块只负责在对象解析和访问策略里如实反映状态：
+
+| 事件 | 对外可见性 | 评论 | 收藏 / 足迹 | 搜索 | 推送深链 | 合集条目 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 撤回 `content.item.withdrawn` | 详情返回「内容已撤回」 | 不可新增；已有评论随对象不可见 | 保留记录，列表中显示「已失效」 | 从索引移除 | 打开时提示已撤回 | 自动隐藏，重新发布后恢复 |
+| 归档 `content.item.archived` | 按类型配置 | 关闭新增，已有评论只读 | 保留 | 从索引移除 | 正常打开 | 移除 |
+| 重新发布 `content.item.published` | 恢复 | 恢复 | 恢复 | 重新索引 | 正常 | 恢复 |
+| 彻底删除 `content.item.deleted` | 404 | 由评论模块清理 | 由互动模块清理 | 移除 | 打开提示不存在 | 移除 |
 
 ## 7. 合集：专题与推荐位
 
@@ -254,7 +286,16 @@ draft ──提交──► pending ──通过──► published ──下线
 
 ### 10.1 事件
 
-`ContentSaved`、`ContentSubmitted`、`ContentPublished`、`ContentUnpublished`、`ContentTrashed`、`ContentDeleted`、`TermChanged`、`CollectionChanged`。事件采用套件统一信封（类型名形如 `content.item.published`），携带 ID 和必要摘要，订阅方按需回查。推送、搜索索引、缓存失效、静态站重建等都靠订阅事件实现，不写进本模块。
+事件采用套件统一信封，与状态写入在同一事务内写入事件存储（事务性 outbox），投递方式如下：
+
+| 事件 | 投递方式 | 典型订阅方 |
+| --- | --- | --- |
+| `content.item.saved`、`content.item.submitted` | 可重试 | 编辑台、产品的 AI 加工（如 itwind newsroom） |
+| `content.item.published`、`content.item.withdrawn`、`content.item.archived`、`content.item.trashed`、`content.item.deleted` | 可重试 | 搜索、推送、互动、评论、缓存 |
+| `content.item.viewed` | 可重试（批量合并） | 互动（足迹） |
+| `content.term.changed`、`content.collection.changed` | 可重试 | 缓存、搜索 |
+
+事件载荷只带 ID、状态、版本号和少量摘要，订阅方按需回查。推送、搜索索引、缓存失效、静态站重建都靠订阅事件实现，不写进本模块。
 
 ### 10.2 端口
 
@@ -264,8 +305,9 @@ draft ──提交──► pending ──通过──► published ──下线
 | `ContentPublishPolicy` | 决定一次提交是否免审 | 按类型 / 栏目配置 |
 | `ContentSearchEngine` | 搜索 | pg_trgm |
 | `ContentAuthorResolver` | 作者展示资料（昵称、头像） | 经 member 适配器读取 |
-| `ContentMediaResolver` | 图片和附件地址、尺寸 | infra 文件服务 |
-| `ObjectResolver`（实现方） | 注册 `content.item`、`content.collection` 两种对象，供 comment、interaction、search、push 解析标题、链接、可见性和 capabilities | 内置 |
+| `MediaService`（使用方） | 上传业务类型注册、引用登记、媒体展开 | infra 媒体标准 |
+| `ObjectResolver`（实现方） | 注册 `content.item`、`content.collection`：标题、链接、封面、拥有者和 capabilities（按类型能力与当前状态得出，如未发布不含 `comment`、`favorite`） | 内置 |
+| `ObjectAccessPolicy`（实现方） | 回答「某人现在能否对某条内容做某事」：查看、评论、收藏、读取其媒体。考虑状态、可见性（会员 / 密码）、栏目的评论开关 | 内置 |
 
 ### 10.3 外部写入端口
 
@@ -325,7 +367,7 @@ interface ContentDraftWriter {
 
 ## 14. 权限点
 
-`content:term:manage`、`content:item:create`、`content:item:edit`、`content:item:edit-others`、`content:item:review`、`content:item:publish`、`content:item:delete`、`content:collection:manage`、`content:submission:review`、`content:stats:view`。
+`content:term:manage`、`content:item:create`、`content:item:edit`、`content:item:edit-others`、`content:item:review`、`content:item:publish`、`content:item:withdraw`、`content:item:archive`、`content:item:delete`、`content:collection:manage`、`content:submission:review`、`content:stats:view`。
 
 ## 15. 分期
 

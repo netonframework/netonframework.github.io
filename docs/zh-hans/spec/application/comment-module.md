@@ -1,7 +1,7 @@
 # module-comment 通用评论模块
 
 > 标识：NETON-APP-COMMENT
-> 日期：2026-10-15 · 状态：Draft r2
+> 日期：2026-10-15 · 状态：Draft r3（对齐套件架构 r2：可见性矩阵、计数定义、一致性、授权分离、媒体引用、投递保证）
 > 仓库：`neton-application-module-comment`（服务端）、`neton-application-front-comment`（后台页面）
 > 参照：网易新闻的「盖楼」、IT之家的楼层评论与热评榜。评论可以挂在任何对象上：文章、视频、商品、帖子……
 
@@ -62,17 +62,48 @@
 | 归属 | id, target_type, target_id, user_id?（导入的评论可以没有平台账号）, external_author?(jsonb：名称、头像，导入时使用), origin(`native`/`imported`), source_ref?（来源记录，如采集记录 ID） |
 | 树 | parent_id?（回复的是哪条）, root_id（所在顶层评论）, path（祖先 ID 数组，从顶层到父级）, depth, reply_to_user_id? |
 | 楼层 | floor：**每条评论都有楼号**（含回复）。盖楼形态下引用链上每一层都显示自己的楼号；楼中楼形态下只在顶层显示 |
-| 内容 | content（纯文本，最长可配置）, mentions(jsonb：@ 的用户), images(jsonb), emoji 用文本占位符表示，客户端渲染 |
+| 内容 | content（纯文本，最长可配置）, mentions(jsonb：@ 的用户), images（MediaRef 数组，上传业务类型 `comment.image`）, emoji 用文本占位符表示，客户端渲染 |
 | 环境 | ip_region（服务端按客户端地址解析，客户端传不进来）, device_tail（客户端上报的机型，限长、过滤，后台可关）, client（app / web / wap） |
 | 互动 | support_count, against_count, reply_count（直接回复数）, descendant_count（整条链下的回复总数） |
 | 排序 | hot_score（§5.2） |
-| 状态 | status：`visible` / `pending`（待审，仅作者本人可见） / `folded`（折叠，§7.4） / `hidden`（管理员隐藏） / `deleted`（作者删除） |
+| 状态 | status：`visible` / `pending`（待审） / `folded`（折叠，§7.4） / `hidden`（管理员隐藏，可恢复） / `removed`（管理员删除） / `deleted`（作者删除）；各状态的可见范围见 §3.4 |
 | 标记 | pinned（对象内置顶）, featured（精选 / 神评）, author_badge（作者 / 编辑 / 官方，由解析端口提供） |
 | 时间 | created_at, updated_at |
 
 - **path 用于盖楼**：查一页评论后，一次批量取出它们所有祖先，在服务端拼好引用链，避免客户端逐条请求。
 - **楼层深度上限**（默认 50）：超过上限的回复不再继续嵌套，而是作为新的一层，只引用直接父评论，防止引用链无限变长。
-- 删除和隐藏的评论在链中保留占位（「该评论已删除」「该评论已被隐藏」），楼层结构不塌。
+- 删除和隐藏的评论在链中保留占位，楼层结构不塌；占位文案按状态区分（§3.4）。
+
+### 3.4 可见性矩阵
+
+| 状态 | 作者本人 | 其他用户 | 对象拥有者 | 管理员 | 在链中的占位 |
+| --- | --- | --- | --- | --- | --- |
+| visible | 正文 | 正文 | 正文 | 正文 | — |
+| pending | 正文 + 「审核中」 | 不可见 | 不可见 | 正文 | 不出现（审核前不进入他人的链） |
+| folded | 正文 + 「已折叠」 | 折叠，点开看正文 | 折叠，点开看正文 | 正文 | 「该评论已被折叠」 |
+| hidden | 「该评论已被隐藏」 | 「该评论已被隐藏」 | 同左 | 正文 | 「该评论已被隐藏」 |
+| removed | 「该评论因违规已删除」 | 「该评论已删除」 | 同左 | 正文 + 处理记录 | 「该评论已删除」 |
+| deleted | 「你已删除该评论」 | 「该评论已删除」 | 同左 | 正文（保留期内） | 「该评论已删除」 |
+
+- 评论所在对象不可见时（对象撤回、删除，或当前用户无权查看对象），该对象下的全部评论对该用户不可见，评论接口返回对象不可用的错误码。
+- 被删除评论的正文在保留期后清空，只留结构字段。
+
+### 3.5 计数定义
+
+| 计数 | 包含 | 不包含 |
+| --- | --- | --- |
+| 对象评论数 `visible_count`（对外展示的「N 评」） | visible、folded 的顶层评论和回复 | pending、hidden、removed、deleted |
+| 对象全部评论数 `total_count`（后台） | 全部状态 | — |
+| 回复数 `reply_count` / `descendant_count` | 计入对象评论数的那些状态 | 同上 |
+| 参与人数 `participant_count` | 有至少一条计入对象评论数的评论的不同用户（导入评论按外部作者计） | — |
+
+计数在评论状态变化的同一事务内更新，并发出 `comment.target.count_changed`（同步投递），对象所在模块据此回写自己的冗余计数。
+
+### 3.6 一致性
+
+- **楼号**：在 `comment_targets` 行上原子自增分配，同一对象内唯一、单调递增；事务回滚造成的空号不复用。
+- **游标分页**：最新 / 最早排序以 `(created_at, id)` 为游标键，并发写入不会导致重复或遗漏；最热排序在第一页生成快照（排序结果缓存一段时间），后续页沿用快照，避免热度变化造成跳动。
+- **投票**：以 (comment_id, user_id) 唯一约束保证一人一票，计数按差值在同一事务内更新。
 
 ### 3.3 其他表
 
@@ -186,11 +217,12 @@ interface CommentImporter {
 
 ## 9. 扩展端口
 
-### 9.1 对象解析
+### 9.1 对象解析与授权
 
-使用套件统一的 `ObjectResolver` / `ObjectRegistry`（契约库），不再单独定义评论专用的解析器：
+使用套件统一的 `ObjectResolver` 和 `ObjectAccessPolicy`（契约库），不单独定义评论专用的解析器：
 
-- 能否评论：对象摘要的 `capabilities` 含 `comment`，且 `exists`、`visible` 为真。
+- **展示与快速过滤**：对象摘要的 `capabilities` 不含 `comment` 时，客户端不显示评论入口，列表接口直接返回「不支持评论」。
+- **授权**：发评论、投票、举报前，必须调用对象拥有模块的 `ObjectAccessPolicy.check(viewer, target, "comment")`；查看评论列表前调用 `check(viewer, target, "view")`。拒绝时原样返回拥有模块给出的原因码。本模块自己的规则（禁言、限流、敏感词）在此之后判断。
 - 「原文：xxx」、热评榜和「我的评论」里的标题与链接：取摘要的 `title`、`link`。
 - 「作者」标记和回复通知：取摘要的 `ownerUserIds`。
 - 评论对象的 `targetType` 就是 ObjectRef 的 `type`（如 `content.item`、`review.review`）。
@@ -210,9 +242,13 @@ interface CommentUserDecorator {
 
 ### 9.3 事件
 
-`CommentCreated`、`CommentReplied(toUserId)`、`CommentMentioned(userIds)`、`CommentVoted`、`CommentHidden`、`CommentDeleted`、`CommentCountChanged(targetType, targetId, visibleCount)`。
+| 事件 | 投递方式 | 用途 |
+| --- | --- | --- |
+| `comment.target.count_changed` | 同步（事务内） | 对象所在模块回写评论数 |
+| `comment.comment.created`、`comment.comment.replied`、`comment.comment.mentioned`、`comment.comment.voted` | 可重试 | 通知、互动统计、搜索 |
+| `comment.comment.hidden`、`comment.comment.removed`、`comment.comment.deleted`、`comment.comment.restored` | 可重试 | 通知、搜索、缓存 |
 
-对象所在模块订阅 `CommentCountChanged` 回写自己的评论数；通知模块订阅回复、@、点赞事件。
+对象所在模块订阅 `comment.target.count_changed` 回写自己的评论数；通知模块订阅回复、@、点赞事件。
 
 ### 9.4 配置
 

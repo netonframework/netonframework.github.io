@@ -1,11 +1,15 @@
 # module-collect 通用采集模块
 
 > 标识：NETON-APP-COLLECT
-> 日期：2026-10-15 · 状态：Draft
+> 日期：2026-10-15 · 状态：Draft r2（对齐套件架构 r2：接入流程、来源信息、断点恢复、上游同步、媒体标准）
 > 仓库：`neton-application-module-collect`（服务端）、`neton-application-front-collect`（后台页面）
 > 一个模块管理所有采集：文章、评论、商品、视频、榜单……采到的东西经「投递端口」交给需要它的模块（content、comment 或产品自己的模块）。
 
 ## 1. 目标与边界
+
+collect 是**内容接入流程**，不直接写任何模块的表：
+
+> 采集 → 原始记录 → 清洗与映射 → 去重 → 策略检查 → 调用目标模块的契约接口入库
 
 **负责**：采集源、采集任务与调度、采集执行（内置抓取器 + 外部采集器）、原始记录的存储与去重、清洗流水线、记录之间的关联、按规则投递给下游模块、投递结果回写、运行监控。
 
@@ -38,14 +42,15 @@
 
 | 表 | 关键字段 |
 | --- | --- |
-| `collect_sources` | id, code, name, site, kind(`crawl`/`partner`/`api`), request(jsonb：请求头、代理、Cookie 引用), rate_limit, weight, platform_app_id?（合作方推送用的 appKey）, enabled |
+| `collect_sources` | id, code, name, site, kind(`crawl`/`partner`/`api`), request(jsonb：请求头、代理、Cookie 引用), rate_limit, weight, platform_app_id?（合作方推送用的 appKey）, relationship(`partner`/`public`/`internal`), usage_scope(jsonb：允许的用途，如 `publish` / `reference_only` / `analysis`), attribution(jsonb：署名与原文链接要求), upstream_delete_policy（§7.4）, enabled |
 | `collect_tasks` | id, source_id, collector（采集器 code）, record_type, entry(jsonb), rules(jsonb：抽取规则), schedule, pipeline(jsonb：步骤列表), enabled, last_run_at, next_run_at, last_error |
-| `collect_runs` | id, task_id, status(`queued`/`running`/`succeeded`/`failed`/`cancelled`), worker, started_at, finished_at, fetched, created, updated, skipped, failed, log_ref |
-| `collect_records` | id, source_id, task_id, record_type, origin_id（与 source_id 联合唯一）, origin_url, parent_origin_id?, data(jsonb：结构化字段), raw_ref?（原始响应存档）, fingerprint（内容摘要，判断是否变化）, status(`new`/`processed`/`delivered`/`ignored`/`error`), first_seen_at, last_seen_at |
+| `collect_runs` | id, task_id, status(`queued`/`running`/`succeeded`/`failed`/`cancelled`), worker, rules_version, checkpoint(jsonb：断点), started_at, finished_at, fetched, created, updated, skipped, failed, log_ref |
+| `collect_records` | id, source_id, task_id, run_id, rules_version, record_type, origin_id（与 source_id 联合唯一）, origin_url, parent_origin_id?, data(jsonb：结构化字段), media(jsonb：已转存的 MediaRef 与原始地址对照), raw_ref?（原始响应存档）, fingerprint（内容摘要，判断是否变化）, upstream_state(`present`/`changed`/`removed`), status(`new`/`processed`/`blocked`/`delivered`/`ignored`/`error`), first_seen_at, last_seen_at |
 | `collect_deliveries` | id, record_id, sink（投递端口 code）, status(`pending`/`delivered`/`failed`/`skipped`), target_ref?（下游返回的目标，如 content 条目 ID）, attempts, error, delivered_at |
 | `collect_rules` | id, record_type, source_id?, task_id?, sink, filter(jsonb), params(jsonb), enabled |
 | `collect_seen_urls` | source_id, url_hash, seen_at（增量抓取用，按保留期清理） |
 
+- **来源信息**：每条记录都能追溯到来源、任务、运行、规则版本、原始地址和采集时间；来源上的关系、用途范围、署名要求随记录一起交给下游，由下游写入自己的数据（例如 content 的来源字段）。
 - 原始响应体（HTML、JSON）不进主表，按开关存到 infra 文件服务并只留引用，便于抽取规则调整后重放。
 - 同一条记录再次采到时比较 fingerprint：没变化只更新 `last_seen_at`；有变化就更新字段、重新跑流水线，并按投递规则决定是否再次投递（例如文章更正、评论点赞数变化）。
 
@@ -84,7 +89,13 @@ RecordTypeDefinition(
 - 请求：并发和频率按源限制；失败指数退避；支持代理池（引用配置，不在规则里写明文凭据）。
 - 调度由 neton-jobs 驱动，同一任务同一时间只运行一个实例（多实例部署时加分布式锁）。
 
-### 5.2 外部采集器（独立进程，适合需要浏览器渲染、App 协议、复杂反爬的站点）
+### 5.2 断点与重试
+
+- 任务按页或按批推进，每推进一步写一次 checkpoint（游标、页码、最后处理的原始 ID）；运行中断（进程重启、租约过期）后，下次从 checkpoint 继续，不从头再抓。
+- 单个请求失败按指数退避重试；整次运行失败计入源的健康度，连续失败超过阈值自动暂停任务并告警。
+- 记录级失败（解析失败、流水线某步失败）不影响同批其他记录，失败记录可以在后台单条重放。
+
+### 5.3 外部采集器（独立进程，适合需要浏览器渲染、App 协议、复杂反爬的站点）
 
 外部采集器可以用任何语言和框架（Scrapy、Crawlee、Playwright、自写脚本），按下面的协议和模块对接：
 
@@ -108,10 +119,11 @@ RecordTypeDefinition(
 | `html-sanitize` | HTML 白名单（段落、标题、图片、引用、列表、代码、表格），去掉脚本、样式、统计标记 |
 | `readability` | 通用正文抽取（列表页规则没给正文时） |
 | `strip-boilerplate` | 去掉「来源：」「责任编辑」、推广尾巴等按源配置的固定片段 |
-| `image-localize` | 图片下载转存到 infra 文件服务，替换地址，记录宽高（可选） |
+| `media-localize` | 图片和视频经 infra 媒体标准转存（上传业务类型 `collect.media`），在记录的 media 里保存原始地址与 MediaRef 的对照；下游拿到的是 MediaRef，不是外链 |
 | `normalize` | 时间统一为 UTC、相对时间（「3 分钟前」）换算、数字和单位规范化 |
 | `text-extract` | 生成纯文本（给搜索、embedding、比对用） |
 | `dedupe-content` | 按内容相似度标记跨源重复（只标记，是否合并由下游决定） |
+| `policy-check` | 投递前的策略检查：来源用途范围是否允许该投递（如 `reference_only` 的记录不能投给会直接发布的端口）、敏感词标记、必填字段完整性；不通过的记录标记为 `blocked` 并说明原因 |
 
 步骤可扩展：`CollectPipelineStep` 接口，产品可以注册自己的步骤。某一步失败时记录状态为 `error`，保留错误信息，可以在后台重放。
 
@@ -143,7 +155,20 @@ interface CollectSink {
 
 一条记录可以同时命中多条规则，投给多个下游。
 
-### 7.3 父子关联
+### 7.3 默认进入草稿或审核
+
+投递端口默认把记录写成**草稿或待审**。抓取成功不等于允许发布；是否免审只由目标模块的发布策略决定（例如 content 的 `ContentPublishPolicy`），collect 不能替目标模块做发布决定。
+
+### 7.4 来源更新与上游删除
+
+| 上游变化 | 检测方式 | 处理 |
+| --- | --- | --- |
+| 内容更新 | 重新采到同一 origin_id，fingerprint 变化 | 记录更新为 `changed`，按投递规则决定：重新投递（目标模块生成新版本，仍走审核）或仅提示 |
+| 上游删除 / 下架 | 定期复查已投递记录的原始地址（404、内容被替换）或合作方推送删除通知 | 记录标记 `removed`，按来源的 `upstream_delete_policy` 处理：`ignore`（不处理）、`notify`（通知编辑）、`withdraw`（调用目标模块的撤回接口） |
+
+目标模块需要在投递端口里提供对应的「撤回由本记录产生的对象」能力，否则 `withdraw` 策略不可选。
+
+### 7.5 父子关联
 
 子记录（评论）投递时，模块按 `parent_origin_id` 找到父记录在目标下游的投递结果（`target_ref`），作为子记录的投递目标。父记录还没投递时子记录排队等待，父记录被跳过或下线时子记录随之跳过。
 
@@ -151,7 +176,7 @@ interface CollectSink {
 
 | 端口 | 提供方 | 行为 |
 | --- | --- | --- |
-| `content.draft` | module-content | 经 `ContentDraftWriter` 写成草稿（按 source + origin_id 幂等），按参数决定栏目、署名、是否免审 |
+| `content.draft` | module-content | 经 `ContentDraftWriter` 写成草稿或待审（按 source + origin_id 幂等），带上来源信息与署名要求；支持撤回由该记录产生的内容 |
 | `comment.import` | module-comment | 经评论导入端口把评论挂到目标对象上（见 comment 规范「导入」一节） |
 | `content.media` | module-content | 图片 / 视频记录写进内容图集字段 |
 | 产品自定义 | 如 itwind 的 `newsroom.material` | 记录进入产品自己的加工流程 |
