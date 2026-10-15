@@ -10,7 +10,7 @@
 **负责**：评论与回复、盖楼、楼层号、支持 / 反对、热门评论、精选与置顶、跨对象的热评榜、折叠、举报、敏感词、审核、禁言、限流、「我的评论」「回复我的」。
 
 **不负责**：
-- 被评论对象本身：通过 §9 的解析端口询问对象所在模块。
+- 被评论对象本身：通过套件统一的对象解析（`ObjectResolver`，见 [content-platform-architecture.md](content-platform-architecture.md) §4.2）询问对象所在模块；对象的 capabilities 含 `comment` 才可评论。
 - 用户资料、等级、勋章：通过装饰端口从 member 等模块读取。
 - 通知下发：只发出事件（被回复、被 @、被赞），由通知或推送模块决定是否提醒。
 
@@ -186,24 +186,16 @@ interface CommentImporter {
 
 ## 9. 扩展端口
 
-### 9.1 对象解析（被评论对象所在模块实现）
+### 9.1 对象解析
 
-```kotlin
-interface CommentTargetResolver {
-    val targetType: String                                   // 如 "content.item"
-    suspend fun resolve(targetIds: List<String>): Map<String, CommentTarget>   // 批量，供热评榜和「我的评论」
-}
+使用套件统一的 `ObjectResolver` / `ObjectRegistry`（契约库），不再单独定义评论专用的解析器：
 
-data class CommentTarget(
-    val commentable: Boolean,     // 对象不存在、未发布或关闭评论时为 false
-    val visible: Boolean,         // 对象是否仍对外可见（热评榜过滤用）
-    val title: String,            // 「原文：xxx」
-    val link: String,             // App 深链或 Web 地址
-    val ownerUserIds: List<Long>, // 对象作者 / 编辑，用于「作者」标记和回复通知
-)
-```
+- 能否评论：对象摘要的 `capabilities` 含 `comment`，且 `exists`、`visible` 为真。
+- 「原文：xxx」、热评榜和「我的评论」里的标题与链接：取摘要的 `title`、`link`。
+- 「作者」标记和回复通知：取摘要的 `ownerUserIds`。
+- 评论对象的 `targetType` 就是 ObjectRef 的 `type`（如 `content.item`、`review.review`）。
 
-每个对象类型一个解析器，模块初始化时注册；未注册的类型一律拒绝。
+comment 自己也注册 `comment.comment` 解析器，供 interaction（点赞收藏评论）和推送深链使用。
 
 ### 9.2 用户装饰
 

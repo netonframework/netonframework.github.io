@@ -18,7 +18,9 @@
 | **Headless** | 只提供数据和接口，不渲染页面、不生成静态 HTML；正文是结构化块，App 和 Web 各自渲染 |
 | **能力按需开启** | 版本、评论、投稿、收藏、定时发布等都是类型上的开关，不用的类型不产生额外数据 |
 
-**不做**：模板引擎和静态页生成、站点导航菜单、广告位投放、问答 / 留言板 / 投票等独立应用、多站点 / 多租户、会员体系（交给 account / member）、评论（交给 [module-comment](comment-module.md)）、推送（交给 [module-push](push-module.md)）、附件存储（交给 infra 文件服务）。
+**不做**：模板引擎和静态页生成、站点导航菜单、广告位投放、问答 / 留言板 / 投票等独立应用、多站点 / 多租户、会员体系（交给 account / member）、评论（交给 [module-comment](comment-module.md)）、收藏 / 点赞 / 足迹（交给 interaction 模块）、推送（交给 [module-push](push-module.md)）、附件存储（交给 infra 文件服务）。
+
+套件统一契约（对象引用、对象解析、事件信封、模块结构）见 [content-platform-architecture.md](content-platform-architecture.md)。
 
 ## 2. 概念对照
 
@@ -63,7 +65,7 @@ ContentTypeDefinition(
 | `REVIEW` | 发布前必须审核（也可以在栏目上单独配置，§4.2） |
 | `SCHEDULE` | 定时发布、定时下线 |
 | `COMMENTS` | 注册为 comment 模块的可评论对象 |
-| `FAVORITES` / `HISTORY` | 收藏 / 浏览足迹 |
+| `FAVORITES` / `HISTORY` | 在对象摘要的 capabilities 里声明可收藏 / 记足迹，由 interaction 模块执行 |
 | `SUBMISSION` | 允许终端用户投稿 |
 | `SEO` | SEO 标题、关键词、描述、规范链接 |
 | `PASSWORD` / `MEMBERS_ONLY` | 密码访问 / 登录可见 |
@@ -148,7 +150,7 @@ TaxonomyDefinition(
 | 状态 | status（§6）, visibility(`public`/`members`/`password`), password_hash?, redirect_url?（跳转型内容） |
 | 时间 | published_at, scheduled_at?, expire_at?, created_at, updated_at |
 | 排序 | weight（越大越靠前）, pinned_until?（全局置顶到期时间）；栏目内置顶见 5.3 |
-| 计数 | view_count, comment_count, favorite_count（冗余计数，详细统计见 §9） |
+| 计数 | view_count, comment_count, favorite_count（冗余计数：评论数由 comment 事件回写，收藏数由 interaction 事件回写；详细统计见 §9） |
 | SEO | seo_title, seo_keywords, seo_description, canonical_url |
 | 生产 | producer?, producer_ref?（外部写入方标识，§10.3）, submitter_user_id?（投稿人，§11）, published_revision_id |
 
@@ -252,7 +254,7 @@ draft ──提交──► pending ──通过──► published ──下线
 
 ### 10.1 事件
 
-`ContentSaved`、`ContentSubmitted`、`ContentPublished`、`ContentUnpublished`、`ContentTrashed`、`ContentDeleted`、`TermChanged`、`CollectionChanged`。事件携带 ID 和必要摘要，订阅方按需回查。推送、搜索索引、缓存失效、静态站重建等都靠订阅事件实现，不写进本模块。
+`ContentSaved`、`ContentSubmitted`、`ContentPublished`、`ContentUnpublished`、`ContentTrashed`、`ContentDeleted`、`TermChanged`、`CollectionChanged`。事件采用套件统一信封（类型名形如 `content.item.published`），携带 ID 和必要摘要，订阅方按需回查。推送、搜索索引、缓存失效、静态站重建等都靠订阅事件实现，不写进本模块。
 
 ### 10.2 端口
 
@@ -263,7 +265,7 @@ draft ──提交──► pending ──通过──► published ──下线
 | `ContentSearchEngine` | 搜索 | pg_trgm |
 | `ContentAuthorResolver` | 作者展示资料（昵称、头像） | 经 member 适配器读取 |
 | `ContentMediaResolver` | 图片和附件地址、尺寸 | infra 文件服务 |
-| `CommentTargetResolver`（实现方） | 向 comment 模块声明可评论对象 | 类型开了 `COMMENTS` 时自动注册 |
+| `ObjectResolver`（实现方） | 注册 `content.item`、`content.collection` 两种对象，供 comment、interaction、search、push 解析标题、链接、可见性和 capabilities | 内置 |
 
 ### 10.3 外部写入端口
 
@@ -279,10 +281,9 @@ interface ContentDraftWriter {
 
 写入的数据同样经过类型校验和审核流程；是否免审由 `ContentPublishPolicy` 决定（写入方可以注册自己的规则）。本模块不依赖任何写入方。
 
-## 11. 用户侧能力
+## 11. 用户投稿
 
 - **投稿**（类型开了 `SUBMISSION`、栏目允许投稿）：终端用户提交的内容直接进 `content_items`，状态 pending，记录投稿人 `submitter_user_id`；后台审核通过即发布，或转给编辑继续加工。投稿人可在「我的投稿」查看状态和驳回原因。投稿只开放类型声明为可投稿的字段。
-- **收藏 / 足迹**：`content_favorites`、`content_histories`（同一内容重复浏览只更新时间，按用户保留最近 N 条）。
 
 ## 12. 接口
 
@@ -293,12 +294,10 @@ interface ContentDraftWriter {
 | `GET term/tree?taxonomy=category` | 栏目树（只含 visible） |
 | `GET term/list?taxonomy=tag&...` | 词条列表（热门标签等） |
 | `GET item/query` | §8 通用查询 |
-| `GET item/get/{id}`、`GET item/resolve?type&slug` | 详情（按 ID 或 slug）；记一次浏览，登录用户写足迹 |
+| `GET item/get/{id}`、`GET item/resolve?type&slug` | 详情（按 ID 或 slug）；记一次浏览并发出 `content.item.viewed`，足迹由 interaction 订阅后记录 |
 | `GET item/ranking?period&by` | 排行 |
 | `GET item/search?q` | 搜索 |
 | `GET collection/get/{code}` | 推荐位或专题（含分区与条目） |
-| `POST/DELETE favorite/{id}`、`GET favorite/page` | 收藏 |
-| `GET history/page`、`DELETE history` | 足迹 |
 | `GET submission/form?type`、`POST submission/create`、`GET submission/mine` | 投稿 |
 
 **后台（`/admin/content/*`）**：类型与字段（只读，展示注册结果）、分类法与词条、栏目设置、内容（列表、编辑器、版本对比与回滚、提交、审核、定时、置顶、回收站）、合集（专题、推荐位、条目编排）、投稿审核、审核日志、统计。
@@ -319,7 +318,6 @@ interface ContentDraftWriter {
 | `content_revisions` | 版本与自动保存 |
 | `content_edit_locks` | 编辑锁 |
 | `content_collections` / `_sections` / `_entries` | 合集 |
-| `content_favorites` / `content_histories` | 收藏 / 足迹 |
 | `content_item_stats_daily` | 按日统计 |
 | `content_review_logs` | 审核日志 |
 
@@ -333,7 +331,7 @@ interface ContentDraftWriter {
 
 | 期 | 内容 |
 | --- | --- |
-| P1 | 类型注册（article、page）、分类法（category、tag）、内容 CRUD、结构化正文、版本、审核、定时、通用查询、合集（手动条目）、搜索（pg_trgm）、阅读计数与排行、收藏足迹、投稿、外部写入端口、后台全套页面 |
+| P1 | 类型注册（article、page）、分类法（category、tag）、内容 CRUD、结构化正文、版本、审核、定时、通用查询、合集（手动条目）、搜索（pg_trgm）、阅读计数与排行、投稿、对象解析与外部写入端口、后台全套页面 |
 | P2 | 自定义字段的筛选排序索引、合集规则条目、栏目级权限、编辑锁与自动保存、回收站任务、多语言关联 |
 | P3 | 开放接口、HTML 导入工具（WordPress WXR 等）、更多字段类型与块类型 |
 
