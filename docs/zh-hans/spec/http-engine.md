@@ -226,8 +226,12 @@ interface HttpClient {
 ```
 
 `request / stream / close` 与请求、响应、错误模型（`HttpClientRequest`、
-`HttpClientResponse`、`HttpClientStreamChunk`、`HttpClientError`）**保持现有形状**。
-本文不改公共面，只补能力声明与实现来源。
+`HttpClientResponse`、`HttpClientError`）**保持现有形状**。
+
+`HttpClientStreamChunk` 新增首元素 `Start(statusCode, headers)`：每个流先发 `Start`（只有 2xx 会进入 Flow），
+再发 `Bytes`/`Text`，最后一个 `End`。协议客户端据此在正文到达前按 `Content-Type` 选解析器、读取会话头
+（MCP 的 SSE/JSON 判别与 `Mcp-Session-Id` 就靠它）。内置客户端与 `ScriptedHttpClient` 都已实现
+（脚本没写 `Start` 时补一个 200，头取自 `End`），`HttpClientConformanceSuite` 的流式用例校验首元素。
 
 ### 5.2 Client 能力
 
@@ -446,10 +450,9 @@ hyper4k (Rust) ─────── hyper4k_client_*  （ABI v4，已完成）
 | `capabilities` | `HTTP_2, STREAMING_BODY, CANCELLATION, CUSTOM_CA`（无 `PROXY`） |
 | 错误 | §5.4 表 |
 
-**`stream()` 的 4xx/5xx**：与现有 Ktor 实现保持一致——`stream()` 不把状态码映射为
-异常，`OnHeaders` 的状态原样进 Flow 的首个元素（现有 `HttpClientStreamChunk` 没有
-headers 变体；实施时若需新增 `Start(status, headers)` 变体，须同步 Ktor 实现与
-`neton-ai` 的 SSE parser）。这是 §十 第 2 步的实施决策点，本文登记不预判。
+**`stream()` 的状态与响应头**：2xx 时 `OnHeaders` 立即发出 `Start(status, headers)`；
+4xx/5xx 与 Ktor 实现一致，攒下（有上限的）错误正文后以 `HttpClientError.Http` 失败，不进 Flow。
+（原先登记的决策点已按 §5.1 落定：新增 `Start` 变体，Ktor、hyper4k 与 neton-ai 的消费方同步更新。）
 
 ### 7.4 平台
 

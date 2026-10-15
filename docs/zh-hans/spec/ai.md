@@ -378,13 +378,17 @@ data class Usage(
   - 先发 `server/discover` 协商（1 秒超时），之后每个请求无状态：不握手、不建会话；`params._meta` 携带协议版本、客户端能力与客户端信息；请求头带 `MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name`。
   - 工具 schema 中 `x-mcp-header` 标注的参数作为 `Mcp-Param-*` 头发送，非纯 ASCII 的值用 `=?base64?…?=` 编码；标注不合法的工具被忽略。
   - 结果必须带 `resultType`；服务端要求多轮输入（`input_required`）时报错，暂不支持。请求前先检查服务端是否声明了对应能力。
-  - 服务端不认识 `server/discover` 时回退到 legacy 握手（最高 2025-11-25，带会话，关闭时 DELETE）；探测返回 modern 协议错误码（-32020/-32021/-32022）时直接报错，不回退。
+  - 回退只针对"服务端不认识 `server/discover`"：JSON-RPC 错误、HTTP 400/404/405/406/415/422、响应不合 modern 格式、1 秒内无响应时，回退到 legacy 握手（最高 2025-11-25，带会话，关闭时 DELETE）。鉴权失败、限流、5xx、网络错误以及 modern 协议错误码（-32020/-32021/-32022）原样报错，不回退。
+  - 生命周期：连接是一份不可变快照，并发的首次调用共用同一次协商，每个请求自始至终用同一份快照。legacy 会话过期（带会话的请求收到 404）时只让那一份快照失效，重新握手后把该请求重发一次（404 说明服务端没处理它）；超时、断流、5xx 不自动重发。`close()` 是终态，在途请求不取消、也不会重新连接。
+  - 工具目录（定义、参数头绑定、被忽略的工具）整体替换：全部翻页成功才换，失败保留旧的，并发刷新合并为一次；有 `ttlMs` 时在有效期内复用，收到 `notifications/tools/list_changed` 时作废。直接调用 `callTool()` 时目录里没有该工具会先刷新一次，保证参数头不漏发。重复的分页游标报协议错误。
+  - 传输：基于 HTTP 流的 `Start` 元素按 `Content-Type` 区分 JSON 与 SSE，SSE 增量解析，拿到对应 id 的响应立即返回并断开；响应前的通知交给 `onNotification`，服务端请求中 `ping` 回空结果，其余回 -32601。单个请求有超时，响应体有大小上限；legacy 的 SSE 在响应前断开且有事件 id 时，用 `Last-Event-ID` 续读（最多 2 次）。
+  - 错误按 `McpErrorKind` 分类（Transport/Timeout/Http/Rpc/Protocol/Unsupported/InvalidArgument/SessionExpired/Closed），保留 HTTP 状态、JSON-RPC 错误码与附加数据；`outcomeUnknown` 标出请求可能已执行的情况（断流、超时），映射成工具时据此提示模型先确认再重试。协程取消不被包装。
   - 工具映射为动态工具（带标题与行为提示，结果为富输出），另支持资源与提示词。
 - 测试替身 `ScriptedAiProvider`：按 IR 块编写脚本，支持流式切分、延迟、中途失败，记录收到的请求。
 
 ### 10.6 不做
 
-UI 与 RSC、UI 消息流、终端 UI、编程代理 harness、Code Mode（需要 JS 沙箱）、workflow。暂不做：流开始后的自动重试、遥测集成（用观测回调与用量记录器接 Neton 日志）、视频生成、文件与 skill 上传、流式转写与翻译、`decide`。
+UI 与 RSC、UI 消息流、终端 UI、编程代理 harness、Code Mode（需要 JS 沙箱）、workflow。暂不做：流开始后的自动重试、遥测集成（用观测回调与用量记录器接 Neton 日志）、视频生成、文件与 skill 上传、流式转写与翻译、`decide`；MCP 的多轮输入（`input_required`）、sampling / elicitation / roots、OAuth 授权与 stdio 传输（有接入需求时再做）。
 
 ---
 
