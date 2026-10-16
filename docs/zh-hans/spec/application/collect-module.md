@@ -93,6 +93,7 @@ CollectRecordTypeDefinition(
         field("likes", CollectFieldType.INT),
         field("ipRegion", CollectFieldType.TEXT),
         field("replyToOriginId", CollectFieldType.TEXT),   // 盖楼：回复的是哪条原始评论
+        field("replyToAuthorName", CollectFieldType.TEXT), // 来源把回复都挂在楼主下、只在正文里点名（「回复 某某 :」）时，被回复的人
     ),
     parentType = "article",                                 // 评论属于某篇文章
 )
@@ -226,6 +227,8 @@ class CollectSinkRegistry {
 
 ### 7.5 父子关联
 
+到期的投递按记录的**原始发布时间**依次处理：下游按收到的先后编号（评论楼层），所以收到的顺序必须跟来源的时间一致，而不是站点列表的顺序（IT之家这类站点最新在前）。文章发布早于它的评论，同一轮里也先于评论送达。
+
 子记录（评论）投递时，模块按 `parent_origin_id` 找到父记录在目标下游的投递结果（`target_ref`），作为子记录的投递目标。父记录还没投递时子记录以 `waiting` 排队（最长 `collect.delivery.parent_wait_hours`，默认 72 小时），父记录被跳过或下线时子记录随之跳过。
 
 ## 8. 各下游的投递端口
@@ -233,7 +236,7 @@ class CollectSinkRegistry {
 | 端口 | 提供方 | 行为 |
 | --- | --- | --- |
 | `content.draft` | collect 内置（只依赖 content 契约） | 经 `ContentDraftWriter` 写成草稿或待审（按 source + origin_id 幂等），带上来源信息与署名要求；支持撤回由该记录产生的内容 |
-| `comment.import` | collect 内置（只依赖 comment 契约） | 经 `CommentImporter` 把评论挂到目标对象上（见 comment 规范「导入」一节）；不支持撤回 |
+| `comment.import` | collect 内置（只依赖 comment 契约） | 经 `CommentImporter` 把评论挂到目标对象上（见 comment 规范「导入」一节）；带 `replyToAuthorName` 时在同一楼里按作者名找到被回复的那条（发布不晚于本条的最近一条），找不到就回复楼主；不支持撤回 |
 | `content.media` | module-content | 图片 / 视频记录写进内容图集字段（延后，未实现） |
 | 产品自定义 | 如 itwind 的 `newsroom.material` | 记录进入产品自己的加工流程 |
 
