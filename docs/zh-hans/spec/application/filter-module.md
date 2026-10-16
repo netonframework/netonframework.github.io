@@ -1,9 +1,9 @@
 # module-filter 通用筛选器
 
 > 标识：NETON-APP-FILTER
-> 日期：2026-10-17 · 状态：Draft r1（待评审，未实现）
+> 日期：2026-10-17 · 状态：Draft r2（r2：放置位改为挂载，节点 code 对外、筛选器 id 内部绑定；待评审，未实现）
 > 仓库：`neton-application-contract`（契约 `contract.filter`）、`neton-application-module-filter`（服务端）、`neton-application-front-filter`（后台页面）
-> 一份「存下来的查询」，任何模块的对象都能被它筛选；频道、楼层、推荐位、合集规则、推送订阅、开放 API 都只引用筛选器，不各自实现查询。
+> 一份「存下来的查询」，任何模块的对象都能被它筛选；筛选器按 id 挂载到频道、楼层、分类节点、合集分区等节点上，对外请求节点（如 `/app/channel/fabuhui`）即返回挂载筛选器的结果；推送订阅、开放 API 也只引用筛选器。
 
 ## 0. 一句话
 
@@ -27,7 +27,7 @@
 - **筛选器**：数据源（或维度空间）+ 条件树 + 排序 + 数量上限，保存时类型检查，有版本。
 - **执行**：联邦执行（默认）与索引执行（规模化），对使用方透明；统一返回对象引用流（卡片）。
 - **订阅匹配**：对象发布或变化时判断命中了哪些筛选器（推送、关注、缓存失效的基础）。
-- **放置位**：频道、楼层、推荐位等「把筛选器结果放到哪里」的配置。
+- **挂载**：把筛选器挂到节点上（频道、楼层、分类节点、合集分区……），对外请求节点、返回筛选器结果。
 - **一致性套件**：证明任一数据源实现语义正确。
 
 ### 1.3 不做
@@ -35,7 +35,7 @@
 - 任意 SQL、任意未声明字段、跨模块 join 表——模块之间只经契约组合（§7）。
 - 全文检索的相关性排序——属于 search（§12.3），筛选器经维度 `text.query` 委托给它。
 - 个性化推荐算法——推荐可以作为一个数据源接入（§12.4），筛选器不内置算法。
-- 页面布局、模板渲染——放置位只描述「什么数据、什么卡片样式」，排版归客户端。
+- 页面布局、模板渲染——挂载只描述「什么数据、什么卡片样式」，排版归客户端。
 
 ## 2. 概念
 
@@ -49,7 +49,7 @@
 | **执行计划 Plan** | 规划器对筛选器选择的执行方式（单源 / 联邦归并 / 索引） |
 | **卡片 Card** | 结果项：`ObjectRef` + `ObjectResolver` 解析出的显示摘要 + 排序值 |
 | **订阅 Subscription** | 一个筛选器被声明为「需要推送命中」，对象变化时参与匹配 |
-| **放置位 Placement** | 筛选器结果的使用位置：频道、楼层、推荐位……带展示样式与有效期 |
+| **挂载 Mount** | 把筛选器（按 id）挂到一个节点上：频道、楼层、分类节点、合集分区……对外请求节点，返回筛选器结果 |
 
 ## 3. 维度
 
@@ -281,12 +281,12 @@ SubFilter := { filter: <code>, project: dim:<code> | id }
 
 ### 5.6 版本与生命周期
 
-- 筛选器有**草稿**与**已发布版本**（`version` 递增）；放置位、订阅、子筛选器引用的都是已发布版本。编辑草稿不影响线上，预览用草稿。
+- 筛选器有**草稿**与**已发布版本**（`version` 递增）；挂载、订阅、子筛选器引用的都是已发布版本。编辑草稿不影响线上，预览用草稿。
 - 每个已发布版本记录它校验时各数据源的 `schemaVersion`。数据源升级 schema 后，平台对引用它的已发布版本**重新校验**：
   - 通过：静默更新记录的 schemaVersion；
-  - 不通过：状态改为 `broken`，原版本继续按「最后一次可执行的计划」服务或返回空（按筛选器设置 `onBroken: keep | empty`，默认 `keep`），后台告警并列出受影响的放置位。
+  - 不通过：状态改为 `broken`，原版本继续按「最后一次可执行的计划」服务或返回空（按筛选器设置 `onBroken: keep | empty`，默认 `keep`），后台告警并列出受影响的挂载节点。
 - 引用的对象被删除（如标签被删）同样触发重新校验。
-- 删除筛选器前检查被引用情况（放置位、订阅、其他筛选器的子筛选器），被引用时拒绝删除（`FILTER_IN_USE`）。
+- 删除筛选器前检查被引用情况（挂载、订阅、其他筛选器的子筛选器），被引用时拒绝删除（`FILTER_IN_USE`）。
 
 ## 6. 执行
 
@@ -302,7 +302,7 @@ data class Card(val ref: ObjectRef, val summary: ObjectSummary, val sortValues: 
 ```
 
 - 结果经 `ObjectRegistry.describe` 批量解析成卡片；解析后不可见的对象（解析与执行之间状态变化）被丢弃，并向后补足本页。
-- App 接口：`GET /app/filter/{code}?cursor=&limit=`（匿名可用，可见性由数据源负责）；放置位接口见 §10。
+- App 接口：`GET /app/filter/{code}?cursor=&limit=`（匿名可用，可见性由数据源负责）；挂载节点的接口见 §10.6。
 
 ### 6.2 执行策略
 
@@ -415,29 +415,101 @@ data class FilterSnapshot(val fields: Map<String, FilterValue>, val dims: Map<St
 
 **数据源合入的门槛是套件全绿**。未来商城、评测、发布会模块「接入筛选器做对了没有」由测试证明，不靠人工评审。
 
-## 10. 放置位
+## 10. 挂载
 
-### 10.1 模型
+筛选器本身没有对外地址。它通过**挂载**出现在某个节点上：频道、楼层、分类节点、合集分区、商品类目页……对外请求的是节点（`/app/channel/fabuhui`），返回的是挂在上面的筛选器（#50）的结果。
+
+### 10.1 原则
+
+1. **对外用节点的 code，内部绑定筛选器的 id。** 节点地址稳定；筛选器改名、改 code、换成另一个筛选器，客户端与已分享的链接不受影响。挂载按 `filter_id` 引用，不按 code。
+2. **挂载改变节点「显示什么」，不改变「什么属于它」。** 分类「发布会」挂了筛选器后，该分类的对外列表返回筛选结果；但文章的分类归属、后台按分类查文章、面包屑、筛选器里的 `category in [发布会]` 条件，全部按**归属**计算，不受挂载影响。因此不会出现循环，也不会出现「文章在这个分类、后台却查不到」。
+3. **挂的是已发布版本。** 编辑筛选器草稿不影响线上节点；筛选器发布新版本后，所有挂载点同时切换。
+4. **谁能被挂载由拥有节点的模块声明**（与数据源同一模式），挂载关系统一存在 filter 模块，所有挂载可追踪、可告警。
+
+### 10.2 挂载点类型（由模块注册）
+
+```kotlin
+// contract.filter
+data class MountPointType(
+    val code: String,                 // "filter.channel"、"content.term"、"content.collection_section"、"commerce.category"
+    val name: String,
+    val nodeRefType: String,          // 节点的 ObjectRef.type，挂载记录以 ObjectRef 指向节点
+    val modes: Set<MountMode>,        // 节点支持的挂载方式
+    val acceptSources: Set<String>?,  // 允许挂哪些数据源的筛选器；null = 任意
+)
+enum class MountMode { REPLACE, PREPEND, APPEND }
+```
+
+- 注册到 `FilterMountRegistry`（契约里定义，filter 模块 `bindIfAbsent`、装配后 `seal`）。
+- 首批挂载点：
+
+| 挂载点 | 提供方 | 说明 | 方式 |
+| --- | --- | --- | --- |
+| `filter.channel` | filter | App 顶部导航频道 | REPLACE（频道本身没有原生列表） |
+| `filter.block` | filter | 首页 / 落地页的分区块（标题 + N 条 + 「更多」） | REPLACE |
+| `content.term` | content | 栏目 / 标签节点的对外列表 | REPLACE / PREPEND / APPEND |
+| `content.collection_section` | content | 合集分区（即原「规则条目」，§12.1） | APPEND（手动条目在前，筛选器补足） |
+
+- 节点要挂载才能存在的（频道、楼层），由 filter 自己管理节点；节点本来就存在的（分类、合集分区、商品类目），节点归原模块，filter 只存挂载关系。
+
+### 10.3 挂载方式的语义
+
+| 方式 | 结果 |
+| --- | --- |
+| `REPLACE` | 节点的对外列表 = 筛选器结果 |
+| `PREPEND` | 筛选器结果在前（最多 `mount.limit` 条），节点原列表在后；按 `ref` 去重，筛选器结果优先 |
+| `APPEND` | 节点原列表在前，原列表翻完后接筛选器结果；按 `ref` 去重 |
+
+组合列表的游标由节点所属模块生成（它知道原列表的游标），内部记录「当前在原列表 / 在筛选器结果」与两边各自的游标。
+
+### 10.4 节点模块如何接入
+
+```kotlin
+// contract.filter —— filter 模块实现，节点所属模块在返回节点列表时调用
+interface FilterMounts {
+    /** 节点当前生效的挂载（已过有效期、已停用的不返回）；没有返回 null。结果短时缓存。 */
+    suspend fun mountOf(node: ObjectRef): FilterMount?
+}
+data class FilterMount(val filterId: Long, val version: Int, val mode: MountMode, val limit: Int?, val cardStyle: Map<String, String>)
+```
+
+content 返回分类列表时：
+
+```kotlin
+val mount = ctx.getOrNull(FilterMounts::class)?.mountOf(ObjectRef("content.term", termId))
+when (mount?.mode) {
+    null -> 原有列表
+    REPLACE -> filterEngine.run(mount)                    // 只返回筛选结果
+    PREPEND, APPEND -> 组合原列表与筛选结果（§10.3）
+}
+```
+
+宿主没装 filter 时 `getOrNull` 为 null，节点按原样工作。
+
+### 10.5 模型
 
 | 表 | 关键字段 |
 | --- | --- |
-| `filter_placements` | id, kind（`channel` / `block` / `slot` / `feed`）, code, name, filter_code, card_style（text JSON：每种对象类型的卡片样式，如 `{"content.item":"auto","comment.comment":"quote"}`）, settings（text JSON：固定、默认显示、图标、每页条数）, sort, status, start_at?, end_at? |
+| `filter_nodes` | id, kind（`channel` / `block`）, code（唯一，对外地址）, name, settings（text JSON：`pinned`、`defaultVisible`、`userAddable`、图标、每页条数）, sort, status, start_at?, end_at? —— 只存 filter 自己管理的节点 |
+| `filter_mounts` | id, mount_point（`filter.channel` / `content.term` / …）, node_ref（`type:id`）, filter_id, mode, limit?, card_style（text JSON：每种对象类型的卡片样式，如 `{"content.item":"auto","comment.comment":"quote"}`）, status, start_at?, end_at?, created_by, updated_at；**唯一(node_ref, 生效中)**：一个节点同一时刻只有一个生效挂载 |
 
-- **频道** `channel`：App 顶部导航。设置：`pinned`（不可移除，如「最新」）、`defaultVisible`、`userAddable`。
-- **楼层** `block`：首页 / 栏目页的分区块（标题 + N 条 + 「更多」）。
-- 放置位与筛选器分开：一个筛选器可以被多个放置位复用；换数据只改筛选器，换位置只改放置位。
-- 编辑型推荐（手工挑选、自定义标题封面）仍然是 content 的合集；放置位可以直接引用合集（`filter_code` 为 content 提供的内置筛选器 `content.collection:<code>`），不在 filter 里重做编辑能力。
+- 有效期：可以预先挂一个「发布会当天」的筛选器，到点生效、过期自动回落到节点原列表或上一个长期挂载（按 `start_at` / `end_at` 选生效的那条）。
+- 挂载、换挂、取消写审计日志。
+- `filter_references` 由挂载自动维护（referrer_kind = `mount`）：删除或停用筛选器前能看到它挂在哪些节点上；筛选器进入 `broken` 时告警到具体节点。
 
-### 10.2 接口
+### 10.6 接口
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /app/filter/channels` | 频道列表（已按有效期、状态过滤），含每个频道的 `card_style` |
-| `GET /app/filter/placement/{code}?cursor=&limit=` | 放置位内容（卡片流） |
-| `GET /app/filter/{code}?cursor=&limit=` | 直接按筛选器取（开放给需要的客户端与 `/open` 接口） |
+| `GET /app/channel/list` | 频道列表（已按状态、有效期过滤），含每个频道的卡片样式 |
+| `GET /app/channel/{code}?cursor=&limit=` | 频道内容：按 code 找到节点 → 生效挂载 → 筛选器已发布版本 → 卡片流 |
+| `GET /app/block/{code}?limit=` | 楼层内容 |
+| 节点所属模块的原接口 | 如 `GET /app/content/item/query?category=fabuhui`：按 §10.4 自动应用挂载，接口不变 |
+| `GET /app/filter/{code}?cursor=&limit=` | 直接按筛选器取（开放接口、调试；默认关闭对外访问，按筛选器开关） |
 
 - 用户的频道定制（增删、排序）：未登录存在客户端；登录后存账号偏好（account 的偏好设置），服务端只校验频道仍存在且 `userAddable`。
 - 客户端按 `ref.type` + `card_style` 渲染；遇到不认识的卡片类型时跳过，不报错（新模块上线不破坏旧客户端）。
+- 编辑型推荐（手工挑选、自定义标题封面）仍然是 content 的合集，不在 filter 里重做；频道要展示一个合集时，挂 content 提供的内置筛选器 `content.collection:<code>`。
 
 ## 11. 数据表
 
@@ -445,8 +517,8 @@ data class FilterSnapshot(val fields: Map<String, FilterValue>, val dims: Map<St
 | --- | --- |
 | `filter_filters` | id, code（唯一）, name, scope（text JSON）, draft（text JSON：草稿定义）, published_version, status（`active` / `broken` / `disabled`）, on_broken, subscribable, materialize, remark, created_at, updated_at |
 | `filter_versions` | id, filter_id, version, definition（text JSON）, normalized（text JSON：规范形式缓存）, source_schema（text JSON：{source: schemaVersion}）, published_by, published_at；唯一(filter_id, version) |
-| `filter_references` | filter_id, referrer_kind（`placement` / `filter` / `subscription` / `collection_section`）, referrer_id；唯一(filter_id, referrer_kind, referrer_id) |
-| `filter_placements` | 见 §10.1 |
+| `filter_references` | filter_id, referrer_kind（`mount` / `filter` / `subscription`）, referrer_id；唯一(filter_id, referrer_kind, referrer_id) |
+| `filter_nodes`、`filter_mounts` | 见 §10.5 |
 | `filter_materialized` | filter_id, version, position, ref, sort_values, refreshed_at |
 | `filter_index_entries`（P3） | ref, source, dims（text JSON + 生成的数组 / 范围列）, sort_values, visibility_group, updated_at |
 
@@ -458,7 +530,7 @@ data class FilterSnapshot(val fields: Map<String, FilterValue>, val dims: Map<St
 
 - 实现 `content.item` 数据源，内部复用 §8 的列表查询（补上 `or` / `not` 与 `notIn` / `all`）。
 - 合集规则条目（content §7，原 P2「`content_collection_sections.rule`」）改为**引用筛选器**：分区配 `filterCode`，手动条目优先，筛选器补足数量。content 只依赖契约里的 `FilterEngine`，宿主没装 filter 时规则条目不可用，手动条目照常。
-- 提供内置筛选器 `content.collection:<code>`，让放置位直接引用编辑型合集。
+- 提供内置筛选器 `content.collection:<code>`，让频道等节点直接挂载编辑型合集。
 
 ### 12.2 comment
 
@@ -473,7 +545,7 @@ search（套件架构 §2.1「待写」）负责**相关性**：分词、召回�
 
 ### 12.4 推荐
 
-个性化推荐作为一个数据源（如 `rec.feed`）接入：它的「条件」是推荐场景参数，结果是带分数的引用流。筛选器可以对推荐结果再做结构化过滤（子筛选器），放置位可以把推荐与编辑筛选器并列。筛选器本身不内置推荐算法。
+个性化推荐作为一个数据源（如 `rec.feed`）接入：它的「条件」是推荐场景参数，结果是带分数的引用流。筛选器可以对推荐结果再做结构化过滤（子筛选器），频道可以挂推荐数据源的筛选器，与编辑筛选器并列。筛选器本身不内置推荐算法。
 
 ### 12.5 push 与 interaction
 
@@ -485,10 +557,11 @@ push 订阅 `FilterMatched` 按订阅关系下发；interaction 的「关注」�
 | --- | --- |
 | `filter:filter:query` / `create` / `update` / `publish` / `delete` | 筛选器管理（发布与编辑分开，便于审核） |
 | `filter:source:<source>` | 允许在某个数据源上建筛选器（没有商城权限的编辑看不到商城数据源） |
-| `filter:placement:query` / `create` / `update` / `delete` | 放置位管理 |
+| `filter:node:query` / `create` / `update` / `delete` | 频道、楼层节点管理 |
+| `filter:mount:update` | 在节点上挂载、换挂、取消挂载（节点所属模块的权限另需具备，如挂到分类需 `content:term:update`） |
 | `filter:index:rebuild` | 重建维度索引（P3） |
 
-筛选器与放置位的创建、发布、删除写审计日志。
+筛选器、节点与挂载的创建、发布、变更、删除写审计日志。
 
 ## 14. 后台（neton-application-front-filter）
 
@@ -496,8 +569,8 @@ push 订阅 `FilterMatched` 按订阅关系下发；interaction 的「关注」�
 - **实时预览**：命中数（或「≥ N」）、前 20 张卡片、每源贡献、被排除的源及原因。
 - **执行计划**：`explain` 的结果——策略、规范化后的条件、各源耗时。
 - **校验错误**定位到具体条件（§5.5 的 JSON 路径）。
-- **引用关系**：每条筛选器显示被哪些放置位、订阅、筛选器、合集分区引用；`broken` 状态置顶告警。
-- **放置位管理**：频道排序（拖拽）、有效期、卡片样式；频道预览按 App 的卡片样式渲染。
+- **引用关系**：每条筛选器显示挂在哪些节点上（频道、分类、合集分区……）以及被哪些订阅、筛选器引用；`broken` 状态置顶告警。
+- **频道与挂载管理**：频道排序（拖拽）、有效期、卡片样式；在任意挂载点上选择筛选器与挂载方式（分类、合集分区的编辑页里也能直接挂）；预览按 App 的卡片样式渲染。
 
 ## 15. 实现约定
 
@@ -512,7 +585,7 @@ push 订阅 `FilterMatched` 按订阅关系下发；interaction 的「关注」�
 | --- | --- | --- |
 | F1 契约与核心 | `contract.filter`（SPI、AST、维度注册表、规范化、参考求值器、一致性套件）；module-filter：存储、版本、校验、单源执行、预览、`/app/filter/{code}`；后台编辑器（单源） | 契约单测；一致性套件能对一个内存数据源跑通 |
 | F2 首批数据源 | content `content.item`、comment `comment.comment` | 两个源一致性套件全绿；后台建「小米」「热榜·周」「热评」三条筛选器并预览正确 |
-| F3 放置位与 itwind | 频道 / 楼层；itwind 顶部导航改为服务端下发（最新 / 热榜 / 热评 / 小米） | itwind 真机验收；E2E 覆盖频道增删与卡片混排 |
+| F3 挂载与 itwind | 频道 / 楼层节点，`content.term` 挂载点；itwind 顶部导航改为服务端下发（最新 / 热榜 / 热评 / 小米） | itwind 真机验收；E2E 覆盖频道增删与卡片混排 |
 | F4 跨模块 | 维度映射、跨源联邦归并、子筛选器；content 合集规则条目改为引用筛选器 | 跨源 E2E（content + comment 混排）；子筛选器 E2E |
 | F5 订阅 | `FilterObjectChanged`、匹配器、`FilterMatched`；push 按筛选器圈人 | 发布即命中、推送到设备的 E2E；查与推一致性测试 |
 | F6 索引 | 维度索引、规划器自动选择、物化 | 跨源压测：同一筛选器联邦与索引结果一致，延迟对比 |
@@ -523,7 +596,7 @@ newsroom（itwind B2）、商城、评测、发布会等模块在各自上线时
 
 | 项 | 默认 |
 | --- | --- |
-| 放置位放在 filter 模块还是独立 feed 模块 | 放在 filter 模块（§10） |
+| 频道、楼层节点放在 filter 模块还是独立 feed 模块 | 放在 filter 模块（§10） |
 | 内置维度的范围 | §3.3 所列；实体类维度归 catalog |
 | 筛选器发布是否需要审核 | 不需要；`publish` 权限与编辑分开即可 |
 | 用户频道定制存哪 | account 偏好设置 |
