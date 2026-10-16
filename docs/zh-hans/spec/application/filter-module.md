@@ -1,9 +1,26 @@
 # module-filter 通用筛选器
 
 > 标识：NETON-APP-FILTER
-> 日期：2026-10-17 · 状态：Draft r3（r2：放置位改为挂载，节点 code 对外、筛选器 id 内部绑定；r3：直接访问——模块原生接口带 `filter` 参数与统一接口，`publicAccess` 开关；待评审，未实现）
+> 日期：2026-10-17 · 状态：Draft r4（r2：放置位改为挂载，节点 code 对外、筛选器 id 内部绑定；r3：直接访问——模块原生接口带 `filter` 参数与统一接口，`publicAccess` 开关；r4：按 F1–F3 实现校准，见「实现状态」与各节的「实现」注）
 > 仓库：`neton-application-contract`（契约 `contract.filter`）、`neton-application-module-filter`（服务端）、`neton-application-front-filter`（后台页面）
 > 一份「存下来的查询」，任何模块的对象都能被它筛选；筛选器按 id 挂载到频道、楼层、分类节点、合集分区等节点上，对外请求节点（如 `/app/channel/fabuhui`）即返回挂载筛选器的结果；推送订阅、开放 API 也只引用筛选器。
+
+## 实现状态（2026-10-17，F1–F3）
+
+| 项 | 状态 |
+| --- | --- |
+| 契约 `contract.filter`（`neton-application-contract`）：SPI、值与条件树、公开 JSON 格式 `filterFormat: 1`、编译（§5.5 校验）、规范化器、参考求值器、排序、维度 / 数据源 / 挂载点注册表、`FilterEngine` / `FilterMounts`、一致性套件 | 已实现；内存数据源跑通套件，并验证套件能抓出「忽略 not」的错误实现 |
+| module-filter：筛选器（草稿 / 已发布版本、保存即校验、成本上限、`broken` 与重新校验、引用关系、`FILTER_IN_USE`）、单源执行（游标绑定版本、卡片丢弃补足、`limit.max`、`partial`）、`publicAccess`、预览与执行计划、频道 / 楼层节点、挂载（有效期、一个节点一个生效挂载）、审计日志、后台与 App 接口 | 已实现（真库测试） |
+| content：`content.item` 数据源（一致性套件真库全绿）、`content.term` 挂载点（REPLACE / PREPEND / APPEND）、`item/query` 的 `filter` 参数 | 已实现 |
+| comment：`comment.comment` 数据源（一致性套件真库全绿） | 已实现 |
+| itwind 宿主装配 + 端到端（`tests/e2e/filter-e2e.sh`） | 已实现 |
+| 后台页面 `neton-application-front-filter` | 未做（接口已就绪，见 §14.1） |
+| 跨源（维度空间、联邦归并）、子筛选器、维度映射到实体（`entity.*`） | 延后（F4）：编译时分别报 `CROSS_SOURCE_UNSUPPORTED`、`SUBFILTER_UNSUPPORTED` |
+| 多键排序 | 延后（F4）：F1–F3 每个筛选器一个排序键（`SORT_UNSUPPORTED`） |
+| content 内置筛选器 `content.collection:<code>`、合集分区挂载点 `content.collection_section`（规则条目） | 延后 |
+| content 字段 `fields.<key>` | 延后（依赖 content P2 的 `content_field_index`） |
+| 订阅匹配（`FilterObjectChanged` / `FilterMatched`，F5）、维度索引与物化（F6）、`filter_materialized` / `filter_index_entries` 表、结果缓存（§6.5） | 延后；一致性套件的「事件」组记为 skipped |
+| 引用对象被删除时的即时重新校验 | 用定时任务 `filter-revalidate`（每 10 分钟）与后台「重新校验」代替；数据源 `schemaVersion` 变化在执行时即时校验 |
 
 ## 0. 一句话
 
@@ -102,6 +119,9 @@ data class DimensionDefinition(
 - 时间类维度天然可比。
 - `metric.popularity` 由每个数据源自行换算到 [0, 1]：content 用阅读、评论、收藏的加权与时间衰减；商城用销量与转化；评测用有用数。**换算公式归数据源所有，但必须单调、有界、可复现**，并在数据源文档里写明。一致性套件校验取值区间与单调性（§9）。
 - 金额只在同币种之间可比；混币种排序时规划器拒绝执行（`MIXED_CURRENCY_SORT`）。
+- **实现**：首批数据源的换算都**不含时间衰减**——同一对象的热度随时间漂移会让键集游标在翻页中途失效；「新且热」用时间条件配合热度排序表达。
+  - `content.item`：`s = 阅读 + 10 × 评论 + 5 × 收藏`，`p = s / (s + 1000)`。
+  - `comment.comment`：`s = 支持 + 回复总数`，`p = s / (s + 20)`。评论自己的「最热」排序（`hot`，含时间锚的热度分）不映射到 `metric.popularity`，它不在 [0, 1] 内。
 
 ## 4. 数据源
 
@@ -129,8 +149,8 @@ interface FilterSource {
     /** 订阅匹配与索引执行用：对象当前的维度与字段取值。 */
     suspend fun snapshot(ids: List<String>): Map<String, FilterSnapshot>
 
-    /** 命中数；不支持时返回 null（预览显示「≥ N」）。 */
-    suspend fun count(where: FilterExpr, viewer: Viewer): Long?
+    /** 命中数；不支持时返回 null（预览显示「≥ N」）。now 与执行相同（可见性里的过期判断要用它）。 */
+    suspend fun count(where: FilterExpr, viewer: Viewer, now: Long): Long?
 }
 
 data class FilterField(
@@ -142,6 +162,8 @@ data class FilterField(
     val operators: Set<FilterOp>,
     val dimension: String? = null,            // 映射到的维度，如 "term.tag"
     val adminOnly: Boolean = false,           // 只在后台可用（如审核状态），对外筛选器不可用
+    val hasOptions: Boolean = false,          // 后台能否经 options 取候选值
+    val includeChildren: Boolean = false,     // 层级词条：in 包含子节点（§5.3 第 5 条）
 )
 
 data class FilterSortKey(
@@ -168,6 +190,9 @@ data class FilterExecPage(val items: List<FilterHit>, val nextCursor: String?)
 data class FilterHit(val id: String, val sortValues: List<FilterValue>)   // 排序值供跨源归并
 ```
 
+- **实现**：F1–F3 的 `sort` 恰好一个键；数据源遇到不支持的条件抛 `FilterUnsupportedException(FilterIssue)`，平台记日志并返回空页（不返回错误页）。
+- **运算符对否定封闭**：规范化把 `not(a eq x)` 改写成 `a ne x`、`not(a in X)` 改写成 `a notIn X`，所以声明了 `eq` 的字段必须也能执行 `ne`，`in` 与 `notIn` 同理；`FilterSourceRegistry.check` 与一致性套件都检查这一点。
+
 ### 4.2 数据源的义务
 
 1. **可见性**：只返回 `viewer` 有权看见、当前对外可用的对象（content：已发布、在有效期、可见性允许）。筛选器无法绕过访问策略。
@@ -184,16 +209,21 @@ data class FilterHit(val id: String, val sortValues: List<FilterValue>)   // 排
 ctx.getOrNull(FilterSourceRegistry::class)?.register(ContentItemFilterSource(...))
 ```
 
-- `FilterSourceRegistry` 在契约里定义，filter 模块 `bindIfAbsent` 并在装配结束时 `seal`。
-- **宿主没装 filter 模块时**，`getOrNull` 返回 null，模块照常运行——业务模块永远不依赖 filter 模块，只依赖契约。
+- `FilterSourceRegistry` 在契约里定义。**实现**：数据源模块与 filter 模块都 `ctx.bindIfAbsent(FilterSourceRegistry::class, FilterSourceRegistry())` 后注册，与装配先后无关（与 `CollectSinkRegistry` 相同）；filter 在启动阶段（所有模块装配完之后的生命周期 `start`）`seal` 并检查，不通过直接启动失败。
+- **宿主没装 filter 模块时**，注册表只是闲置，`ctx.getOrNull(FilterEngine::class)` / `FilterMounts` 为 null，模块照常运行——业务模块永远不依赖 filter 模块，只依赖契约。
 - 数据源 code 必须已在 `ObjectRegistry` 注册了 `ObjectResolver`（结果要能解析成卡片），否则启动报错。
 
 ### 4.4 首批数据源
 
 | 数据源 | 提供方 | 字段（→ 维度） | 排序键 |
 | --- | --- | --- | --- |
-| `content.item` | content | `type`；`category`（含子栏目，→ `term.category`）；`tag`（→ `term.tag`）；`collection`、`section`；`author`（→ `actor.author`）；`source`（→ `origin.source`）；`publishedAt`（→ `time.published`）；`hasCover`；`fields.<key>`（filterable 字段）；`keyword`（→ `text.query`） | `published`（→ `time.published`）、`updated`、`views`、`comments`、`favorites`、`ranking`（day/week/month）、`popularity`（→ `metric.popularity`）、`weight` |
-| `comment.comment` | comment | `targetType`；`target`（REF，可取子筛选器，§7.1）；`origin`；`createdAt`（→ `time.published`）；`author` | `hot`（→ `metric.popularity`）、`support`、`latest`（→ `time.published`） |
+| `content.item` | content | `type`；`category`（含子栏目，→ `term.category`）；`tag`（→ `term.tag`）；`collection`、`section`；`author`（→ `actor.author`）；`source`（→ `origin.source`）；`publishedAt`（→ `time.published`）；`hasCover`；`fields.<key>`（filterable 字段，延后）；`keyword`（→ `text.query`） | `published`（→ `time.published`）、`updated`（→ `time.updated`）、`views`、`comments`、`favorites`、`ranking`（day/week/month，非稳定）、`popularity`（→ `metric.popularity`）、`weight` |
+| `comment.comment` | comment | `targetType`；`target`（REF 任意类型；子筛选器随 F4，§7.1）；`origin`；`createdAt`（→ `time.published`）；`author`（→ `actor.author`）；`topLevel` | `hot`（热度分，不映射维度）、`popularity`（→ `metric.popularity`）、`support`、`latest`（→ `time.published`） |
+
+**实现说明**：
+
+- `content.item` 的可见性与 content §8 通用查询相同（已发布、未过期、匿名看不到会员内容），另外单页（`page`）不进列表；不做置顶（排序只由排序键与 id 决定，可复现）。`category` 的快照取值是内容所在栏目及其全部祖先，`in` 因此命中子栏目；`source` 是来源类型（original / reprint / compiled）；`collection` / `section` 看合集手动条目，不看条目在位时间；`keyword` 是标题、摘要、正文纯文本的包含匹配（pg_trgm 之外的相关性排序归 search）。`ranking` 按统计表在「截止于请求 now 的窗口」内的阅读数排序，不在窗口里的计 0（排序不改变成员）；它依赖统计窗口，快照不提供它的排序值，一致性套件对它只比较集合。
+- `comment.comment` 只取 `visible` 状态、所在对象未被锁定、且所在对象对访问者可见（经 `ObjectRegistry.describe`）。对象可见性不在评论库里，执行时按键集顺序批量扫描并跳过对象不可见的评论，所以不支持计数（`count` 返回 null）。
 
 后续（各自模块上线时）：`newsroom.event`（itwind）、`commerce.product`、`review.review`、`catalog.entity`、`launch.event`、`video.video`。
 
@@ -233,6 +263,22 @@ Variable  := now | now-<duration> | viewer.<path>
 SubFilter := { filter: <code>, project: dim:<code> | id }
 ```
 
+值的 JSON 写法（公开格式，§15）：
+
+| 值 | 写法 |
+| --- | --- |
+| 引用 | `{"ref": "content.term:18"}`；集合 `{"ref": ["content.term:18", "content.term:19"]}` |
+| 文本 / 枚举 / 地区 | `"news"`；集合 `["news", "review"]` |
+| 数字 / 时间（UTC 毫秒） / 布尔 | `5`、`1760000000000`、`true` |
+| 金额 | `{"money": 1999, "currency": "CNY"}` |
+| 变量 | `{"var": "now"}`、`{"var": "now-7d"}`、`{"var": "viewer.userId"}`（`account.user` 引用）；其他 `viewer.*` 由调用方经 `vars` 提供，取不到时与缺失值比较 |
+| 范围 | `{"gte": …, "lt": …}`（`gte` / `gt` 二选一，`lte` / `lt` 二选一），边界可以是变量 |
+| 时间窗（within） | `"7d"`，单位 `ms` / `s` / `m` / `h` / `d` / `w` |
+| exists | `true` / `false` |
+| 子筛选器 | `{"filter": "<code>", "project": "dim:<code>" | "id"}`（F4） |
+
+谓词可带 `"optional": true`（§7.2）。规范化结果里的常量写作 `{"const": true}`（只出现在执行计划里）。
+
 运算符（按值类型允许的子集，数据源在 `operators` 里声明自己支持哪些）：
 
 | 运算符 | 语义 |
@@ -247,8 +293,8 @@ SubFilter := { filter: <code>, project: dim:<code> | id }
 
 ### 5.3 语义（规范性条款，一致性套件逐条测试）
 
-1. **空值**：除 `exists` 外，任何比较对缺失值都为假；`not` 作用于缺失值为真（`not(tag in [x])` 命中没有标签的对象）。
-2. **多值**：`in` 为任一命中，`all` 为全部包含，`notIn` 为一个都不含。
+1. **空值**：除 `exists` 与两个否定运算符外，任何比较对缺失值都为假；`not` 作用于缺失值为真（`not(tag in [x])` 命中没有标签的对象）。`ne` / `notIn` 定义为 `eq` / `in` 的**否定**，对缺失值为真——这样 `not(a in X)` ≡ `a notIn X`，否定范式的改写不改变语义。
+2. **多值**：把取值看成元素列表（单值一个元素、缺失为空列表）：`eq` / `in` / `range` / `match` 为「存在一个元素满足」，`all` 为全部包含（值集合非空，编译时检查），`notIn` 为一个都不含。
 3. **时间**：统一 UTC 毫秒；相对时间在一次执行开始时按 `now` 解析一次。
 4. **REF 值**：以 `ObjectRef` 比较，不按名称；引用对象被删除时筛选器进入「需修复」（§5.6）。
 5. **词条层级**：`term.category` 默认包含子栏目，由字段声明 `includeChildren`，不在运算符层面隐式展开。
@@ -260,9 +306,11 @@ SubFilter := { filter: <code>, project: dim:<code> | id }
 
 1. 变量替换（`now-7d` → 具体时间；`viewer.followedBrands` → 引用集合）。
 2. 否定下推到谓词（否定范式），`not(a in X)` → `a notIn X` 等。
-3. 合并同目标谓词（两个 `range` 取交集；`in` 与 `in` 取交集；空集直接判假，整个分支短路）。
+3. 合并同目标谓词（两个 `range` 取交集；`in` 与 `in` 取交集；空集直接判假，整个分支短路）。**只对单值字段合并**：多值字段上 `tag in [a,b] and tag in [b,c]` 不等于 `tag in [b]`。
 4. 维度谓词按数据源的字段映射**改写**为字段谓词（`dim:term.tag` → `field:tag`）；某源没有映射该维度时，该谓词对此源为假（或按 §7.2 的 `optional` 规则跳过）。
 5. 常量折叠与扁平化（`and(and(a,b),c)` → `and(a,b,c)`）。
+
+**实现**：规范形式里 `not` 只直接包着没有补运算符的谓词（`all`、`range`、`match`）；`within` 已展开为 `range`；变量已替换（取不到的变量使谓词为假）。可选谓词在没有映射时从父节点去掉，父节点变空时继续向上去掉。
 
 ### 5.5 校验（保存时，等同编译）
 
@@ -279,6 +327,13 @@ SubFilter := { filter: <code>, project: dim:<code> | id }
 
 所有错误带 JSON 路径（`where.and[1].not.value`），后台定位到具体条件。
 
+**实现**：
+
+- 另有结构类的码：`DEFINITION_INVALID`、`FORMAT_UNSUPPORTED`、`SCOPE_REQUIRED`、`EXPR_INVALID`、`LIMIT_INVALID`（`limit.max` 1..10000，默认 1000）；F4 之前的 `CROSS_SOURCE_UNSUPPORTED`、`SUBFILTER_UNSUPPORTED`、`SORT_UNSUPPORTED`（多于一个排序键）。
+- 结构与类型检查在契约里（`FilterCompiler`），数据源权限（`filter:source:<code>`）与数据相关检查（数据源 `validate`）在 filter 模块。
+- 保存草稿就做完整检查，不通过拒绝保存；接口返回 400、消息 `FILTER_INVALID`，`errors` 里每条是 `{field: JSON 路径, code, message}`。`POST /admin/filter/filter/validate` 只校验不保存，`POST /admin/filter/preview/run` 返回问题列表而不是错误。
+- `ADMIN_ONLY_FIELD` 在发布时与开启 `publicAccess` 时检查（任何已发布的筛选器都可能被挂载对外）。
+
 ### 5.6 版本与生命周期
 
 - 筛选器有**草稿**与**已发布版本**（`version` 递增）；挂载、订阅、子筛选器引用的都是已发布版本。编辑草稿不影响线上，预览用草稿。
@@ -287,17 +342,23 @@ SubFilter := { filter: <code>, project: dim:<code> | id }
   - 不通过：状态改为 `broken`，原版本继续按「最后一次可执行的计划」服务或返回空（按筛选器设置 `onBroken: keep | empty`，默认 `keep`），后台告警并列出受影响的挂载节点。
 - 引用的对象被删除（如标签被删）同样触发重新校验。
 - 删除筛选器前检查被引用情况（挂载、订阅、其他筛选器的子筛选器），被引用时拒绝删除（`FILTER_IN_USE`）。
+- **实现**：重新校验在三处触发——执行时发现记录的 `schemaVersion` 与数据源当前值不同（即时）、定时任务 `filter-revalidate`（每 10 分钟，覆盖引用对象被删除）、后台 `POST /admin/filter/filter/revalidate/{id}`。校验不通过时也记下当前 schema，避免每次请求重复校验。`keep` 按最后一次发布的定义继续执行；那份定义已无法在当前数据源上编译时返回空页。修复后（重新校验通过）状态回到 `active` 并写审计。停用（`disabled`）的筛选器：直接访问返回 `FILTER_DISABLED`，挂载节点回落到原列表。
 
 ## 6. 执行
 
 ### 6.1 入口
 
 ```kotlin
-interface FilterEngine {   // filter 模块实现，契约里定义，使用方经 ctx.getOrNull 获取
-    suspend fun run(code: String, viewer: Viewer, cursor: String?, limit: Int, vars: Map<String, FilterValue> = emptyMap()): CardPage
-    suspend fun explain(code: String, viewer: Viewer): FilterPlan            // 后台「执行计划」
+interface FilterEngine {   // filter 模块实现，契约里定义，使用方经 ctx.getOrNull 获取；按筛选器 id 寻址（§6.7 第 5 条）
+    suspend fun run(filterId: Long, viewer: Viewer, cursor: String?, limit: Int,
+                    vars: Map<String, FilterValue> = emptyMap(), access: FilterAccess = FilterAccess.DIRECT): CardPage
+    /** 只要引用（模块原生接口自己装配 DTO）；source 不为 null 时要求范围恰好是这个数据源。 */
+    suspend fun refs(filterId: Long, viewer: Viewer, cursor: String?, limit: Int,
+                     vars: Map<String, FilterValue> = emptyMap(), access: FilterAccess = FilterAccess.DIRECT, source: String? = null): RefPage
+    suspend fun explain(filterId: Long, viewer: Viewer): FilterPlan          // 后台「执行计划」
 }
-data class CardPage(val cards: List<Card>, val nextCursor: String?)
+enum class FilterAccess { DIRECT, MOUNT, ADMIN }   // DIRECT 受 publicAccess 约束，挂载与后台不受
+data class CardPage(val cards: List<Card>, val nextCursor: String?, val partial: Boolean = false)
 data class Card(val ref: ObjectRef, val summary: ObjectSummary, val sortValues: List<FilterValue>)
 ```
 
@@ -322,6 +383,8 @@ data class Card(val ref: ObjectRef, val summary: ObjectSummary, val sortValues: 
 5. **按 id 寻址**：直接入口用筛选器 id（与挂载一致）；筛选器换 code 不影响已对接方。
 6. 后台接口 `/admin/filter/preview/{id}` 可预览草稿，不受 `publicAccess` 限制，需 `filter:filter:query`。
 
+错误码与 HTTP 状态（消息即机器码）：`FILTER_NOT_FOUND`（不存在或未发布，404）、`FILTER_DISABLED`（404）、`FILTER_NOT_PUBLIC`（403）、`FILTER_SOURCE_MISMATCH`（400）、`FILTER_EXCLUSIVE_PARAMS`（400）、`FILTER_UNAVAILABLE`（宿主没装 filter，503）、`CURSOR_STALE`（409）、`INVALID_CURSOR`（400）。content 的原生接口里，只有 `include`、`cursor`、`limit` 可以与 `filter` 同时出现。
+
 ### 6.2 执行策略
 
 | 策略 | 何时 | 做法 |
@@ -345,6 +408,7 @@ data class Card(val ref: ObjectRef, val summary: ObjectSummary, val sortValues: 
 - 联邦游标 = `base64(json{ sources: { "content.item": "<游标>", "commerce.product": "<游标>" }, lastSortValues, filterVersion })`。
 - 游标绑定筛选器版本：版本变化后旧游标返回 `CURSOR_STALE`，客户端从第一页重新加载（与 comment 热评快照过期同样处理）。
 - 稳定性：排序键 + 决胜键（id）构成全序，数据源按「大于上一页最后一条」续取（keyset 分页），不用 offset。
+- **实现**：单源游标也由平台包一层 `base64url(json{t: 版本标签, n: 首页的 now, c: 已返回条数, s: 数据源游标})`：版本标签不一致返回 `CURSOR_STALE`；整轮翻页沿用首页的 `now`（相对时间窗不漂移）；已返回条数用于 `limit.max`。决胜键 id 按（长度, 字典序）比较，对非负整数 id 等同数值顺序，方向与排序键相同。
 
 ### 6.5 缓存与物化
 
@@ -454,9 +518,13 @@ data class MountPointType(
     val nodeRefType: String,          // 节点的 ObjectRef.type，挂载记录以 ObjectRef 指向节点
     val modes: Set<MountMode>,        // 节点支持的挂载方式
     val acceptSources: Set<String>?,  // 允许挂哪些数据源的筛选器；null = 任意
+    val requiredPermission: String? = null,                 // 节点模块的权限，如 "content:term:update"
+    val nodeExists: (suspend (id: String) -> Boolean)? = null, // 校验节点存在
 )
 enum class MountMode { REPLACE, PREPEND, APPEND }
 ```
+
+**实现**：`filter.channel` / `filter.block` 的 `nodeRefType` 与挂载点同名，节点引用形如 `filter.channel:12`（节点 id）；`content.term` 的节点引用是 `content.term:<词条 id>`，`acceptSources = {content.item}`，要求 `content:term:update`。
 
 - 注册到 `FilterMountRegistry`（契约里定义，filter 模块 `bindIfAbsent`、装配后 `seal`）。
 - 首批挂载点：
@@ -479,6 +547,8 @@ enum class MountMode { REPLACE, PREPEND, APPEND }
 | `APPEND` | 节点原列表在前，原列表翻完后接筛选器结果；按 `ref` 去重 |
 
 组合列表的游标由节点所属模块生成（它知道原列表的游标），内部记录「当前在原列表 / 在筛选器结果」与两边各自的游标。
+
+**实现（content）**：游标为 `("m", 挂载 id, 阶段 f|n, 已取筛选器条数, 内层游标)`；挂载换了或被取消后旧游标返回 `CURSOR_STALE`。PREPEND 未设 `limit` 时取 20 条；原列表排除前 `limit` 条筛选器结果。APPEND 的筛选器结果里，属于该节点（原列表已出现过）的去掉。挂载只在「只按一个词条取列表」时生效：`category`（或 `categoryId`）、或恰好一个标签，且没有其他条件参数（`includeChildren`、`include`、`cursor`、`limit` 除外）；带任何其他条件的查询按归属执行，不受挂载影响。
 
 ### 10.4 节点模块如何接入
 
@@ -509,9 +579,9 @@ when (mount?.mode) {
 | 表 | 关键字段 |
 | --- | --- |
 | `filter_nodes` | id, kind（`channel` / `block`）, code（唯一，对外地址）, name, settings（text JSON：`pinned`、`defaultVisible`、`userAddable`、图标、每页条数）, sort, status, start_at?, end_at? —— 只存 filter 自己管理的节点 |
-| `filter_mounts` | id, mount_point（`filter.channel` / `content.term` / …）, node_ref（`type:id`）, filter_id, mode, limit?, card_style（text JSON：每种对象类型的卡片样式，如 `{"content.item":"auto","comment.comment":"quote"}`）, status, start_at?, end_at?, created_by, updated_at；**唯一(node_ref, 生效中)**：一个节点同一时刻只有一个生效挂载 |
+| `filter_mounts` | id, mount_point（`filter.channel` / `content.term` / …）, node_ref（`type:id`）, filter_id, mode, item_limit?（`limit` 是保留字）, card_style（text JSON：每种对象类型的卡片样式，如 `{"content.item":"auto","comment.comment":"quote"}`）, status, start_at?, end_at?, created_by, updated_at；**唯一(node_ref, 生效中)**：一个节点同一时刻只有一个生效挂载 |
 
-- 有效期：可以预先挂一个「发布会当天」的筛选器，到点生效、过期自动回落到节点原列表或上一个长期挂载（按 `start_at` / `end_at` 选生效的那条）。
+- 有效期：可以预先挂一个「发布会当天」的筛选器，到点生效、过期自动回落到节点原列表或上一个长期挂载（按 `start_at` / `end_at` 选生效的那条）。**实现**：生效挂载 = 启用、在有效期内、筛选器已发布且未停用的挂载里 `start_at` 最晚的一条（长期挂载 `start_at` 为空，视为最早）；两条启用挂载有效期重叠且开始时间相同时无法决定，保存时拒绝（`MOUNT_CONFLICT`）。`mountOf` 结果在本节点缓存 10 秒，挂载变更时清空。
 - 挂载、换挂、取消写审计日志。
 - `filter_references` 由挂载自动维护（referrer_kind = `mount`）：删除或停用筛选器前能看到它挂在哪些节点上；筛选器进入 `broken` 时告警到具体节点。
 
@@ -526,6 +596,14 @@ when (mount?.mode) {
 | `GET /app/filter/{id}?cursor=&limit=` 与模块原生接口的 `filter` 参数 | 不经挂载、直接按筛选器取（§6.7）；需筛选器开启 `publicAccess` |
 
 - 用户的频道定制（增删、排序）：未登录存在客户端；登录后存账号偏好（account 的偏好设置），服务端只校验频道仍存在且 `userAddable`。
+
+**实现的响应形状**（统一信封 `{code, message, data}`）：
+
+- `GET /app/channel/list` → `data: [{code, name, settings, sort, cardStyle}]`；没有生效挂载的频道不下发。`settings` 是节点设置原样（`pinned`、`defaultVisible`、`userAddable`、`icon`、`pageSize`……）。
+- `GET /app/channel/{code}?cursor=&limit=` → `data: {node: {code, name, settings, sort, cardStyle}, list: [Card], nextCursor, partial}`；`limit` 默认取 `settings.pageSize`，否则 20，上限 100。频道不存在或不在有效期 404 `CHANNEL_NOT_FOUND`；没有生效挂载时 `list` 为空。
+- `GET /app/block/{code}?limit=` → 同上，`nextCursor` 恒为 null；默认 `settings.pageSize`，否则 6，上限 50；不存在 404 `BLOCK_NOT_FOUND`。
+- `GET /app/filter/{id}?cursor=&limit=` → `data: {list: [Card], nextCursor, partial}`。
+- `Card` = `{ref: {type, id}, summary: ObjectSummary（exists、visible、title、summary、cover、link{app,web}、ownerUserIds、capabilities）, sortValues: [值]}`；值的 JSON 见 §5.2。
 - 客户端按 `ref.type` + `card_style` 渲染；遇到不认识的卡片类型时跳过，不报错（新模块上线不破坏旧客户端）。
 - 编辑型推荐（手工挑选、自定义标题封面）仍然是 content 的合集，不在 filter 里重做；频道要展示一个合集时，挂 content 提供的内置筛选器 `content.collection:<code>`。
 
@@ -539,6 +617,9 @@ when (mount?.mode) {
 | `filter_nodes`、`filter_mounts` | 见 §10.5 |
 | `filter_materialized` | filter_id, version, position, ref, sort_values, refreshed_at |
 | `filter_index_entries`（P3） | ref, source, dims（text JSON + 生成的数组 / 范围列）, sort_values, visibility_group, updated_at |
+| `filter_audit_logs` | id, subject_type（`filter` / `node` / `mount`）, subject_id, action（created / updated / published / disabled / enabled / broken / repaired / deleted / mounted / remounted / unmounted）, actor_kind, actor_id, detail, created_at |
+
+**实现**：V001 建了 `filter_filters`、`filter_versions`、`filter_references`、`filter_nodes`、`filter_mounts`、`filter_audit_logs` 与后台菜单；`filter_materialized`、`filter_index_entries` 随 F6。
 
 所有 JSON 字段存 `text`（套件统一约定），需要时临时 `::jsonb`。
 
@@ -579,6 +660,10 @@ push 订阅 `FilterMatched` 按订阅关系下发；interaction 的「关注」�
 | `filter:node:query` / `create` / `update` / `delete` | 频道、楼层节点管理 |
 | `filter:mount:update` | 在节点上挂载、换挂、取消挂载（节点所属模块的权限另需具备，如挂到分类需 `content:term:update`） |
 | `filter:index:rebuild` | 重建维度索引（P3） |
+| `filter:mount:query` | 挂载列表页 |
+| `filter:audit-log:query` | 操作记录页 |
+
+**实现**：菜单种子另有按钮「使用全部数据源」`filter:source:*`（通配，评估规则同 rbac-spec §4.2），默认授予 `super_admin`；没有它也没有 `filter:source:<code>` 的管理员在该数据源上建、改筛选器报 `SOURCE_FORBIDDEN`。
 
 筛选器、节点与挂载的创建、发布、变更、删除写审计日志。
 
@@ -591,6 +676,25 @@ push 订阅 `FilterMatched` 按订阅关系下发；interaction 的「关注」�
 - **引用关系**：每条筛选器显示挂在哪些节点上（频道、分类、合集分区……）以及被哪些订阅、筛选器引用；`broken` 状态置顶告警。
 - **频道与挂载管理**：频道排序（拖拽）、有效期、卡片样式；在任意挂载点上选择筛选器与挂载方式（分类、合集分区的编辑页里也能直接挂）；预览按 App 的卡片样式渲染。
 
+### 14.1 后台接口（已实现）
+
+| 接口 | 权限点 |
+| --- | --- |
+| `GET filter/filter/page?keyword&status&source&pageNo&pageSize`（broken 置顶）、`GET filter/filter/get/{id}`（草稿、已发布定义、规范形式、引用）、`GET filter/filter/versions/{id}`、`GET filter/filter/references/{id}`、`POST filter/filter/validate`（`{definition, forPublish}` → `{ok, issues}`） | `filter:filter:query` |
+| `POST filter/filter/create`（`{code, name, definition, publicAccess, onBroken, remark}`） | `filter:filter:create` |
+| `PUT filter/filter/update`（同上 + `id`，保存草稿）、`PUT filter/filter/update-status/{id}?status=active|disabled`、`POST filter/filter/revalidate/{id}` | `filter:filter:update` |
+| `POST filter/filter/publish/{id}` | `filter:filter:publish` |
+| `DELETE filter/filter/delete/{id}` | `filter:filter:delete` |
+| `GET filter/preview/{id}?cursor&limit`（草稿：`{ok, issues, count, cards, nextCursor, partial, plan}`）、`POST filter/preview/run`（未保存的 `{definition, limit}`） | `filter:filter:query` |
+| `GET filter/source/list`（数据源字段 / 排序 / 能力 / 当前管理员是否可用、维度、挂载点）、`GET filter/source/options?source&field&query&limit` | `filter:filter:query` |
+| `GET filter/node/page?kind&keyword&status`、`GET filter/node/get/{id}`（含生效挂载） | `filter:node:query` |
+| `POST filter/node/create` / `PUT filter/node/update`（`{id, kind, code, name, settings, sort, status, startAt, endAt}`）/ `DELETE filter/node/delete/{id}`（同时取消其挂载） | `filter:node:create` / `update` / `delete` |
+| `GET filter/mount/page?mountPoint&nodeRef&filterId`、`GET filter/mount/points`、`GET filter/mount/of?nodeRef`、`GET filter/mount/get/{id}` | `filter:mount:query` |
+| `POST filter/mount/save`（`{id, mountPoint, nodeRef | nodeId, filterId, mode, limit, cardStyle, status, startAt, endAt}`，id 为 0 新建）、`DELETE filter/mount/delete/{id}` | `filter:mount:update`（+ 挂载点的 `requiredPermission`） |
+| `GET filter/audit-log/page?subjectType&subjectId` | `filter:audit-log:query` |
+
+（路径省略前缀 `/admin/`。）
+
 ## 15. 实现约定
 
 - 契约（`contract.filter`）只放接口、数据结构、维度注册表、规范化与参考求值器、一致性套件；不含任何存储与 HTTP。参考求值器放在契约里，是为了让数据源实现者、订阅匹配器与一致性套件用同一份语义代码。
@@ -602,7 +706,7 @@ push 订阅 `FilterMatched` 按订阅关系下发；interaction 的「关注」�
 
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
-| F1 契约与核心 | `contract.filter`（SPI、AST、维度注册表、规范化、参考求值器、一致性套件）；module-filter：存储、版本、校验、单源执行、预览、`/app/filter/{code}`；后台编辑器（单源） | 契约单测；一致性套件能对一个内存数据源跑通 |
+| F1 契约与核心 | `contract.filter`（SPI、AST、维度注册表、规范化、参考求值器、一致性套件）；module-filter：存储、版本、校验、单源执行、预览、`/app/filter/{id}`；后台编辑器（单源） | 契约单测；一致性套件能对一个内存数据源跑通 |
 | F2 首批数据源 | content `content.item`、comment `comment.comment` | 两个源一致性套件全绿；后台建「小米」「热榜·周」「热评」三条筛选器并预览正确 |
 | F3 挂载与 itwind | 频道 / 楼层节点，`content.term` 挂载点；itwind 顶部导航改为服务端下发（最新 / 热榜 / 热评 / 小米） | itwind 真机验收；E2E 覆盖频道增删与卡片混排 |
 | F4 跨模块 | 维度映射、跨源联邦归并、子筛选器；content 合集规则条目改为引用筛选器 | 跨源 E2E（content + comment 混排）；子筛选器 E2E |

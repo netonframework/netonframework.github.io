@@ -28,6 +28,8 @@
 | 相关内容 `content_item_relations` | 延后 |
 | `FieldTypeRegistry` / `BlockTypeRegistry` 扩展、`ContentAuthorResolver` | 延后 |
 | 开放接口 `/platform/content/…` | 延后（P3） |
+| 筛选器数据源 `content.item`、挂载点 `content.term`、`item/query` 的 `filter` 参数（[filter-module](filter-module.md) §4.4、§6.7、§10.4） | 已实现（2026-10-17；一致性套件真库全绿） |
+| 内置筛选器 `content.collection:<code>`、合集分区挂载点 `content.collection_section` | 延后 |
 
 ## 1. 目标与原则
 
@@ -308,6 +310,8 @@ draft ──提交──► pending ──通过──► published ──撤回
 | 分页 | App 游标分页（`contract.core.CursorPage`，cursor + limit）；后台页码分页（pageNo + pageSize） |
 
 - 默认只返回 `published`、在有效期内、可见性允许当前用户的内容；置顶内容排在前面。
+- **`filter=<筛选器 id>`**（[filter-module](filter-module.md) §6.7）：结果只由筛选器决定，返回结构不变；只能与 `include`、`cursor`、`limit` 同时出现，其他条件参数返回 `FILTER_EXCLUSIVE_PARAMS`。筛选器范围不是 `content.item` 返回 `FILTER_SOURCE_MISMATCH`，未开启对外访问返回 `FILTER_NOT_PUBLIC`，宿主没装 filter 返回 `FILTER_UNAVAILABLE`。
+- **挂载**（filter-module §10.4）：只按一个词条取列表（`category` / `categoryId`，或恰好一个标签；没有其他条件参数）且该词条有生效挂载时，按挂载方式（REPLACE / PREPEND / APPEND）返回；挂载只改变显示，归属、后台按分类查询、带其他条件的查询都按归属计算。
 - 返回字段可选：列表默认不含正文和 fields，需要时按字段名声明（`include=…`，逗号分隔），控制响应体大小。
 - 后台查询额外支持状态、编辑者、审核人等条件。
 
@@ -315,6 +319,7 @@ draft ──提交──► pending ──通过──► published ──撤回
 
 - **阅读计数**：P1 在详情读取的事务里直接 `view_count + 1` 并 upsert 按日统计表 `content_item_stats_daily(item_id, day, views, comments, favorites)`，同时发布 `ObjectViewed`。登录用户在 `content.view.dedup_seconds` 内重复浏览只计一次（用 Redis `setIfAbsent`；没有 Redis 或匿名时每次都计）。原设想的「Redis 累加、定时批量回写」留待流量需要时再做。
 - **排行**：日 / 周 / 月榜按日统计表聚合（聚合列取 `::bigint`，结果按整数读）。
+- **归一化热度**（筛选器维度 `metric.popularity`，filter-module §3.4）：`s = 阅读 + 10 × 评论 + 5 × 收藏`，`p = s / (s + 1000)`；不含时间衰减，保证键集游标稳定。
 - **搜索**：`ContentSearchEngine` 接口。默认实现用 PostgreSQL `pg_trgm`（GIN 索引 title、summary、body_text），`ILIKE` 加相似度排序；需要中文分词或大规模检索时换成 zhparser 或外部搜索引擎，接口不变。搜索只覆盖已发布、公开的内容，按 IP 限流。
 
 ```kotlin

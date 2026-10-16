@@ -26,6 +26,7 @@
 | 按对象类型分别配置（P1 是全局配置 + 单对象覆盖审核模式与展示形态） | 延后 |
 | 被删除评论正文保留期后清空、新注册账号冷却期、按 IP 限流、风控事件 | 延后 |
 | 外部 / AI 内容安全过滤器、评论统计报表 | 延后（P3） |
+| 筛选器数据源 `comment.comment`（字段 targetType / target / origin / createdAt / author / topLevel，排序 hot / popularity / support / latest，[filter-module](filter-module.md) §4.4） | 已实现（2026-10-17；一致性套件真库全绿）。只取 `visible`、对象未锁定且对访问者可见的评论；归一化热度 `p = s / (s + 20)`，`s = 支持数 + 回复总数` |
 
 ## 1. 目标与边界
 
