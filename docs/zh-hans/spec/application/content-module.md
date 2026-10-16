@@ -314,7 +314,7 @@ draft ──提交──► pending ──通过──► published ──撤回
 ## 9. 统计、排行与搜索
 
 - **阅读计数**：P1 在详情读取的事务里直接 `view_count + 1` 并 upsert 按日统计表 `content_item_stats_daily(item_id, day, views, comments, favorites)`，同时发布 `ObjectViewed`。登录用户在 `content.view.dedup_seconds` 内重复浏览只计一次（用 Redis `setIfAbsent`；没有 Redis 或匿名时每次都计）。原设想的「Redis 累加、定时批量回写」留待流量需要时再做。
-- **排行**：日 / 周 / 月榜按日统计表聚合（聚合列显式 `::bigint`，见套件架构「框架已知问题」）。
+- **排行**：日 / 周 / 月榜按日统计表聚合（聚合列取 `::bigint`，结果按整数读）。
 - **搜索**：`ContentSearchEngine` 接口。默认实现用 PostgreSQL `pg_trgm`（GIN 索引 title、summary、body_text），`ILIKE` 加相似度排序；需要中文分词或大规模检索时换成 zhparser 或外部搜索引擎，接口不变。搜索只覆盖已发布、公开的内容，按 IP 限流。
 
 ```kotlin

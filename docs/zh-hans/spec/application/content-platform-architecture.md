@@ -178,7 +178,7 @@ data class ObjectRef(val type: String, val id: String)    // ObjectRef("content.
 
 ### 5.5 框架已知问题（2026-10-15）
 
-- **numeric 列让原生数据库驱动崩溃**：查询结果里出现 PostgreSQL `numeric` 列（`SUM`、`AVG` 等聚合的默认返回类型）会让第三方原生驱动 sqlx4k 直接崩溃整个进程，尚未修复。规避：聚合一律显式转型，`SUM(x)::bigint`、`AVG(x)::bigint`，或改用 `double precision`。
+- **numeric 列让原生数据库驱动崩溃（已修复）**：sqlx4k 1.15 及以前，带参数查询结果里的 PostgreSQL `numeric` 列（`SUM`、`AVG` 等聚合的默认返回类型）会让原生驱动崩溃整个进程。修复由我们提交上游（sqlx4k #184），随 1.16.0 发布，框架已升级（2026-10-17）。现在 `numeric` 按文本精确返回；聚合要当整数用时照常写 `::bigint`，那是取值类型的选择，不再是规避。
 - **出站 HTTP/2 带 Host 头**：hyper4k 客户端在 HTTP/2 请求里仍带 `Host` 与连接类头部，严格的 h2 服务端（如开了 h2 的 nginx）直接返回 400。已在 hyper4k `d436919` 修复（h2 下去掉这些头，HTTP/1.1 不变），但尚未发布版本。影响所有出站请求：collect 抓取、infra `importFromUrl`、push 的 FCM 调用等；发版前遇到这类 400 先按此排查。
 
 ## 6. 媒体标准（infra）
