@@ -16,7 +16,7 @@
 | 去重 (source, record_type, origin_id)、fingerprint 变化检测、增量地址 `collect_seen_urls` | 已实现 |
 | 流水线 `html-sanitize`、`normalize`、`text-extract`、`media-localize`（经 infra `importFromUrl`）、`policy-check`；`CollectPipelineRegistry` 可扩展 | 已实现 |
 | 原始响应存档 `collect_record_raws`（按开关、有大小上限）；后台单条重新处理 / 重投 | 已实现 |
-| 投递端口 `CollectSinkRegistry`、投递规则（含 on_change）、父子关联、退避重试、失败批量重投 | 已实现 |
+| 投递端口 `CollectSinkRegistry`、投递规则（含 on_change）、父子关联、退避重试、下游拒绝直接进失败列表（`Rejected`，2026-10-17）、失败批量重投 | 已实现 |
 | 内置端口 `content.draft`（支持撤回）、`comment.import` | 已实现 |
 | 上游删除：合作方推送删除 + `collect-upstream-recheck` 复查原文 404/410（缺省关闭），按 `upstream_delete_policy` 处理 | 已实现 |
 | 事件 `CollectRecordProcessed`（`collect.record.processed`） | 已实现 |
@@ -194,11 +194,14 @@ class CollectSinkRegistry {
 }
 ```
 
-- `DeliveryResult`：`Delivered(targetRef)` / `Skipped(reason)` / `Retry(afterMillis, reason)` / `Failed(error)`。
+- `DeliveryResult`：`Delivered(targetRef)` / `Skipped(reason)` / `Retry(afterMillis, reason)` / `Failed(error)` / `Rejected(code, detail?)`。端口必须把**下游拒绝**和**暂时性故障**分开：
+  - `Rejected`：下游不接受这条记录（校验不过、内容被拦截、目标不可编辑、端口参数写错），原样重投结果不会变。投递直接进入 `failed`（次数 +1，reason = 错误码），不再自动重试。
+  - `Failed` / `Retry`：网络、下游不可用、依赖未就绪、冲突、限流、内部错误，按退避重试。
+  - 端口抛出的异常按同一口径归类：`HttpException` 的错误码属于参数段（10100–10199）、`OPERATION_NOT_ALLOWED` 或业务段（≥ 20000）算 `Rejected`，其余算 `Failed`。
 - `CollectRecordView`：recordId, sourceCode, sourceName, recordType, originId, originUrl, parentTargetRef（父记录在同一端口的投递结果）, data, media（原始地址 → fileId）, relationship, usageScope, attribution, collectedAt。
 - 端口用途 `CollectUsage`：`publish` ⊃ `reference_only` ⊃ `analysis`；来源 `usage_scope` 不包含端口用途时不投递。
 - 注册表在契约子工程里定义，collect `bindIfAbsent` 后注册内置端口，产品模块取同一份实例注册自己的端口（只依赖契约）；`seal` 后只读。
-- 投递由 `collect-delivery` 任务（10 秒，单节点）执行；失败按退避重试，超过 `collect.delivery.max_attempts`（默认 8）进入失败列表，可以在后台单条或批量重投。
+- 投递由 `collect-delivery` 任务（10 秒，单节点）执行；暂时性失败按退避重试，超过 `collect.delivery.max_attempts`（默认 8）进入失败列表；下游拒绝不占用重试，直接进入失败列表。失败列表可以在后台单条或批量重投（次数清零、回到 `pending`），通常在改了数据或下游配置（如评论长度上限）之后。
 
 ### 7.2 投递规则
 
@@ -235,8 +238,8 @@ class CollectSinkRegistry {
 
 | 端口 | 提供方 | 行为 |
 | --- | --- | --- |
-| `content.draft` | collect 内置（只依赖 content 契约） | 经 `ContentDraftWriter` 写成草稿或待审（按 source + origin_id 幂等），带上来源信息与署名要求；支持撤回由该记录产生的内容 |
-| `comment.import` | collect 内置（只依赖 comment 契约） | 经 `CommentImporter` 把评论挂到目标对象上（见 comment 规范「导入」一节）；带 `replyToAuthorName` 时在同一楼里按作者名找到被回复的那条（发布不晚于本条的最近一条），找不到就回复楼主；不支持撤回 |
+| `content.draft` | collect 内置（只依赖 content 契约） | 经 `ContentDraftWriter` 写成草稿或待审（按 source + origin_id 幂等），带上来源信息、署名要求与原始发布时间（`originalPublishedAt`，content 首次发布时作为发布时间，见 content 规范 §5.1）；支持撤回由该记录产生的内容；content 的校验 / 状态拒绝记为 `Rejected` |
+| `comment.import` | collect 内置（只依赖 comment 契约） | 经 `CommentImporter` 把评论挂到目标对象上（见 comment 规范「导入」一节）；带 `replyToAuthorName` 时在同一楼里按作者名找到被回复的那条（发布不晚于本条的最近一条），找不到就回复楼主；`CommentImportCodes.REJECTIONS` 里的失败（`CONTENT_TOO_LONG`、`CONTENT_REQUIRED`、`AUTHOR_REQUIRED`、`CONTENT_BLOCKED`、`INVALID_*`）记为 `Rejected`，目标或被回复评论不存在、`IMPORT_FAILED` 按退避重试；不支持撤回 |
 | `content.media` | module-content | 图片 / 视频记录写进内容图集字段（延后，未实现） |
 | 产品自定义 | 如 itwind 的 `newsroom.material` | 记录进入产品自己的加工流程 |
 

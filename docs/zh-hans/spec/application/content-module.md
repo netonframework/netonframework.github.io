@@ -17,7 +17,7 @@
 | 回收站（trash / restore），彻底删除由后台手动执行 | 已实现 |
 | 通用查询（§8，不含按自定义字段筛选）、排行（按日统计表）、搜索（pg_trgm，可替换 `ContentSearchEngine`） | 已实现 |
 | 合集：专题、推荐位、分区、手动条目与外链条目 | 已实现 |
-| 用户投稿、外部写入端口 `ContentDraftWriter`（含按写入方撤回） | 已实现 |
+| 用户投稿、外部写入端口 `ContentDraftWriter`（含按写入方撤回；原始发布时间首次发布时作为发布时间，2026-10-17） | 已实现 |
 | 媒体：注册 `content.cover` / `content.image` / `content.video` / `content.attachment`，保存时 attach / detach，响应经 `MediaService.resolve` 展开 | 已实现 |
 | 对象解析与访问策略 `content.item`、`content.collection`；评论数 / 收藏数经 `ObjectCounterChanged` 同步回写 | 已实现 |
 | 浏览：详情读取直接计数（`content.view.dedup_seconds` 内登录用户去重，需 Redis），发布通用 `ObjectViewed` | 已实现（与原设想「先 Redis 累加再批量回写」不同） |
@@ -181,11 +181,17 @@ TaxonomyDefinition(
 | 正文 | body（text JSON 块数组，见 5.2）, body_text（纯文本，供搜索）, fields（text JSON，类型字段） |
 | 归属 | primary_term_id（主栏目，决定默认链接）, 作者：author_user_id? / author_name, 来源：source_name? / source_url?, origin(`original`/`reprint`/`compiled`) |
 | 状态 | status（§6）, previous_status（进回收站前的状态，恢复用）, visibility(`public`/`members`/`password`), password_hash?, redirect_url?（跳转型内容）, review_note |
-| 时间 | published_at, first_published_at, scheduled_at?, expire_at?, trashed_at?, created_at, updated_at |
+| 时间 | published_at, first_published_at, original_published_at?, scheduled_at?, expire_at?, trashed_at?, created_at, updated_at |
 | 排序 | weight（越大越靠前）, pinned_until?（全局置顶到期时间）；栏目内置顶见 5.3 |
 | 计数 | view_count, comment_count, favorite_count（冗余计数：评论数、收藏数由通用事件 `ObjectCounterChanged`（counter = `comments` / `favorites`）同步回写，listenerId `content.counter-writeback`；详细统计见 §9） |
 | SEO | seo_title, seo_keywords, seo_description, canonical_url |
 | 生产 | producer?, producer_ref?（外部写入方标识，§10.3；(producer, producer_ref) 部分唯一）, submitter_user_id?（投稿人，§11）, current_revision_id, published_revision_id, attached_media（已 attach 的 fileId，用于差量 attach / detach）, version（单调递增，即事件的 subjectVersion）, created_by, updated_by |
+
+**发布时间**：`published_at` 是对读者的发布时间，列表排序（`sort=published`）、`publishedAfter` / `publishedBefore`、筛选器字段 `publishedAt`（维度 `time.published`）及其时间窗、卡片与详情的 `publishedAt`、`content.item.published` 事件都只看它，不另做 `coalesce`。`original_published_at` 是外部写入方（采集、迁移工具，§10.3）给出的来源时间；`first_published_at` 是本站首次上线的时刻。
+
+- 首次发布（审核通过、免审直接发布、定时到点）时：有 `original_published_at` 的内容 `published_at = min(original_published_at, now)`，没有的取 `now`；`first_published_at` 都取 `now`。转载的 IT之家文章因此按来源时间排序、进日 / 周 / 月时间窗，相对时间（「3 小时前」）也按来源算。
+- 之后撤回、重新发布、再编辑、写入方重复投递都不改 `published_at`；写入方再次投递不带时间时保留已有的 `original_published_at`。后台编辑不改 `original_published_at`（只读展示）。
+- 详情 VO 带 `originalPublishedAt`；后台编辑视图带 `firstPublishedAt`、`originalPublishedAt`。
 
 ### 5.2 结构化正文
 
@@ -377,7 +383,7 @@ interface ContentDraftWriter {
 }
 // ContentDraftInput(producer, producerRef, actor, type = "article", categoryCode?, title, subtitle?, summary?,
 //   contentHtml? 或 blocksJson?, cover: List<MediaRef>, externalImageUrls, authorName?, sourceName?, sourceLink: ExternalLink?,
-//   origin = "reprint", originalPublishedAt?, tags, submit = true)
+//   origin = "reprint", originalPublishedAt?（来源发布时间，记为 original_published_at，首次发布时作为 published_at，见 §5.1）, tags, submit = true)
 // ContentDraftResult(itemId, revisionId, created, status)
 ```
 
@@ -452,7 +458,7 @@ interface ContentDraftWriter {
 | `content_item_stats_daily` | 按日统计，唯一(item_id, day) | 已建 |
 | `content_review_logs` | 审核日志（action, from_status, to_status, actor_kind, actor_id, note） | 已建 |
 
-全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
+全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`；`V002__item_original_published_at.sql` 加 `content_items.original_published_at`），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
 
 ## 14. 权限点
 

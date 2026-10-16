@@ -203,8 +203,10 @@ interface CommentImporter {
 }
 // ImportedComment(sourceRef, content, authorName?, authorAvatarUrl?, userId?, publishedAt, likes = 0, ipRegion?, replyToSourceRef?)
 // CommentImportOptions(likesAsSupport = true, countTowardsHot = true, batch?)
-// CommentImportResult(imported, skipped, failed: List<String>)
+// CommentImportResult(imported, skipped, failed: List<String>)   // 每条 "<sourceRef>:<错误码>"，错误码见 CommentImportCodes
 ```
+
+- 失败错误码（`CommentImportCodes`）：`INVALID_SOURCE_REF`、`CONTENT_REQUIRED`、`CONTENT_TOO_LONG`（超过 `comment.content.max_length`）、`AUTHOR_REQUIRED`、`INVALID_PUBLISHED_AT`、`INVALID_REPLY_TO`、`CONTENT_BLOCKED`（敏感词拦截）属于 `REJECTIONS`：评论本身不被接受，原样再导入结果不变，调用方不应自动重试（collect 记为 `Rejected`）；`OBJECT_NOT_FOUND`、`PARENT_NOT_FOUND`、`IMPORT_FAILED` 可能随时间恢复。
 
 - 导入的评论 `origin=imported`：没有平台账号时用 external_author 展示名称和头像；也可以指定平台账号（如迁移旧站用户）。
 - 楼层按原始发布时间顺序分配；同一批里先导入被回复的评论，盖楼关系照常还原。
