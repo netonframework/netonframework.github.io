@@ -359,10 +359,11 @@ interface FilterEngine {   // filter 模块实现，契约里定义，使用方�
 }
 enum class FilterAccess { DIRECT, MOUNT, ADMIN }   // DIRECT 受 publicAccess 约束，挂载与后台不受
 data class CardPage(val cards: List<Card>, val nextCursor: String?, val partial: Boolean = false)
-data class Card(val ref: ObjectRef, val summary: ObjectSummary, val sortValues: List<FilterValue>)
+data class Card(val ref: ObjectRef, val summary: ObjectSummary, val sortValues: List<FilterValue>, val view: JsonObject? = null)
 ```
 
 - 结果经 `ObjectRegistry.describe` 批量解析成卡片；解析后不可见的对象（解析与执行之间状态变化）被丢弃，并向后补足本页。
+- 卡片的 `view` 是拥有对象的模块给出的列表视图（`ObjectResolver.views`，content-platform-architecture §5.2），与该模块原生列表接口里的一项同形：`content.item` 是 `item/query` 的文章卡片，`comment.comment` 是「我的评论」的条目（`{comment, available, targetTitle, targetAppLink, targetWebLink}`）。`ObjectSummary` 只够通用客户端显示标题与封面（没有多图、列表样式、时间、计数、作者），原生客户端按 `ref.type` 解析 `view` 并沿用已有卡片；类型没有视图时 `view` 为 null。
 - 访问方式见 §6.7（直接访问）与 §10.6（挂载节点）。
 
 ### 6.7 直接访问：模块原生接口与统一接口
@@ -603,7 +604,7 @@ when (mount?.mode) {
 - `GET /app/channel/{code}?cursor=&limit=` → `data: {node: {code, name, settings, sort, cardStyle}, list: [Card], nextCursor, partial}`；`limit` 默认取 `settings.pageSize`，否则 20，上限 100。频道不存在或不在有效期 404 `CHANNEL_NOT_FOUND`；没有生效挂载时 `list` 为空。
 - `GET /app/block/{code}?limit=` → 同上，`nextCursor` 恒为 null；默认 `settings.pageSize`，否则 6，上限 50；不存在 404 `BLOCK_NOT_FOUND`。
 - `GET /app/filter/{id}?cursor=&limit=` → `data: {list: [Card], nextCursor, partial}`。
-- `Card` = `{ref: {type, id}, summary: ObjectSummary（exists、visible、title、summary、cover、link{app,web}、ownerUserIds、capabilities）, sortValues: [值]}`；值的 JSON 见 §5.2。
+- `Card` = `{ref: {type, id}, summary: ObjectSummary（exists、visible、title、summary、cover、link{app,web}、ownerUserIds、capabilities）, sortValues: [值], view?: 列表视图（§6.1）}`；值的 JSON 见 §5.2。
 - 客户端按 `ref.type` + `card_style` 渲染；遇到不认识的卡片类型时跳过，不报错（新模块上线不破坏旧客户端）。
 - 编辑型推荐（手工挑选、自定义标题封面）仍然是 content 的合集，不在 filter 里重做；频道要展示一个合集时，挂 content 提供的内置筛选器 `content.collection:<code>`。
 

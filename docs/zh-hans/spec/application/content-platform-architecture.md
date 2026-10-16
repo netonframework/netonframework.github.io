@@ -135,6 +135,7 @@ data class ObjectRef(val type: String, val id: String)    // ObjectRef("content.
 | 问题 | 接口 | 说明 |
 | --- | --- | --- |
 | **这种对象支持什么能力** | `ObjectResolver.describe(refs)` → `ObjectSummary` | 存在性、标题、摘要、封面、链接、拥有者，以及 `capabilities`（如 `comment`、`favorite`、`review`）。这是对象**类型和状态**层面的事实：单页不支持评论，未发布的内容不支持收藏 |
+| **在卡片流里怎么显示** | `ObjectResolver.views(ids, viewer)` → 每个对象一份 JSON（可选，默认不提供） | 与拥有模块**原生列表接口里的一项同形**（content 的文章卡片、comment 的评论条目）。只给访问者此刻可见的对象。筛选器的卡片流（频道、楼层、`/app/filter/{id}`）把它附在 `Card.view` 上，客户端沿用已有模型渲染；没有视图的类型退回 `ObjectSummary` |
 | **这个人现在能不能对它做这件事** | `ObjectAccessPolicy.check(viewer, ref, action)` → 允许 / 拒绝(原因) | 由**拥有对象的模块**实现，考虑可见性（会员可见、密码访问）、对象自身设置（关闭评论）、用户状态（被禁言另由评论模块判断）等 |
 
 - 使用方（如 comment）在用户操作前必须调用 `check`，`capabilities` 只用于界面展示和快速过滤，**不能代替授权检查**。
