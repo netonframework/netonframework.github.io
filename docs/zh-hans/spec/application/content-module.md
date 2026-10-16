@@ -286,7 +286,7 @@ draft ──提交──► pending ──通过──► published ──撤回
 | `content_collection_entries` | id, collection_id, section_id?, item_id?, 或外链（link_title、link_url、link_image）, title_override?, cover_override?, summary_override?, sort, start_at?, end_at? |
 
 - **手动条目**：编辑把内容加进合集，可以为这个位置单独改标题和封面（首页幻灯常用短标题、横图），可设置在位时间。外链条目用于推广活动页等站外内容（PHPCMS 碎片的用途）。
-- **规则条目**（P2）：分区或推荐位可以配一条查询规则（§8 的查询条件），自动填充，例如「手机栏目近 24 小时阅读量前 5」；手动条目优先，规则补足数量。
+- **规则条目**（P2）：分区或推荐位引用一条筛选器（[filter-module](filter-module.md) §12.1），自动填充，例如「手机栏目近 24 小时阅读量前 5」；手动条目优先，筛选器补足数量。宿主没装 filter 时规则条目不可用。
 - 推荐位 `slot` 的数量、图片尺寸要求等写在 `settings`，后台按此校验。
 
 ## 8. 查询

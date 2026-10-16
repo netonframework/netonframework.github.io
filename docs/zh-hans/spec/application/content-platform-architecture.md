@@ -22,7 +22,8 @@
 | comment | 评论：盖楼 / 楼中楼、支持反对、热评、治理、导入 | [comment-module.md](comment-module.md) |
 | interaction | 互动：收藏、点赞、关注、足迹（各自语义，§2.3） | [interaction-module.md](interaction-module.md) |
 | collect | 内容接入流程：采集、清洗映射、去重、策略检查、投递 | [collect-module.md](collect-module.md) |
-| search | 跨模块统一搜索 | 待写 |
+| filter | 筛选器：模块注册数据源与维度，存下来的查询跨模块复用；频道、楼层、合集规则、推送订阅都引用它 | [filter-module.md](filter-module.md) |
+| search | 跨模块统一搜索（相关性；与 filter 共享维度索引，见 filter §12.3） | 待写 |
 | push | 推送：设备、主题、下发、多通道 | [push-module.md](push-module.md) |
 | 媒体（infra） | 文件与视频的上传、存储、处理、访问控制 | §6 |
 
