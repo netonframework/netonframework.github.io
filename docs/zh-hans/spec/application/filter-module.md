@@ -1,13 +1,13 @@
 # module-filter 通用筛选器
 
 > 标识：NETON-APP-FILTER
-> 日期：2026-10-17 · 状态：Draft r2（r2：放置位改为挂载，节点 code 对外、筛选器 id 内部绑定；待评审，未实现）
+> 日期：2026-10-17 · 状态：Draft r3（r2：放置位改为挂载，节点 code 对外、筛选器 id 内部绑定；r3：直接访问——模块原生接口带 `filter` 参数与统一接口，`publicAccess` 开关；待评审，未实现）
 > 仓库：`neton-application-contract`（契约 `contract.filter`）、`neton-application-module-filter`（服务端）、`neton-application-front-filter`（后台页面）
 > 一份「存下来的查询」，任何模块的对象都能被它筛选；筛选器按 id 挂载到频道、楼层、分类节点、合集分区等节点上，对外请求节点（如 `/app/channel/fabuhui`）即返回挂载筛选器的结果；推送订阅、开放 API 也只引用筛选器。
 
 ## 0. 一句话
 
-**筛选能力属于平台，筛选对象属于模块。** filter 模块只理解「结构」（数据源、字段、维度、条件树、排序、游标），不理解任何业务字段；分类、标签、合集、品牌、价格……全部由拥有数据的模块以「数据源」的形式声明并执行。未来的商城、评测、发布会、实体库模块接入，只需实现一个 `FilterSource` 并通过一致性套件。
+**筛选能力属于平台，筛选对象属于模块。** 筛选器不放在 content 里：契约 `contract.filter` 在共享契约库，实现是独立的 module-filter；content、comment 与未来的商城、评测等模块只实现并注册数据源。这样跨源筛选器不归属任何业务模块，没装 content 的宿主（纯商城）也能用，业务模块之间也不产生依赖。 filter 模块只理解「结构」（数据源、字段、维度、条件树、排序、游标），不理解任何业务字段；分类、标签、合集、品牌、价格……全部由拥有数据的模块以「数据源」的形式声明并执行。未来的商城、评测、发布会、实体库模块接入，只需实现一个 `FilterSource` 并通过一致性套件。
 
 ## 1. 目标与边界
 
@@ -302,7 +302,25 @@ data class Card(val ref: ObjectRef, val summary: ObjectSummary, val sortValues: 
 ```
 
 - 结果经 `ObjectRegistry.describe` 批量解析成卡片；解析后不可见的对象（解析与执行之间状态变化）被丢弃，并向后补足本页。
-- App 接口：`GET /app/filter/{code}?cursor=&limit=`（匿名可用，可见性由数据源负责）；挂载节点的接口见 §10.6。
+- 访问方式见 §6.7（直接访问）与 §10.6（挂载节点）。
+
+### 6.7 直接访问：模块原生接口与统一接口
+
+筛选器不挂载也能被直接取用，有两种入口，按筛选器的范围选择：
+
+| 入口 | 适用 | 返回 |
+| --- | --- | --- |
+| **模块原生接口 + `filter` 参数**，如 `GET /app/content/item/query?filter=50`、未来 `GET /app/commerce/product/query?filter=88` | 单源筛选器，且数据源属于该模块 | 该模块自己的列表 DTO，与不带 `filter` 时结构完全相同；客户端沿用已有模型与卡片 |
+| **统一接口** `GET /app/filter/{id}?cursor=&limit=` | 跨源筛选器；或只需要卡片流的通用客户端、开放接口 | 卡片（`ObjectRef` + `ObjectSummary` + 排序值），客户端按 `ref.type` 渲染 |
+
+规则：
+
+1. **语义只有一份**：模块原生接口收到 `filter` 后交给 `FilterEngine`（契约里定义的执行入口，宿主没装 filter 时返回 `FILTER_UNAVAILABLE`），拿回 ID 与游标，再用自己的方式装配 DTO。模块不得自行解释条件树。
+2. **范围必须匹配**：原生接口只接受 `scope.sources` 恰好是本接口数据源的筛选器，否则 `FILTER_SOURCE_MISMATCH`。
+3. **不叠加条件**：带 `filter` 时，原生接口的其他条件参数（分类、标签、排序……）一律拒绝（`FILTER_EXCLUSIVE_PARAMS`），只保留分页与 `include` 这类返回控制参数。结果只由筛选器决定，不出现「两套条件混用、说不清结果怎么来的」。
+4. **对外访问需显式开启**：筛选器有 `publicAccess` 开关（默认关）。关闭时两种直接入口都返回 `FILTER_NOT_PUBLIC`，筛选器只能经挂载对外或在后台预览——筛选器可能包含内部条件，且自增 id 可被遍历。挂载不受此开关影响（挂载本身就是发布行为）。
+5. **按 id 寻址**：直接入口用筛选器 id（与挂载一致）；筛选器换 code 不影响已对接方。
+6. 后台接口 `/admin/filter/preview/{id}` 可预览草稿，不受 `publicAccess` 限制，需 `filter:filter:query`。
 
 ### 6.2 执行策略
 
@@ -505,7 +523,7 @@ when (mount?.mode) {
 | `GET /app/channel/{code}?cursor=&limit=` | 频道内容：按 code 找到节点 → 生效挂载 → 筛选器已发布版本 → 卡片流 |
 | `GET /app/block/{code}?limit=` | 楼层内容 |
 | 节点所属模块的原接口 | 如 `GET /app/content/item/query?category=fabuhui`：按 §10.4 自动应用挂载，接口不变 |
-| `GET /app/filter/{code}?cursor=&limit=` | 直接按筛选器取（开放接口、调试；默认关闭对外访问，按筛选器开关） |
+| `GET /app/filter/{id}?cursor=&limit=` 与模块原生接口的 `filter` 参数 | 不经挂载、直接按筛选器取（§6.7）；需筛选器开启 `publicAccess` |
 
 - 用户的频道定制（增删、排序）：未登录存在客户端；登录后存账号偏好（account 的偏好设置），服务端只校验频道仍存在且 `userAddable`。
 - 客户端按 `ref.type` + `card_style` 渲染；遇到不认识的卡片类型时跳过，不报错（新模块上线不破坏旧客户端）。
@@ -515,7 +533,7 @@ when (mount?.mode) {
 
 | 表 | 关键字段 |
 | --- | --- |
-| `filter_filters` | id, code（唯一）, name, scope（text JSON）, draft（text JSON：草稿定义）, published_version, status（`active` / `broken` / `disabled`）, on_broken, subscribable, materialize, remark, created_at, updated_at |
+| `filter_filters` | id, code（唯一）, name, scope（text JSON）, draft（text JSON：草稿定义）, published_version, status（`active` / `broken` / `disabled`）, on_broken, public_access, subscribable, materialize, remark, created_at, updated_at |
 | `filter_versions` | id, filter_id, version, definition（text JSON）, normalized（text JSON：规范形式缓存）, source_schema（text JSON：{source: schemaVersion}）, published_by, published_at；唯一(filter_id, version) |
 | `filter_references` | filter_id, referrer_kind（`mount` / `filter` / `subscription`）, referrer_id；唯一(filter_id, referrer_kind, referrer_id) |
 | `filter_nodes`、`filter_mounts` | 见 §10.5 |
@@ -529,6 +547,7 @@ when (mount?.mode) {
 ### 12.1 content
 
 - 实现 `content.item` 数据源，内部复用 §8 的列表查询（补上 `or` / `not` 与 `notIn` / `all`）。
+- `GET /app/content/item/query` 增加 `filter` 参数（§6.7），带它时由 `FilterEngine` 执行、content 装配原有 DTO。
 - 合集规则条目（content §7，原 P2「`content_collection_sections.rule`」）改为**引用筛选器**：分区配 `filterCode`，手动条目优先，筛选器补足数量。content 只依赖契约里的 `FilterEngine`，宿主没装 filter 时规则条目不可用，手动条目照常。
 - 提供内置筛选器 `content.collection:<code>`，让频道等节点直接挂载编辑型合集。
 
