@@ -1,7 +1,7 @@
 # module-comment 通用评论模块
 
 > 标识：NETON-APP-COMMENT
-> 日期：2026-10-15 · 状态：Draft r3（对齐套件架构 r2：可见性矩阵、计数定义、一致性、授权分离、媒体引用、投递保证；2026-10-15 按 P1 实现校准）
+> 日期：2026-10-15 · 状态：Draft r3（对齐套件架构 r2：可见性矩阵、计数定义、一致性、授权分离、媒体引用、投递保证；2026-10-15 按 P1 实现校准；2026-10-18 补 IP 属地、回复我的未读状态，定下不提供编辑）
 > 仓库：`neton-application-module-comment`（服务端）、`neton-application-front-comment`（后台页面）
 > 参照：网易新闻的「盖楼」、IT之家的楼层评论与热评榜。评论可以挂在任何对象上：文章、视频、商品、帖子……
 
@@ -15,15 +15,17 @@
 | 审核模式 `post` / `pre` / `off`（全局配置 + 单对象覆盖） | 已实现（`pre` 原计划 P2） |
 | 敏感词（block / review / mask，AC 自动机）、可替换 `CommentContentFilter` | 已实现 |
 | 举报（不同用户达到阈值自动送审）、自动折叠（反对 / 支持比例 + 最低票数）、作者删除、管理员隐藏 / 删除 / 恢复 | 已实现（自动折叠原计划 P2） |
-| 我的评论、回复我的（被回复） | 已实现 |
+| 我的评论、回复我的（被回复）；条目带被回复的评论，回复我的带未读标记、未读数与标记已读（§4.6） | 已实现（未读状态 2026-10-18） |
 | 热评榜 `ranking`（简化版：节点内存缓存 5 分钟） | 已实现（原计划 P2） |
-| 评论图片（上传业务类型 `comment.image`）、评论导入 `CommentImporter` | 已实现（原计划 P2） |
+| 评论图片（上传业务类型 `comment.image`，经 `POST /app/infra/file/upload` 上传、发评论时 attach，§9.1）、评论导入 `CommentImporter` | 已实现（原计划 P2） |
+| IP 属地（服务端按可信客户端地址经 `contract.core.IpRegionResolver` 解析，§3.2）、设备小尾巴；两者都可全局关闭或按对象类型关闭 | 已实现（2026-10-18） |
+| 编辑评论 | 不提供（§4.7，有意不做） |
 | 对象删除清理评论（订阅 `ObjectUnavailable`，`permanent = true`） | 已实现 |
 | 用户装饰 `CommentUserDecorator` 默认实现（经 account 的 `port.AccountProfileReader` 批量取昵称、头像） | 已实现 |
 | 事件 `CommentActivity`（created / replied / voted / hidden / removed / deleted / restored）、评论数走通用 `ObjectCounterChanged` | 已实现 |
 | @提及（`mentions` 列已建，未解析）、`comment.comment.mentioned` 事件、「@我的」 | 延后 |
 | 禁言（§7.5） | 延后 |
-| 按对象类型分别配置（P1 是全局配置 + 单对象覆盖审核模式与展示形态） | 延后 |
+| 按对象类型分别配置（P1 是全局配置 + 单对象覆盖审核模式与展示形态；IP 属地与设备小尾巴已能按类型关闭） | 延后 |
 | 被删除评论正文保留期后清空、新注册账号冷却期、按 IP 限流、风控事件 | 延后 |
 | 外部 / AI 内容安全过滤器、评论统计报表 | 延后（P3） |
 | 筛选器数据源 `comment.comment`（字段 targetType / target / origin / createdAt / author / topLevel，排序 hot / popularity / support / latest，[filter-module](filter-module.md) §4.4） | 已实现（2026-10-17；一致性套件真库全绿）。只取 `visible`、对象未锁定且对访问者可见的评论；归一化热度 `p = s / (s + 20)`，`s = 支持数 + 回复总数` |
@@ -86,13 +88,15 @@
 | 树 | parent_id?（回复的是哪条）, root_id（所在顶层评论）, path（祖先 ID 串 `/1/5/`，从顶层到父级，varchar）, depth, reply_to_user_id? |
 | 楼层 | floor：**每条评论都有楼号**（含回复），唯一(target_type, target_id, floor)。盖楼形态下引用链上每一层都显示自己的楼号；楼中楼形态下只在顶层显示 |
 | 内容 | content（纯文本，最长可配置）, mentions（text JSON：@ 的用户；P1 未使用）, images（text JSON：fileId 数组，上传业务类型 `comment.image`）, emoji 用文本占位符表示，客户端渲染 |
-| 环境 | ip_region（服务端按客户端地址解析，客户端传不进来）, device_tail（客户端上报的机型，限长、过滤，后台可关）, client（app / web / wap） |
+| 环境 | ip_region（「IP 属地」展示文本，服务端解析，客户端传不进来，见下）, device_tail（客户端上报的机型：去控制字符、限 32 字，后台可关）, client（app / web / wap）。不存原始 IP |
 | 互动 | support_count, against_count, reply_count（直接回复数）, descendant_count（整条链下的回复总数）, report_count |
 | 排序 | hot_score（double，§5.2）, hot_eligible（导入评论可配置为不参与热门） |
 | 状态 | status：`visible` / `pending`（待审） / `folded`（折叠，§7.4） / `hidden`（管理员隐藏，可恢复） / `removed`（管理员删除） / `deleted`（作者删除）；各状态的可见范围见 §3.4 |
 | 标记 | pinned（对象内置顶）, featured（精选 / 神评）, author_badge（作者 / 编辑 / 官方，由解析端口提供） |
 | 时间 | created_at, updated_at |
 
+- **IP 属地**：发评论时取框架解析后的可信客户端地址 `HttpRequest.clientAddress`（受 routing 的 `ratelimit.trusted_proxies` 约束，伪造的 `X-Forwarded-For` 改变不了结果），经套件端口 `contract.core.IpRegionResolver`（[content-platform-architecture.md](content-platform-architecture.md) §5.6，infra 默认实现）解析，保存 `IpRegion.display`：中国大陆显示省级，其他国家和地区显示国家 / 地区名，私有地址与库里查不到的显示「未知」。端口缺失、解析器给不出结论（库未配置、地址不合法）或失败时不记录（null），不阻断发评论。导入评论的属地由导入方给出。
+- **开关**：`comment.ip_region.enabled` / `comment.device_tail.enabled` 全局开关，`comment.ip_region.disabled_types` / `comment.device_tail.disabled_types`（逗号分隔的对象类型）按类型关闭。关闭后不再记录，**已存的也不再展示**（接口返回 null）。
 - **path 用于盖楼**：查一页评论后，一次批量取出它们所有祖先，在服务端拼好引用链，避免客户端逐条请求。
 - **楼层深度上限**（默认 50）：超过上限的回复不再继续嵌套，而是作为新的一层，只引用直接父评论，防止引用链无限变长。
 - 删除和隐藏的评论在链中保留占位，楼层结构不塌；占位文案按状态区分（§3.4）。
@@ -107,6 +111,7 @@
 | `comment_review_logs` | 审核与处置日志：from_status → to_status、operator_type / operator_id、reason |
 | `comment_participants` | 参与人计数：每人在对象下计入评论数的评论条数，归零即不再算参与人 |
 | `comment_hot_snapshots` | 最热翻页快照（没有 Redis 时使用），按 expires_at 定时清理 |
+| `comment_inbox_states` | 「回复我的」已读位置：每个用户一行 `replies_read_at`（毫秒），未读数按它之后的回复计算（§4.6，V002） |
 
 JSON 字段一律存 `text` 列，不用 jsonb（套件统一约定）。
 
@@ -144,7 +149,7 @@ JSON 字段一律存 `text` 列，不用 jsonb（套件统一约定）。
 
 | 排序 | 排序键与游标 | 承诺 |
 | --- | --- | --- |
-| 最新 / 最早 | `(created_at, id)`，游标为最后一条的键值 | 遍历期间**一直存在且一直对当前用户可见**的评论，恰好返回一次。遍历开始后新发的评论不会插进已经翻过的页：最新排序下通过「刷新 / 拉取更新」接口单独获取；最早排序下出现在后面的页里 |
+| 最新 / 最早 | `(created_at, id)`，游标为最后一条的键值 | 遍历期间**一直存在且一直对当前用户可见**的评论，恰好返回一次。遍历开始后新发的评论不会插进已经翻过的页：最新排序下客户端重新拉第一页获取（没有单独的增量接口）；最早排序下出现在后面的页里 |
 | 最热 | 第一页生成快照（排好序的 ID 列表，默认保留 10 分钟，`comment.hot.snapshot_seconds`；有 Redis 存 Redis，否则存 `comment_hot_snapshots` 表），游标为快照 ID + 位置 | 在快照有效期内按快照顺序翻页，不因热度变化而重复或跳动。快照过期返回专门的错误码，客户端从第一页重新开始 |
 | 回复列表 | `(created_at, id)` | 同最新 / 最早 |
 
@@ -153,11 +158,37 @@ JSON 字段一律存 `text` 列，不用 jsonb（套件统一约定）。
 
 ## 4. 盖楼与回复
 
-- **发评论**：`parentId` 为空是顶层评论；不为空是回复。回复任意一层都可以，服务端据此计算 root_id、path、depth。
-- **盖楼的引用链**：查询时对每条回复返回 `quoteChain`。链长 ≤ 6 层时完整返回；超过时返回最早 2 层 + 最近 3 层，中间给出隐藏层数，客户端点「展开」再调接口拿完整链。
-- **楼中楼的回复区**：每条顶层评论附带最早或最热的前 N 条回复（默认 3）和回复总数；完整回复分页单独查询。
-- **@提及**（延后）：内容里 @ 的用户解析成 mentions，发出事件；被 @ 和被回复的用户可以在「回复我的」里看到。P1 的「回复我的」只含被回复。
-- **对象作者标记**：对象作者（如文章编辑）发的评论带「作者」标记，由解析端口提供作者 ID 判断。
+### 4.1 发评论
+
+`parentId` 为空是顶层评论；不为空是回复。回复任意一层都可以，服务端据此计算 root_id、path、depth。
+
+### 4.2 盖楼的引用链
+
+查询时对每条回复返回 `quoteChain`。链长 ≤ 6 层时完整返回；超过时返回最早 2 层 + 最近 3 层，中间给出隐藏层数，客户端点「展开」再调接口拿完整链。
+
+### 4.3 楼中楼的回复区
+
+每条顶层评论附带最早或最热的前 N 条回复（默认 3）和回复总数；完整回复分页单独查询。
+
+### 4.4 @提及（延后）
+
+内容里 @ 的用户解析成 mentions，发出事件；被 @ 和被回复的用户可以在「回复我的」里看到。P1 的「回复我的」只含被回复。
+
+### 4.5 对象作者标记
+
+对象作者（如文章编辑）发的评论带「作者」标记，由解析端口提供作者 ID 判断。
+
+### 4.6 回复我的（通知列表）
+
+「回复我的」是评论模块自己的站内通知列表：别人对我的评论的**直接回复**，只取平台账号发的（导入评论不算）、计入评论数的状态，所属对象对我不可见的不出现。推送 / 系统通知仍由订阅 `CommentActivity`（`replied`）的模块决定。
+
+- **条目**（`mine` 与 `replies-to-me` 同形）：`{ comment, available, targetTitle, targetAppLink, targetWebLink, parent, unread }`。`comment` 是回复本身（带盖楼引用链）；`parent` 是被回复的那条（「回复我的」里就是我的评论，「我的评论」里是我回复的那条；按当前用户的可见性渲染，不带引用链；顶层评论为 null）；`unread` 只在「回复我的」里有意义。
+- **已读位置**：每个用户一个时间点（`comment_inbox_states.replies_read_at`），晚于它的回复是未读。`POST replies-to-me/read`（`readAt` 缺省为现在，不能超过现在）只前进不后退，重复调用幂等；没有逐条已读——通知列表打开即全部已读，与常见社区产品一致。
+- **未读数**：`GET replies-to-me/unread-count` → `{ count, readAt }`，`count` 封顶 1000（客户端显示「99+」之类）。为了能廉价地做红点，未读数**不逐条检查对象可见性**，所属对象撤回后的回复可能仍计入，列表里不出现。被删除、隐藏、送审的回复不计入。
+
+### 4.7 不提供编辑
+
+评论发出后不能修改，只能删除重发。理由：盖楼与楼中楼都会把被回复的评论原文引用进别人的楼层，编辑会让引用、支持 / 反对、举报和审核记录对应的不再是同一段文字；先发后审模式下编辑还能绕过审核。参照的网易新闻、IT之家同样不提供编辑。需要「编辑窗口」的产品属于纯产品特殊规则，不进入本模块。
 
 ## 5. 支持、反对与热门
 
@@ -280,7 +311,7 @@ interface CommentContentFilter {
 
 comment 自己也注册 `comment.comment`（`CommentObjectTypes.COMMENT`）解析器与访问策略，供 interaction（点赞收藏评论）、推送深链和评论图片的委托访问使用。
 
-评论图片：上传业务类型 `comment.image`（`DELEGATED`、jpeg/png/gif/webp、≤10MB、不可复用、托管生命周期，assetDir `comment-image`），发评论时 attach 到 `comment.comment:<id>`。bootstrap 里按套件约定 `bindIfAbsent` 唯一的 `port.MediaOwnerAccess`，按类型经 `ObjectRegistry.check(…, view)` 路由。
+评论图片：上传业务类型 `comment.image`（`DELEGATED`、jpeg/png/gif/webp、≤10MB、不可复用、托管生命周期，assetDir `comment-image`）。客户端先 `POST /app/infra/file/upload`（multipart：`file` + `businessType=comment.image`）拿到 `fileId`（此时是 temporary，只有上传者能读），再在 `create` 的 `images` 里带上；发评论时在同一事务里 attach 到 `comment.comment:<id>`，任何一张被 infra 拒绝（不是本人上传、类型不对、已被引用……）整条评论失败，错误码即 infra 的 `MediaErrorCode`。张数上限 `comment.images.max`（0 = 不允许图片，`IMAGES_NOT_ALLOWED`；超出 `TOO_MANY_IMAGES`）。展示时按访问者展开成短期签名地址（`images: [{ fileId, url, mimeType }]`），看不到正文的状态（隐藏、删除）不给图片。作者删除、管理员隐藏 / 删除不解除引用（正文与图片都在保留期内供后台查看）；对象彻底删除时 `detachAll`，图片进入孤儿宽限期后由 infra 清理。bootstrap 里按套件约定 `bindIfAbsent` 唯一的 `port.MediaOwnerAccess`，按类型经 `ObjectRegistry.check(…, view)` 路由。
 
 ### 9.2 用户装饰
 
@@ -306,7 +337,7 @@ interface CommentUserDecorator {
 
 ### 9.4 配置
 
-目标是按对象类型定义；P1 是全局的类型化配置（归 system 的配置体系），单个对象可覆盖审核模式与展示形态。P1 的配置项：`comment.display.mode`、`comment.moderation.mode`、`comment.content.max_length`、`comment.images.max`、`comment.hot.threshold` / `size` / `z` / `reply_weight` / `decay_hours` / `snapshot_seconds`、`comment.fold.ratio` / `min_against`、`comment.depth.max`、`comment.device_tail.enabled`、`comment.duplicate.window_seconds`、`comment.report.threshold`、`comment.thread.preview_replies`。限流阈值写在接口注解上。
+目标是按对象类型定义；P1 是全局的类型化配置（归 system 的配置体系），单个对象可覆盖审核模式与展示形态。P1 的配置项：`comment.display.mode`、`comment.moderation.mode`、`comment.content.max_length`、`comment.images.max`、`comment.hot.threshold` / `size` / `z` / `reply_weight` / `decay_hours` / `snapshot_seconds`、`comment.fold.ratio` / `min_against`、`comment.depth.max`、`comment.device_tail.enabled` / `disabled_types`、`comment.ip_region.enabled` / `disabled_types`、`comment.duplicate.window_seconds`、`comment.report.threshold`、`comment.thread.preview_replies`。限流阈值写在接口注解上。
 
 ## 10. 接口
 
@@ -318,12 +349,14 @@ interface CommentUserDecorator {
 | `GET replies?rootId&order&cursor` | 楼中楼：某条顶层评论的全部回复 |
 | `GET chain/{id}` | 盖楼：某条评论的完整引用链（展开折叠层） |
 | `GET get/{id}` | 单条评论（分享、跳转定位用） |
-| `POST create` | 发评论或回复：targetType, targetId, parentId?, content, images? |
+| `POST create` | 发评论或回复：`{ targetType, targetId, parentId?, content, images?: [fileId], client?: app\|web\|wap, deviceTail?: 机型（≤32 字） }`；返回新评论（`ipRegion` 由服务端填） |
 | `POST vote` | 支持 / 反对 / 撤销：commentId, value(1 / -1 / 0) |
 | `POST report` | 举报 |
 | `DELETE delete/{id}` | 删除自己的评论 |
 | `GET mine?cursor` | 我的评论（带对象标题和链接） |
-| `GET replies-to-me?cursor` | 回复我的（@我的延后） |
+| `GET replies-to-me?cursor` | 回复我的（@我的延后）：条目带 `parent`、`unread`（§4.6） |
+| `GET replies-to-me/unread-count` | 未读数 `{ count, readAt }` |
+| `POST replies-to-me/read` | 标记已读 `{ readAt? }`（缺省为现在），返回 `{ count, readAt }` |
 | `GET ranking?period=day\|week\|month&targetType?` | 热评榜 |
 
 **后台（`/admin/comment/*`）**：
@@ -362,7 +395,7 @@ interface CommentUserDecorator {
 
 | 期 | 内容 |
 | --- | --- |
-| P1（已实现） | 评论树与楼层、两种展示形态、支持 / 反对、热度分与热门评论、置顶精选、敏感词、三种审核模式、举报、自动折叠、删除、限流、我的评论、回复我的、热评榜（简化）、图片评论、评论导入、解析与装饰端口、后台基础页面 |
+| P1（已实现） | 评论树与楼层、两种展示形态、支持 / 反对、热度分与热门评论、置顶精选、敏感词、三种审核模式、举报、自动折叠、删除、限流、我的评论、回复我的（含未读状态）、热评榜（简化）、图片评论、IP 属地与设备小尾巴、评论导入、解析与装饰端口、后台基础页面 |
 | P2 | 禁言、@提及与「@我的」、按对象类型配置、热评榜定时计算与后台页面 |
 | P3 | 外部 / AI 内容安全过滤器、风控事件、评论统计报表 |
 
