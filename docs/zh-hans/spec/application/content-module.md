@@ -1,7 +1,7 @@
 # module-content 通用内容模块（CMS）
 
 > 标识：NETON-APP-CONTENT
-> 日期：2026-10-15 · 状态：Draft r3（对齐套件架构 r2：媒体引用、生命周期影响、授权分离、投递保证；2026-10-15 按 P1 实现校准）
+> 日期：2026-10-15 · 状态：Draft r3（对齐套件架构 r2：媒体引用、生命周期影响、授权分离、投递保证；2026-10-15 按 P1 实现校准；2026-10-18 补投稿来源链接、分享链接、投稿栏目归宿主）
 > 仓库：`neton-application-module-content`（服务端）、`neton-application-front-content`（后台页面）
 > 参照：WordPress、PHPCMS、DedeCMS 的内容建模方式，取其通用部分，去掉模板引擎、静态生成等与 headless 架构无关的部分。
 
@@ -18,6 +18,7 @@
 | 通用查询（§8，不含按自定义字段筛选）、排行（按日统计表）、搜索（pg_trgm，可替换 `ContentSearchEngine`） | 已实现 |
 | 合集：专题、推荐位、分区、手动条目与外链条目 | 已实现 |
 | 用户投稿、外部写入端口 `ContentDraftWriter`（含按写入方撤回；原始发布时间首次发布时作为发布时间，2026-10-17） | 已实现 |
+| 投稿来源链接 `link`（存为 `source_url`，§11）；分享链接 `shareUrl`（`content.site.base_url` + 路径模板，§5.6），对象摘要 `link.web` 同值 | 已实现（2026-10-18；真库测试全绿） |
 | 媒体：注册 `content.cover` / `content.image` / `content.video` / `content.attachment`，保存时 attach / detach，响应经 `MediaService.resolve` 展开 | 已实现 |
 | 对象解析与访问策略 `content.item`、`content.collection`；评论数 / 收藏数经 `ObjectCounterChanged` 同步回写 | 已实现 |
 | 浏览：详情读取直接计数（`content.view.dedup_seconds` 内登录用户去重，需 Redis），发布通用 `ObjectViewed` | 已实现（与原设想「先 Redis 累加再批量回写」不同） |
@@ -81,6 +82,7 @@ ContentTypeDefinition(
     fields = listOf(/* FieldDefinition，见 3.2 */),
     slugPolicy = SlugPolicy.AUTO,               // AUTO 自动 / MANUAL 手填 / NONE 不用
     archivedReadable = true,                    // 归档后详情是否仍可读
+    sharePath = null,                           // 分享链接路径模板，覆盖配置 content.share.path_pattern（§5.6），如 "/p/{slug}"
 )
 ```
 
@@ -88,7 +90,7 @@ ContentTypeDefinition(
 | --- | --- |
 | `BODY` | 有结构化正文（§5） |
 | `SUMMARY` / `COVER` | 摘要 / 封面图（多图：主图 + 三图样式） |
-| `AUTHOR` / `SOURCE` | 作者（用户或署名）/ 来源名称与原文链接（原创、转载、整理） |
+| `AUTHOR` / `SOURCE` | 作者（用户或署名）/ 来源名称与原文链接（原创、转载、整理）；开了 `SOURCE` 的类型投稿时可填来源链接 `link`（§11） |
 | `REVISIONS` | 保存即生成版本，线上版本与草稿分离（§6） |
 | `REVIEW` | 发布前必须审核（也可以在栏目上单独配置，§4.2） |
 | `SCHEDULE` | 定时发布、定时下线 |
@@ -128,7 +130,7 @@ ctx.get(ContentRegistry::class).registerTaxonomy(BrandTaxonomy)   // 先注册�
 ctx.get(ContentRegistry::class).registerType(VideoType)
 ```
 
-注册时校验 code（`^[a-z][a-z0-9_]{0,31}$`）、字段键、select 选项、正则、引用的分类法存在；装配期可变，`seal` 后只读。
+注册时校验 code（`^[a-z][a-z0-9_]{0,31}$`）、字段键、select 选项、正则、引用的分类法存在、`sharePath` 合法（§5.6）；装配期可变，`seal` 后只读。
 
 注册结果和数据库里已有数据做一致性检查：库里存在、代码里已删除的类型，启动时报警并拒绝写入该类型，不静默丢数据（延后：P1 未持久化注册快照）。
 
@@ -164,6 +166,25 @@ TaxonomyDefinition(
 | `listOrder` | 默认排序：发布时间 / 权重 / 更新时间 |
 | `visible` | 是否在 App / Web 的栏目列表里出现（隐藏栏目仍可通过接口访问） |
 | `extra` | 产品自定义的展示参数（列表样式、图标等），模块原样透传 |
+
+另有 `pageItemId`（`kind = page` 时绑定的单页内容 ID，必填）与 `linkUrl`（`kind = link` 时的外链，http / https，必填）。未填的设置项取默认值：`kind = list`、`allowedTypes = []`（不限）、`requireReview = false`、`allowSubmission = false`、`allowComment = true`、`listOrder = published`、`visible = true`。后台写入时按上表校验（`TERM_SETTINGS_INVALID`、`TERM_KIND_INVALID`、`TERM_LIST_ORDER_INVALID`、`CONTENT_TYPE_UNKNOWN`、`TERM_LINK_URL_INVALID`、`TERM_PAGE_ITEM_REQUIRED`）；读取时 settings 解析失败一律按默认值处理（即**不接受投稿**）。
+
+**投稿栏目归宿主**：本模块不预置任何栏目（包括投稿栏目）——分类法定义在代码里，词条是实例数据，归宿主（套件架构 §3「产品层：类型注册、配置」）。默认没有可投稿的栏目，`submission/form` 的 `categories` 为空、投稿返回 `CATEGORY_SUBMISSION_DISABLED`。宿主开放投稿有两种方式：
+
+1. 运营在后台「栏目管理」新建或编辑栏目，打开「接受投稿」（`settings.allowSubmission = true`）。
+2. 宿主在自己的迁移里种子化（经 `migrate up` 执行，不在启动时写）。栏目只需一行 `content_terms`：
+
+```sql
+INSERT INTO content_terms (taxonomy, name, slug, parent_id, depth, sort, settings, status, created_at, updated_at)
+VALUES ('category', '投稿', 'submissions', 0, 0, 100,
+        '{"kind":"list","allowedTypes":["article"],"allowSubmission":true}', 1,
+        (extract(epoch from now()) * 1000)::bigint, (extract(epoch from now()) * 1000)::bigint)
+ON CONFLICT (taxonomy, slug) DO NOTHING;
+-- path 是含自身 ID 的物化路径（顶级为 /<id>/），ID 由序列分配，插入后补写
+UPDATE content_terms SET path = '/' || id || '/' WHERE taxonomy = 'category' AND slug = 'submissions' AND path = '/';
+```
+
+要点：`(taxonomy, slug)` 唯一（`uq_content_terms_slug`），slug 小写、字母（含中文）数字 `-` `_`、首字符为字母或数字、≤ 100；`settings` 是 text 列里的 JSON，键名按上表（camelCase），未知键忽略；要出现在投稿表单里须 `status = 1`、`kind = list`、`visible` 不为 false（祖先栏目也要可见）、`allowedTypes` 为空或含投稿类型。子栏目的 `parent_id` 为父 ID，`depth` = 父 depth + 1，`path` = 父 path + `<id>/`。`category` 分类法是内置注册的，不需要额外注册；不需要菜单或权限种子；`item_count` 由发布时维护。投稿一律待审，`requireReview` 对投稿不起作用。
 
 ### 4.3 栏目级权限（可选，延后）
 
@@ -237,6 +258,23 @@ TaxonomyDefinition(
 - 外部写入（采集等）带来的外链图片（`ContentDraftInput.externalImageUrls`），在写入流程里经 `MediaService.importFromUrl` 转存为平台媒体；转存失败的图片丢弃。
 - 来源原文链接、正文里的外链用 `ExternalLink` 保存，不是媒体。
 
+**外链校验**：`source_url`、`redirect_url`、`canonical_url`、投稿的 `link` 用同一条规则——http / https，有主机名，不带用户信息（`user@host`），端口只能是数字，不含空白与控制字符，≤ 2048；不合法分别返回 `SOURCE_URL_INVALID`、`REDIRECT_URL_INVALID`、`CANONICAL_URL_INVALID`、`INVALID_LINK`。
+
+### 5.6 分享链接
+
+内容站点通常在宿主自己的域名下渲染（headless，本模块不出页面），分享链接由配置拼出来：
+
+| 配置（system 配置体系，分类 `content`） | 默认 | 说明 |
+| --- | --- | --- |
+| `content.site.base_url` | 空 | 内容网页所在站点的根地址，如 `https://www.example.com` 或 `https://example.com/news`。http / https 绝对地址、有主机名、不带查询串与锚点；末尾的 `/` 去掉。**留空或不合法 = 不生成分享链接** |
+| `content.share.path_pattern` | `/{type}/{id}` | 全局路径模板。不合法时按默认值处理 |
+
+- **路径模板**（`contract.content.ContentSharePath`）：以 `/` 开头（不能是 `//`），必须含 `{id}` 或 `{slug}`；占位符只有 `{type}`（类型 code）、`{id}`（内容 ID）、`{slug}`（类型内 slug，没有 slug 时用 ID）；值按 UTF-8 百分号编码；不含空白、控制字符与 `#`，≤ 200。
+- **按类型覆盖**：类型注册时声明 `ContentTypeDefinition.sharePath`（如单页 `/p/{slug}`、视频 `/v/{id}`），优先于全局模板；注册时校验。
+- **优先级**：`shareUrl` = 内容的规范链接 `canonical_url`（编辑明确指定的「这条内容的地址」，不依赖根地址）→ 根地址 + 路径模板（类型 `sharePath` > `content.share.path_pattern`）→ 都没有时为空。转载的原文地址在 `source_url`，不要填进 `canonical_url`，否则分享会指向原站。
+- **出现位置**：前台卡片（`item/query`、排行、搜索、相关内容、合集条目、`content.item` 列表视图）与详情的 `shareUrl`，后台编辑视图（`item/get/{id}`）的 `shareUrl`（未发布时是上线后的地址）；对象摘要 `ObjectSummary.link.web` 与之同值（评论、互动等模块透传给客户端）。`link.app` 仍为 `/content/item/{id}`。
+- `shareUrl` 为空时客户端隐藏网页分享，或改用 App 内链接。配置读取缓存 30 秒，改配置最长 30 秒后生效。
+
 ## 6. 状态、版本与审核
 
 ```
@@ -305,10 +343,10 @@ draft ──提交──► pending ──通过──► published ──撤回
 | --- | --- |
 | `types` | 内容类型 |
 | `terms` | 词条：`categoryId` / `category`（slug，`includeChildren` 默认 true）、`tagIds` / `tags`；多个分类法之间是「且」 |
-| `collection` / `section` | 合集或分区内的条目 |
+| `collection` / `section` | 合集或分区内的条目（P1 未作为查询条件实现，合集条目经 `collection/get/{code}` 取） |
 | `author` / `source` | 作者（`authorUserId`）/ 来源名称（`source`） |
 | `fields` | 按 filterable 字段筛选：等于、范围、包含（P2） |
-| `keyword` | 关键词（走 §9 搜索） |
+| `keyword` | 关键词：标题、摘要、正文纯文本 `ILIKE`，≤ 100 字（不经 `ContentSearchEngine`；按相关度搜索用 `item/search`，§9） |
 | `publishedAfter` / `publishedBefore` | 时间范围 |
 | `hasCover` | 只要有图的（幻灯规则常用） |
 | `exclude` | 排除的 ID |
@@ -318,8 +356,9 @@ draft ──提交──► pending ──通过──► published ──撤回
 - 默认只返回 `published`、在有效期内、可见性允许当前用户的内容；置顶内容排在前面。
 - **`filter=<筛选器 id>`**（[filter-module](filter-module.md) §6.7）：结果只由筛选器决定，返回结构不变；只能与 `include`、`cursor`、`limit` 同时出现，其他条件参数返回 `FILTER_EXCLUSIVE_PARAMS`。筛选器范围不是 `content.item` 返回 `FILTER_SOURCE_MISMATCH`，未开启对外访问返回 `FILTER_NOT_PUBLIC`，宿主没装 filter 返回 `FILTER_UNAVAILABLE`。
 - **挂载**（filter-module §10.4）：只按一个词条取列表（`category` / `categoryId`，或恰好一个标签；没有其他条件参数）且该词条有生效挂载时，按挂载方式（REPLACE / PREPEND / APPEND）返回；挂载只改变显示，归属、后台按分类查询、带其他条件的查询都按归属计算。
-- 返回字段可选：列表默认不含正文和 fields，需要时按字段名声明（`include=…`，逗号分隔），控制响应体大小。
-- 后台查询额外支持状态、编辑者、审核人等条件。
+- 返回字段可选：列表默认不含正文和 fields，需要时声明（`include=…`，逗号分隔；P1 只支持 `fields`），控制响应体大小。
+- 卡片字段：`id, type, slug, title, subtitle, titleStyle, summary, cover, listStyle, category, authorName, sourceName, sourceUrl, visibility, redirectUrl, shareUrl, publishedAt, updatedAt, viewCount, commentCount, favoriteCount, pinned, fields?`；详情另有正文、媒体、词条、`origin`、SEO、`canonicalUrl`、`shareUrl`、`capabilities`、`related` 等。
+- 后台查询（`item/page`）额外支持类型、状态、栏目（含子栏目）、关键词（标题或 ID）、队列（`review` 待审与有待审版本的内容 / `submission` 投稿）；按编辑者、审核人筛选延后。
 
 ## 9. 统计、排行与搜索
 
@@ -364,7 +403,7 @@ interface ContentSearchEngine {
 | `ContentSearchEngine` | 搜索 | pg_trgm |
 | `ContentAuthorResolver` | 作者展示资料（昵称、头像） | 延后（P1 只返回 author_user_id / author_name） |
 | `MediaService`（使用方） | 上传业务类型注册、引用登记、媒体展开 | infra 媒体标准 |
-| `ObjectResolver`（实现方） | 注册 `content.item`、`content.collection`：标题、链接、封面、拥有者和 capabilities（按类型能力与当前状态得出，如未发布不含 `comment`、`favorite`） | 内置 |
+| `ObjectResolver`（实现方） | 注册 `content.item`、`content.collection`：标题、链接、封面、拥有者和 capabilities（按类型能力与当前状态得出，如未发布不含 `comment`、`favorite`）。`content.item` 的 `link.web` 是分享链接（§5.6，未配置时为空），`link.app` 为 `/content/item/{id}`；列表视图与 `item/query` 的卡片同形 | 内置 |
 | `ObjectAccessPolicy`（实现方） | 回答「某人现在能否对某条内容做某事」：查看、评论、收藏、读取其媒体。考虑状态、可见性（会员 / 密码）、栏目的评论开关 | 内置 |
 
 ### 10.3 外部写入端口
@@ -393,7 +432,10 @@ interface ContentDraftWriter {
 
 ## 11. 用户投稿
 
-- **投稿**（类型开了 `SUBMISSION`、栏目允许投稿）：终端用户提交的内容直接进 `content_items`，状态 pending，记录投稿人 `submitter_user_id`；后台审核通过即发布，或转给编辑继续加工。投稿人可在「我的投稿」查看状态和驳回原因。投稿只开放类型声明为可投稿的字段。
+- **投稿**（类型开了 `SUBMISSION`、栏目允许投稿）：终端用户提交的内容直接进 `content_items`，状态 pending，记录投稿人 `submitter_user_id`；后台审核通过即发布，或转给编辑继续加工。投稿人可在「我的投稿」查看状态和驳回原因。投稿只开放类型声明为可投稿的字段；权重、定时、跳转链接不可投稿（`FIELD_NOT_SUBMITTABLE`）；标签最多 10 个；媒体只能用本人上传的文件。
+- **栏目**：类型挂了 `category` 时必须选一个 `allowSubmission = true` 的列表栏目（否则 `CATEGORY_REQUIRED` / `CATEGORY_SUBMISSION_DISABLED`）。本模块不预置投稿栏目，由宿主开放（§4.2「投稿栏目归宿主」）。
+- **来源链接**：`POST submission/create` 的 `link`（字符串，可选）是投稿引用的网页 / 原文地址，存为内容的 `source_url`，详情与卡片里是 `sourceUrl`，后台编辑视图在 `input.sourceUrl`；**不拼进正文**。校验按 §5.5「外链校验」，≤ 2048：格式不对 `INVALID_LINK`，超长 `LINK_TOO_LONG`，类型没开 `SOURCE` 而填了 `LINK_NOT_SUPPORTED`。投稿的 `origin` 仍为 `original`，不填 `source_name`。
+- **接口字段**：`submission/form` 返回 `type, name, summary, cover, body, tags, link, fields, categories`（布尔值表示该部分是否可填，`link` = 类型开了 `SOURCE`）；`submission/create` 接收 `type, categoryId, title, summary, cover, body, tagNames, fields, authorName, link`；`submission/create` 与 `submission/mine` 的条目为 `id, type, title, status, link, reviewNote, publishedAt, createdAt, updatedAt`（`reviewNote` 只在被驳回回到草稿时给出）。
 
 ## 12. 接口
 
@@ -408,7 +450,7 @@ interface ContentDraftWriter {
 | `GET item/ranking?period&by&types&cursor&limit` | 排行（period 默认 day，by 默认 views） |
 | `GET item/search?q&types&cursor&limit` | 搜索（按 IP 限流） |
 | `GET collection/get/{code}` | 推荐位或专题（含分区与条目） |
-| `GET submission/form?type`（匿名可读）、`POST submission/create`、`GET submission/mine` | 投稿 |
+| `GET submission/form?type`（匿名可读）、`POST submission/create`（每用户每小时 10 次）、`GET submission/mine` | 投稿（字段见 §11） |
 
 **后台（`/admin/content/*`）**：
 
@@ -441,8 +483,6 @@ interface ContentDraftWriter {
 
 ## 13. 数据表汇总
 
-| 表 | 说明 |
-| --- | --- |
 | 表 | 说明 | P1 |
 | --- | --- | --- |
 | `content_types` / `content_taxonomies` | 注册结果的持久化快照，用于一致性检查和后台展示 | 未建（后台从内存注册表读取） |
