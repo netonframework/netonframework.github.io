@@ -1,7 +1,7 @@
 # Neton 内容平台套件架构
 
 > 标识：NETON-APP-CONTENT-PLATFORM
-> 日期：2026-10-15 · 状态：Draft r3（第二轮评审：定制三分法、媒体关联与授权契约、装配契约基于生成清单、一致性承诺的准确表述、开工顺序；2026-10-15 按首期实现校准：开放分组前缀、事件编解码登记、通用对象事件、媒体 M1、框架已知问题）
+> 日期：2026-10-15 · 状态：Draft r3（第二轮评审：定制三分法、媒体关联与授权契约、装配契约基于生成清单、一致性承诺的准确表述、开工顺序；2026-10-15 按首期实现校准：开放分组前缀、事件编解码登记、通用对象事件、媒体 M1、框架已知问题；2026-10-18 增 §5.6 IP 属地端口）
 > 范围：内容平台相关开源模块的总体架构、统一契约、对接规则和验收标准。各模块细节见各自规范。
 
 ## 1. 定位
@@ -182,6 +182,27 @@ data class ObjectRef(val type: String, val id: String)    // ObjectRef("content.
 
 - **numeric 列让原生数据库驱动崩溃（已修复）**：sqlx4k 1.15 及以前，带参数查询结果里的 PostgreSQL `numeric` 列（`SUM`、`AVG` 等聚合的默认返回类型）会让原生驱动崩溃整个进程。修复由我们提交上游（sqlx4k #184），随 1.16.0 发布，框架已升级（2026-10-17）。现在 `numeric` 按文本精确返回；聚合要当整数用时照常写 `::bigint`，那是取值类型的选择，不再是规避。
 - **出站 HTTP/2 带 Host 头**：hyper4k 客户端在 HTTP/2 请求里仍带 `Host` 与连接类头部，严格的 h2 服务端（如开了 h2 的 nginx）直接返回 400。已在 hyper4k `d436919` 修复（h2 下去掉这些头，HTTP/1.1 不变），但尚未发布版本。影响所有出站请求：collect 抓取、infra `importFromUrl`、push 的 FCM 调用等；发版前遇到这类 400 先按此排查。
+
+### 5.6 IP 属地
+
+评论、帖子、后台的注册 / 登录记录都要显示「IP 属地」。解析能力只实现一次，经契约库的端口共享，使用方不依赖地理库，也不依赖彼此：
+
+```kotlin
+// contract.core
+fun interface IpRegionResolver { suspend fun region(ip: String): IpRegion? }
+data class IpRegion(countryCode?, country?, province?, city?, display)   // IpRegion.UNKNOWN = display「未知」
+object IpRegions { fun display(countryCode, country, province); fun classify(ip): PUBLIC / NON_PUBLIC / INVALID }
+```
+
+| 方面 | 约定 |
+| --- | --- |
+| 实现方 | infra 的 `logic.GeoLiteIpRegionResolver`（本地 GeoLite2 City 库，进程内查询，不出网），在 bootstrap 里 `bindIfAbsent`；宿主先绑定自己的实现即可替换（商业库、在线服务）。库路径是宿主 `config/geolite.conf` 的 `path`（缺省 `./data/geoip/GeoLite2-City.mmdb`），首次查询时读入内存，不用属地的宿主不付这份内存 |
+| 使用方 | 请求时 `ctx.getOrNull(IpRegionResolver::class)`，拿不到就不记录；目前是 account（后台的注册 / 登录属地）与 comment（评论的 IP 属地，见 comment 规范 §3.2） |
+| 地址来源 | 只用框架解析后的可信客户端地址 `HttpRequest.clientAddress`（对端不是 `ratelimit.trusted_proxies` 时就是 TCP 对端，是可信代理时才从右往左剥 `X-Forwarded-For`），与限流、网络准入同一个值；客户端传不进来 |
+| 展示规则 | `IpRegion.display`，所有实现共用 `IpRegions.display`：中国大陆显示省级（去掉「省」「市」「自治区」等后缀，「广东」「广西」「北京」，没有省级信息时「中国」）；香港、澳门、台湾显示「中国香港」「中国澳门」「中国台湾」；其他国家和地区显示国家名（「美国」）；私有、回环、链路本地、CGNAT、文档、组播等地址和库里查不到的公网地址显示「未知」 |
+| 给不出结论 | 返回 null：库未配置或损坏、地址不合法。使用方此时**不保存任何属地**，而不是把「未知」写进数据 |
+| 失败 | 实现不抛异常、只做本地或带短超时的缓存查询；使用方在写请求路径上同步调用 |
+| 存储 | 使用方只存展示文本（comment 的 `ip_region`），不存原始 IP |
 
 ## 6. 媒体标准（infra）
 
