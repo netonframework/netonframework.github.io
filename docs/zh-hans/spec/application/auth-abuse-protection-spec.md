@@ -33,6 +33,17 @@
 
 未完成：P1 人机验证；风险告警出口；B06/B07/B08/B10 自动化；时序统计验收（B05）。
 
+### 1.2 实施记录（2026-10-18）
+
+本地实现，**未部署**：
+
+| 项 | 实现 |
+| --- | --- |
+| 短信找回密码匿名可用 | `PUT /app/member/user/reset-password` 原先没有 `@AllowAnonymous`，在要求登录的 `app` 组里未登录调用直接 401，忘记密码流程走不通。补 `@AllowAnonymous` 与 5 / 300 按 IP 限流；`routing.conf` 虽支持组级 `allowAnonymous` 精确白名单，现有部署配置（neton-application、kedao-application）均未使用，匿名以注解为准，无需改配置。请求体 `{ mobile, smsCode, newPassword }`；码来自 `POST /app/auth/send-sms-code` scene=4（登录态 scene=3 的码同样接受），经 `VerificationCodeService` 按「account 域 + 用途 + 手机号」核验并一次性消费。未注册号码从不发码，提交时与过期码同一错误 `SMS code expired or not sent`，不构成枚举 |
+| 新密码长度 | 短信、邮件两条找回路径在逻辑层显式校验 8–128（`PASSWORD_TOO_SHORT` / `PASSWORD_TOO_LONG`），且在核验验证码**之前**：密码不合规不消耗用户的码 |
+| 假哈希 | 会员登录的假哈希改为构造时生成（§4.2），不再让首次失败登录多付一次哈希 |
+| 登录耗时约 2 秒的根因 | 见 §4.4：框架 `PasswordHasher` 手写 PBKDF2 循环，逐轮重新导入 HMAC 密钥。改用平台原生 KDF，参数不变 |
+
 验证码只能提高自动化攻击成本，不能承诺阻止 AI 或代答服务。基础请求限流、业务失败节流、短信额度和 MFA 各自承担不同职责。
 
 ## 2. 证据与现状边界
@@ -64,7 +75,8 @@
 | 会员 POST `/app/auth/refresh-token` | 无 | 60 / 60 |
 | 会员 GET `/app/auth/social-auth-redirect` | 无 | 30 / 60 |
 | 会员 POST `/app/member/user/send-sms-code`、`send-email-code` | 5 / 60 | 5 / 60；另加用户维度 |
-| 会员 PUT `/app/member/user/update-mobile`、`bind-email`、`reset-password` | **无** | 5 / 300；另加用户及挑战维度 |
+| 会员 PUT `/app/member/user/reset-password`（短信找回密码，**匿名**） | 5 / 300（2026-10-18 起） | 5 / 300；挑战维度由验证码尝试预算承担 |
+| 会员 PUT `/app/member/user/update-mobile`、`bind-email` | 10 / 300（按用户） | 5 / 300；另加用户及挑战维度 |
 | 会员 PUT `/app/member/user/update-password` | 无 | 5 / 300；另加用户维度 |
 
 会员资料接口的认证要求以有效路由元数据为准，不能因为方法未接收 Identity 就断言匿名可访问。认证/`FreshAuth` 也不替代请求限流。
@@ -171,6 +183,22 @@ P1 前账号风险阈值至少产生结构化安全事件，接入可配置的�
 实施前的设计必须给出：各维度阈值、窗口、最大冷却、TTL、键规范、并发原子更新及清理语义、并行请求对失败阈值的影响、多实例共享存储、存储故障行为、配置变更和审计。不得在存储故障时静默无保护放行；拒绝或受限降级须明确且可验收。
 
 账号计数建议使用服务端带密钥摘要，避免在缓存键与日志中暴露原始手机号/账号；同时限制恶意构造随机账号导致的键数量增长。具体实现留给 P0-b 详细设计。
+
+### 4.4 密码哈希成本（2026-10-18 实测）
+
+框架 `neton.security.password.PasswordHasher`：PBKDF2-HMAC-SHA256，210 000 轮，16 字节盐，32 字节输出，存储格式 `pbkdf2-sha256$<轮数>$<盐>$<摘要>`（base64url）。登录成功和失败都恰好做一次校验（不存在 / 没设密码的账号对假哈希校验），没有任何人为 sleep；冷却由 `LoginThrottle` 直接返回 429，不挂起请求。
+
+此前会员登录失败约 2 秒，根因不是有意的哈希成本，而是实现缺陷：PBKDF2 是手写循环，每一轮都经 `HmacSha256.sign` 重新取 provider、导入 HMAC 密钥再签名，210 000 轮的固定开销远大于哈希本身。macOS arm64（debug 测试二进制）实测：
+
+| 实现 | 210 000 轮一次校验 |
+| --- | --- |
+| 旧手写循环 | 1.57–1.86 秒 |
+| 平台原生 PBKDF2（Apple CommonCrypto `CCKeyDerivationPBKDF` / OpenSSL 3 `EVP_KDF`，经 cryptography-kotlin） | 约 34 毫秒 |
+| 原生，600 000 轮（参考） | 约 105 毫秒 |
+
+修复（neton `3c60af9`）只换实现、不改参数：输出逐字节相同（RFC 7914 §11 向量及旧循环产出的哈希均通过），已存哈希无需迁移。哈希仍在请求协程上同步执行，约 30 毫秒级 CPU 占用，可接受。
+
+轮数仍为 210 000；OWASP 当前对 PBKDF2-HMAC-SHA256 的建议是 600 000。提高轮数会经 `needsRehash` 在用户下次登录时自动升级存量哈希，是否调整另行决策，不随本次修复。
 
 ## 5. P0-b：短信与恢复入口
 
