@@ -12,6 +12,7 @@
 
 - [应用 RBAC](./rbac-spec.md)
 - [登录与短信防滥用](./auth-abuse-protection-spec.md)
+- [账号偏好](./account-preferences.md)
 - [TOTP MFA 与三态登录](./mfa.md)
 
 ## 工程与交付
