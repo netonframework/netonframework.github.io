@@ -272,7 +272,8 @@ UPDATE content_terms SET path = '/' || id || '/' WHERE taxonomy = 'category' AND
 - **路径模板**（`contract.content.ContentSharePath`）：以 `/` 开头（不能是 `//`），必须含 `{id}` 或 `{slug}`；占位符只有 `{type}`（类型 code）、`{id}`（内容 ID）、`{slug}`（类型内 slug，没有 slug 时用 ID）；值按 UTF-8 百分号编码；不含空白、控制字符与 `#`，≤ 200。
 - **按类型覆盖**：类型注册时声明 `ContentTypeDefinition.sharePath`（如单页 `/p/{slug}`、视频 `/v/{id}`），优先于全局模板；注册时校验。
 - **优先级**：`shareUrl` = 内容的规范链接 `canonical_url`（编辑明确指定的「这条内容的地址」，不依赖根地址）→ 根地址 + 路径模板（类型 `sharePath` > `content.share.path_pattern`）→ 都没有时为空。转载的原文地址在 `source_url`，不要填进 `canonical_url`，否则分享会指向原站。
-- **出现位置**：前台卡片（`item/query`、排行、搜索、相关内容、合集条目、`content.item` 列表视图）与详情的 `shareUrl`，后台编辑视图（`item/get/{id}`）的 `shareUrl`（未发布时是上线后的地址）；对象摘要 `ObjectSummary.link.web` 与之同值（评论、互动等模块透传给客户端）。`link.app` 仍为 `/content/item/{id}`。
+- **只看线上版本**：`canonical_url` 是版本化字段（§6.1），`shareUrl` 一律用线上快照算。已发布内容改了规范链接只进新版本，新版本上线前前台、对象摘要、后台 `shareUrl` 都不变；slug 是内容级字段，改了立即生效（分享地址随之变化）。
+- **出现位置**：前台卡片（`item/query`、排行、搜索、相关内容、合集条目、`content.item` 列表视图）与详情的 `shareUrl`，后台编辑视图（`item/get/{id}`）的 `shareUrl`（有线上版本时是线上地址，从未发布时是上线后的地址）与 `draftShareUrl`（有未上线的新版本、且上线后地址会变时给出）；对象摘要 `ObjectSummary.link.web` 与之同值（评论、互动等模块透传给客户端）。`link.app` 仍为 `/content/item/{id}`。
 - `shareUrl` 为空时客户端隐藏网页分享，或改用 App 内链接。配置读取缓存 30 秒，改配置最长 30 秒后生效。
 
 ## 6. 状态、版本与审核
@@ -297,7 +298,7 @@ draft ──提交──► pending ──通过──► published ──撤回
 - 不在上表箭头里的状态转换一律拒绝；每个转换对应一个权限点（§14）。
 - 已发布内容必须先撤回才能删除，避免误删线上内容。
 
-- **版本**（类型开了 `REVISIONS`）：每次保存生成 `content_revisions` 记录，保存标题、摘要、封面、正文、字段、词条快照。线上只展示 `published_revision_id` 指向的版本；已发布内容再编辑，新版本审核通过前线上保持旧版本。
+- **版本**（类型开了 `REVISIONS`）：每次保存生成 `content_revisions` 记录，保存全部版本化字段（§6.1）的快照。线上只展示 `published_revision_id` 指向的版本；已发布内容再编辑，新版本审核通过前线上保持旧版本。没开 `REVISIONS` 的类型只有一个版本、原地修改，版本化字段保存即上线。
 - **自动保存**（延后）：编辑器每隔一段时间写一个自动保存版本，同一编辑者只保留最新一份，不进版本列表。
 - **编辑锁**（延后）：打开编辑时加锁（带心跳），别人打开时提示「xx 正在编辑」，可强制接管。
 - **审核**：类型或栏目要求审核时走 pending；通过、驳回（附原因）、下线都写 `content_review_logs`。审核策略可替换：`ContentPublishPolicy` 决定某次提交是否免审（`REVIEW` / `PUBLISH`）；查找顺序是 `ContentPublishPolicies` 里按 producer 登记的规则 → 上下文里绑定的整体策略 → 内置规则（类型或主栏目要求审核时待审，否则直接发布）。终端用户投稿一律待审，不经过策略。
@@ -305,7 +306,23 @@ draft ──提交──► pending ──通过──► published ──撤回
 - **删除**：进回收站（`trash`），可恢复到进入前的状态；彻底删除（purge）P1 由后台手动执行，保留期后自动清理延后。
 - **归档**：只能从 `withdrawn` 归档。
 
-### 6.1 生命周期影响
+### 6.1 字段归属：版本化 vs 内容级
+
+保存（`item/save`、外部写入、投稿、回滚）写的每个字段恰好属于一类，代码里只有一处定义（`logic.ContentRevisionScope`，单测保证 `ContentItemInput` 的每个属性都已归类）：
+
+| 归属 | 字段 | 保存时 | 线上何时变 |
+| --- | --- | --- | --- |
+| **版本化**（这一版内容本身） | title, subtitle, title_style, summary, cover, list_style, body（及派生的 body_text）, fields, 词条（主栏目 primary_term_id、标签、其它分类法）, author_name, source_name, source_url, origin, redirect_url, seo_title, seo_keywords, seo_description, canonical_url；版本说明 note | 只写当前版本 `content_revisions` | 从未发布过：保存即跟随（内容行就是草稿）；有线上版本：上线一个版本时（审核通过、免审发布、定时到点、重新发布）整体覆盖内容行上的线上快照 |
+| **内容级**（身份、归属与权限、访问控制、排序与流程元数据） | slug, author_user_id（作者账号，决定作者本人能否看草稿）, visibility, password_hash, scheduled_at, expire_at, weight；外部写入方的 original_published_at | 直接写内容行 | 保存即生效 |
+| 不经保存 | status / previous_status / review_note、pinned_until 与栏目内置顶、计数、published_at / first_published_at、producer / producer_ref / submitter_user_id、current / published_revision_id、attached_media、version | 各自的操作（状态流转、置顶、计数回写……） | 操作即生效 |
+
+- 内容行上的版本化字段是**线上快照**：前台详情、卡片、搜索、排行、对象摘要、分享链接（§5.6）与 `content.item` 筛选都只读它，不会看到未上线的版本。
+- 后台编辑视图 `item/get/{id}`：`input` 是当前版本（版本化字段）+ 内容行（内容级字段）；有未上线的新版本时另给 `live`（线上版本的同形输入，供「草稿 vs 线上」对照）和 `draftShareUrl`。版本详情 `revision/get` 返回该版本的全部版本化字段。
+- 回滚以旧版本的版本化字段生成新版本，内容级字段取当前值；上线前线上不变。
+- 外部写入（§10.3）只覆盖写入方提供的字段，其余版本化字段沿用当前版本、内容级字段沿用内容行。
+- 迁移 `V003__revision_scoped_fields.sql` 给 `content_revisions` 补版本化列，已有版本按内容行当前值回填。
+
+### 6.2 生命周期影响
 
 内容状态变化时，其他模块的行为由事件驱动、在各自规范中实现，本模块只负责在对象解析和访问策略里如实反映状态。除下表的 `content.item.*` 事件外，本模块同时发布通用对象事件，能力模块（评论、互动）只需订阅通用事件、不认识 content：撤回 / 归档 / 进回收站发 `ObjectUnavailable(permanent = false)`，重新发布发 `ObjectAvailable`，彻底删除发 `ObjectUnavailable(permanent = true)`。
 
@@ -492,13 +509,13 @@ interface ContentDraftWriter {
 | `content_field_index` | filterable / sortable 字段的键值索引 | 未建 |
 | `content_item_terms` | 内容—词条（item_id, term_id, taxonomy, sort, pinned_until），唯一(item_id, term_id) | 已建 |
 | `content_item_relations` | 相关内容 | 未建 |
-| `content_revisions` | 版本（revision_no、状态、标题、摘要、封面、正文、字段、词条快照、备注、作者），唯一(item_id, revision_no) | 已建（自动保存未做） |
+| `content_revisions` | 版本（revision_no、状态、全部版本化字段的快照（§6.1）、备注、作者），唯一(item_id, revision_no) | 已建（自动保存未做） |
 | `content_edit_locks` | 编辑锁 | 未建 |
 | `content_collections` / `_sections` / `_entries` | 合集 | 已建 |
 | `content_item_stats_daily` | 按日统计，唯一(item_id, day) | 已建 |
 | `content_review_logs` | 审核日志（action, from_status, to_status, actor_kind, actor_id, note） | 已建 |
 
-全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`；`V002__item_original_published_at.sql` 加 `content_items.original_published_at`），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
+全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`；`V002__item_original_published_at.sql` 加 `content_items.original_published_at`；`V003__revision_scoped_fields.sql` 给 `content_revisions` 补版本化字段列），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
 
 ## 14. 权限点
 
