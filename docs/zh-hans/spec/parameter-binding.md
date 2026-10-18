@@ -2,7 +2,7 @@
 
 > 约定优于配置、能推断则不写注解。目标：90% 场景零注解，仅歧义时保留 `@Header` / `@Cookie` / `@Path`。
 >
-> **v1 冻结**：Binding/Validation 对外行为已冻结（见 5.4、5.5），规范 + KSP 生成 + 契约测试三者一致；Missing/Type/InvalidJson、path 规则、List fail-fast 等均以契约测试回归保护。
+> **v1 冻结**：Binding/Validation 对外行为已冻结（见 5.4、5.5），规范 + KSP 生成 + 契约测试三者一致；REQUIRED/INVALID_<TYPE>/INVALID_JSON 机器码（[错误码规范](./error-codes.md)）、path 规则、List fail-fast 等均以契约测试回归保护。
 
 ---
 
@@ -158,18 +158,19 @@ fun create(@Body request: BindingUserRequest): String
 - **401/403**：认证/授权（Security 层）。
 - **415**：Content-Type 不支持（见第三节矩阵）。
 
-**400 统一格式**（支持多字段错误，v1.0.2 起统一用 path）：
+**400 统一格式**（标准信封；message 与字段 code 均为机器码，规则见 [错误码规范](./error-codes.md)）：
 ```json
 {
-  "success": false,
-  "message": "Validation failed",
+  "code": 10100,
+  "message": "VALIDATION_FAILED",
+  "data": null,
   "errors": [
-    { "path": "userId", "message": "required or invalid format", "code": null },
-    { "path": "email", "message": "invalid email", "code": "Email" }
+    { "field": "userId", "message": "REQUIRED", "code": "REQUIRED" },
+    { "field": "name", "message": "TOO_SHORT", "code": "TOO_SHORT", "params": { "min": 2, "max": 32 } }
   ]
 }
 ```
-- 单字段错误时 `errors` 可只含一个元素；`path`、`message`、`code`（可选）由实现定义，但结构保持一致。
+- 单字段错误时 `errors` 可只含一个元素；字段 `message` 与 `code` 相同，`params` 仅在有约束值时出现。
 
 ### 5.2 必做项清单（实现不得省略）
 
@@ -195,17 +196,17 @@ fun create(@Body request: BindingUserRequest): String
 
 **规则 5：@Min/@Max 与类型转换/溢出**
 
-- **Body DTO（JSON）**：字段类型已由编译期确定，JSON 反序列化失败（类型不符、格式错误）→ 统一 **400 Bad Request**，errors 含 `path = "$"`、`code = "InvalidJson"`、`message = "Invalid JSON body"`；由生成代码 try/catch 收口。
-- **Query / Path / Header（字符串→类型）**：转换失败（含溢出、非数字等）→ **ValidationException**，统一 400 + errors。**缺失必填参数** → `code = "Missing"`、`message = "is required"`；**存在但解析失败** → `code = "Type"`，Int/Long 用 `message = "must be a valid integer"`，Double/Float 用 `message = "must be a valid number"`。
+- **Body DTO（JSON）**：字段类型已由编译期确定，JSON 反序列化失败（类型不符、格式错误、未知字段）→ **400**，信封 `code = 10105`、`message = INVALID_JSON`，errors 含 `field = "$"`、`code = INVALID_JSON`；由生成代码 try/catch 收口。
+- **Query / Path / Header（字符串→类型）**：转换失败（含溢出、非数字等）→ **ValidationException**（`VALIDATION_FAILED`），统一 400 + errors。**缺失必填参数** → `code = REQUIRED`；**存在但解析失败** → Int/Long `INVALID_INTEGER`，Double/Float `INVALID_NUMBER`，Boolean `INVALID_BOOLEAN`，其他 `INVALID_VALUE`（message 均与 code 相同）。
 
 ### 5.4 必填/可缺省判定规则（v1 冻结）
 
 - **nullable**（如 `String?`、`Int?`）→ 可缺省，缺失不报错，解析为 null。
 - **hasDefault**（如 `page: Int = 1`）→ 可缺省，缺失使用默认值。**default 仅在参数缺失时生效，不会吞掉类型错误。**
-- **其它**（非可空且无默认值）→ **必填**：缺失 → 400，`code = "Missing"`；存在但类型转换失败 → 400，`code = "Type"`。**存在但为空字符串视为 Type 错误（非 Missing）。**
+- **其它**（非可空且无默认值）→ **必填**：缺失 → 400，`code = REQUIRED`；存在但类型转换失败 → 400，`code = INVALID_<TYPE>`。**存在但为空字符串视为类型错误（非 REQUIRED）。**
 - 生成器按上述规则生成「先判缺失再解析」的逻辑，后续扩展（List、多值参数）同此约定。
 - **path 使用“实际来源名”**：`@Query("q")` / `@PathVariable("id")` 等显式注解时，errors 的 `path` 使用注解 value（如 `"q"`、`"id"`），与客户端可见的 key 一致；无注解时使用参数名。
-- **List 多值（v1）**：`List&lt;Int&gt;` / `List&lt;Long&gt;` 等，任一元素解析失败 → 整参报错：`path = 参数名`、`code = "Type"`、message 同单值（如 "must be a valid integer"）。深层 path（如 `ids[1]`）留待 v2。
+- **List 多值（v1）**：`List&lt;Int&gt;` / `List&lt;Long&gt;` 等，任一元素解析失败 → 整参报错：`path = 参数名`、`code` 同单值（如 `INVALID_INTEGER`）。深层 path（如 `ids[1]`）留待 v2。
 - **List 输入格式（v1 冻结）**：多值仅支持**重复 key**（如 `?ids=1&ids=2&ids=3`），不支持逗号分隔（如 `ids=1,2,3`），避免歧义。
 - **集合类型（v1）**：v1 支持 `List&lt;T&gt;`（推荐）；Array / PrimitiveArray 留待 v2 再考虑（或等价于 List 的绑定语义）。
 
@@ -213,11 +214,11 @@ fun create(@Body request: BindingUserRequest): String
 
 以下为 **v1 冻结** 的对外行为，breaking change 须升版并显式说明。
 
-- **code 语义**：`Missing`（必填缺失）、`Type`（存在但解析失败/类型不符）、`InvalidJson`（Body JSON 解码失败）。
+- **code 语义**（机器码，见 [错误码规范](./error-codes.md) §3）：`REQUIRED`（必填缺失）、`INVALID_INTEGER`/`INVALID_NUMBER`/`INVALID_BOOLEAN`/`INVALID_VALUE`（存在但解析失败）、`INVALID_JSON`（Body JSON 解码失败）；校验注解见 §3 表。
 - **path 规则**：取实际来源名（注解 value 或参数名）；JSON 解码失败固定 `path = "$"`。
-- **message 稳定**：`"is required"` / `"must be a valid integer"` / `"must be a valid number"` / `"Invalid JSON body"` / `"must not be blank"` 等见 5.3、5.4。
+- **message = code**：字段错误的 message 与 code 相同，不下发句子；约束值在 `params`。
 - **必填/可缺省**：nullable 或 hasDefault → 可缺省；否则必填。
-- **NotBlank nullable**：可空字段 `null` 或 blank 时按 @NotBlank 规则报错，code=`NotBlank`。
+- **NotBlank nullable**：可空字段 `null` 或 blank 时按 @NotBlank 规则报错，code=`REQUIRED`（或注解给的模块码）。
 - **List/Array fail-fast**：List/Array 参数的元素解析失败必须 **fail-fast** 抛 ValidationException，**禁止丢弃无效元素**（禁止 mapNotNull 等静默过滤）。
 
 契约测试位于 **neton-http commonTest**（`ValidationBindingContractTest`），不依赖平台实现；CI 至少跑一个 target（如 `macosArm64Test`）即可回归。

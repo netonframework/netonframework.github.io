@@ -86,7 +86,7 @@ data class PushPayload(val title: String, val body: String, val link: String? = 
 
 ## 6. 接口
 
-**App（`/app/push/*`，均可匿名，按 IP 限流）**：
+**App（`/app/push/*`，均可匿名，按 IP 限流；超限 429：设备注册 `DEVICE_REGISTER_RATE_LIMITED`，订阅变更 `SUBSCRIPTION_RATE_LIMITED`）**：
 
 | 接口 | 说明 |
 | --- | --- |
@@ -102,7 +102,7 @@ data class PushPayload(val title: String, val body: String, val link: String? = 
 | `POST topic/create` | `push:topic:create` |
 | `PUT topic/update`、`PUT topic/update-status/{id}` | `push:topic:update` |
 | `DELETE topic/delete/{id}` | `push:topic:delete` |
-| `POST message/send`（手动推送，按用户限流） | `push:message:send` |
+| `POST message/send`（手动推送，按用户限流，超限 `PUSH_SEND_RATE_LIMITED`） | `push:message:send` |
 | `GET message/page`、`GET message/get/{id}`、`GET message/delivery-page/{id}` | `push:message:query` |
 | `GET device/page`、`GET device/get/{id}` | `push:device:query` |
 | `PUT device/update-status/{id}` | `push:device:update` |

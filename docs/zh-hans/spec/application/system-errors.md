@@ -8,9 +8,9 @@ system（管理员登录 / MFA / 用户、角色、部门、岗位、菜单 / �
 只对排障有用的细节（被拒的模板编码、邮件厂商名、下游失败原因等）写服务端日志，不进响应。
 
 - 码集中定义在 `logic.SystemErrorCodes`；字段错误用 `SystemErrorCodes.field(path, CODE)` 构造。
-- `@RateLimit(message = …)` 会原样进 429 响应，同样只写机器码。
-- 声明式校验（`@Pattern(message = SystemErrorCodes.MOBILE_INVALID)`）的字段错误里 `code` 是约束名（`Pattern`），
-  机器码在 `message`；前端运行时先按 `code`、再按机器码形状的 `message` 翻译。
+- `@RateLimit(message = …)` 会原样进 429 信封的 `message`（数字 code `10300`），同样只写机器码（写句子编译失败）。
+- 声明式校验（`@Pattern(message = SystemErrorCodes.MOBILE_INVALID)`）的字段错误 `code` 与 `message` 都是该机器码；
+  不写 message 时是框架内建码（`REQUIRED` / `TOO_SHORT` …）。前端运行时只按字段 `code` 翻译（[错误码规范](../error-codes.md)）。
 - 后台前端 `neton-application-front-system` 在 `src/locales/{zh-CN,en-US}.ts` 里以 `error.<CODE>` 翻译，页面经
   `useDescribeError("system")`、资源页经 `errorNamespace: "system"` 显示；登录页同样用 `system` 命名空间。
   vben 后台（`neton-application-admin` / `privchat-application-admin`）在 `langs/<语言>/error-system.json` 里翻译，

@@ -467,7 +467,7 @@ interface ContentDraftWriter {
 | `GET item/ranking?period&by&types&cursor&limit` | 排行（period 默认 day，by 默认 views） |
 | `GET item/search?q&types&cursor&limit` | 搜索（按 IP 限流） |
 | `GET collection/get/{code}` | 推荐位或专题（含分区与条目） |
-| `GET submission/form?type`（匿名可读）、`POST submission/create`（每用户每小时 10 次）、`GET submission/mine` | 投稿（字段见 §11） |
+| `GET submission/form?type`（匿名可读）、`POST submission/create`（每用户每小时 10 次，超限 429 `CONTENT_SUBMIT_RATE_LIMITED`）、`GET submission/mine` | 投稿（字段见 §11） |
 
 **后台（`/admin/content/*`）**：
 

@@ -17,6 +17,7 @@ member（会员成长：标签 / 分组 / 等级 / 积分 / 签到 / 收货地�
 | `MEMBER_TAG_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台按 id 改 / 查会员标签，不存在 | — |
 | `MEMBER_GROUP_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台按 id 改 / 查会员分组，不存在 | — |
 | `ADDRESS_NOT_FOUND` | RESOURCE_NOT_FOUND | 改 / 删收货地址：不存在或不属于当前用户（不区分，防探测） | — |
+| `ADDRESS_MOBILE_INVALID` | INVALID_PARAMS（信封 `VALIDATION_FAILED`） | 新增 / 修改收货地址：收货人手机号格式不对（`@Pattern`） | `mobile` |
 | `INVITE_CODE_INVALID` | INVALID_PARAMS | 注册带码或补填：码为空 / 不存在 / 停用 / 过期 / 用尽 / 邀请人停用 / 并发下次数已满（统一一个码防枚举） | — |
 | `INVITE_ALREADY_BOUND` | INVALID_PARAMS | 补填邀请码时已绑定过邀请人 | — |
 | `INVITE_CODE_GENERATION_CONFLICT` | OPERATION_CONFLICT | 随机生成邀请码连续撞码（个人专属码 / 后台创建不填码），可重试 | — |

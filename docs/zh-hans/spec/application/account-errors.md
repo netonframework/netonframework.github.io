@@ -6,7 +6,8 @@ account（账号：注册 / 登录 / 令牌 / 验证码 / 资料 / 举报 / 账�
 HTTP 状态由框架按类别推导（客户端只看 body 的 `code`：凭据错 `INVALID_CREDENTIALS` = 10011 虽然 HTTP 是 401，
 但不是会话失效，会话失效只有 `AUTH_REQUIRED` = 10000）。跟请求字段有关的问题另带字段级错误
 `errors = [{ path, message: CODE, code: CODE }]`（message 与 code 同为机器码，`path` 是请求体字段名）；声明式校验
-（`@Pattern` 等）产生的字段错误 `code` 是约束名，机器码在 `message` 里（手机号格式 → `INVALID_MOBILE`）。
+（`@Pattern(message = "INVALID_MOBILE")` 等）产生的字段错误 `code` 与 `message` 都是注解给的机器码，注解不写 message 时是
+框架内建码（`REQUIRED` / `TOO_SHORT` …，见 [错误码规范](../error-codes.md)）。
 只对排障有用的细节（被拒的值、文件业务类型、剩余冷却秒数以外的内部状态）写服务端日志，不进响应。
 码集中定义在 `logic.AccountErrorCodes`；后台前端 `neton-application-front-account` 在 `src/locales/{zh-CN,en-US}.ts`
 里以 `error.<CODE>` 翻译，页面经 `useDescribeError("account")` / `useDescribeFieldErrors("account")` 显示。

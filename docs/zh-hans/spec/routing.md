@@ -428,7 +428,7 @@ v1 仅支持三种前缀，不做表达式系统：
 | `X-RateLimit-Limit` | `maxRequests` 值 |
 | `X-RateLimit-Remaining` | 剩余次数（最小 0） |
 | `X-RateLimit-Reset` | 窗口重置时间戳（epoch seconds） |
-| 响应体 | `{"code": 429, "message": "<自定义 message>"}` |
+| 响应体 | 标准信封 `{"code": 10300, "message": "<注解 message 机器码，缺省 RATE_LIMITED>", "data": null}`（[错误码规范](./error-codes.md)；message 写句子编译失败） |
 
 ### 2.8 v1 冻结规则
 

@@ -335,7 +335,8 @@ data class ErrorResponse(
 )
 ```
 
-- 4xx/5xx 时由适配器 respond 该结构（或等价 JSON），便于前端统一解析。
+- 4xx/5xx 实际下发的是标准信封 `ApiEnvelope`（`code` / `message` / `data: null` / 可选 `errors[{field, message, code, params?}]`）；
+  `message` 与字段 `code` 一律是机器码，规则与框架内建码见 [错误码规范](./error-codes.md)。
 
 ### 5.4 完整的异常处理
 
