@@ -80,14 +80,15 @@ HTTP 状态由框架按类别推导（客户端只看 body 的 `code`：凭据�
 | `PREFERENCE_NAMESPACE_LIMIT_EXCEEDED` | PARAM_OUT_OF_RANGE | 单个账号的偏好命名空间数达到上限 | — |
 | `PREFERENCE_VERSION_CONFLICT` | OPERATION_CONFLICT | 期望版本与当前不符（另一端已改），重新读取后合并再写 | — |
 | `PREFERENCE_CORRUPT` | DATABASE_ERROR | 库里存的偏好值解析不了 | — |
-| `LOGIN_RATE_LIMITED` | 429（见下） | 入口限流：手机号密码 / 用户名密码 / 短信登录 | — |
-| `REGISTER_RATE_LIMITED` | 429（见下） | 入口限流：注册 | — |
-| `REFRESH_RATE_LIMITED` | 429（见下） | 入口限流：刷新令牌 | — |
-| `SMS_SEND_RATE_LIMITED` | 429（见下） | 入口限流：发短信验证码（匿名 / 登录态） | — |
-| `EMAIL_SEND_RATE_LIMITED` | 429（见下） | 入口限流：发邮箱验证码（匿名 / 登录态） | — |
-| `SOCIAL_LOGIN_RATE_LIMITED` | 429（见下） | 入口限流：社交登录 | — |
-| `PREFERENCE_WRITE_RATE_LIMITED` | 429（见下） | 入口限流：写 / 删账号偏好 | — |
-| `ATTEMPTS_RATE_LIMITED` | 429（见下） | 入口限流：换绑手机、绑定邮箱、找回密码（短信 / 邮箱）提交 | — |
+| `LOGIN_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：手机号密码 / 用户名密码 / 短信登录 | — |
+| `REGISTER_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：注册 | — |
+| `REFRESH_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：刷新令牌 | — |
+| `SMS_SEND_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：发短信验证码（匿名 / 登录态） | — |
+| `EMAIL_SEND_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：发邮箱验证码（匿名 / 登录态） | — |
+| `SOCIAL_LOGIN_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：社交登录 | — |
+| `PREFERENCE_WRITE_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：写 / 删账号偏好 | — |
+| `ATTEMPTS_RATE_LIMITED` | RATE_LIMIT_EXCEEDED（见下） | 入口限流：换绑手机、绑定邮箱、找回密码（短信 / 邮箱）提交 | — |
 
-`*_RATE_LIMITED` 是路由 `@RateLimit` 的 `message`：入口限流由框架 `RateLimitInterceptor` 直接写响应，信封 `code` 是 `429`
-（HTTP 429，带 `Retry-After`），不是 `NetonErrorCode.RATE_LIMIT_EXCEEDED`；客户端按 HTTP 429 或 `code` 429 / 10300–10399 都视为限流。
+`*_RATE_LIMITED` 是路由 `@RateLimit` 的 `message`：入口限流由框架 `RateLimitInterceptor` 直接写标准信封，`code` 是
+`NetonErrorCode.RATE_LIMIT_EXCEEDED`（`10300`），HTTP 429，带 `Retry-After`；`message` 是这里列的机器码。客户端按 `code`
+落在 10300–10399 视为限流（HTTP 429 只是传输层表现），等待 `Retry-After` 秒后再试。

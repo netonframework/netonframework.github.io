@@ -212,7 +212,7 @@ interface HttpContext {
 ```
 
 - **traceId**：请求级唯一标识，由适配器在请求入口生成（如 `req-{ts}-{r}`）。**v1.1 冻结**：`HttpContext.traceId` 与 `LogContext.traceId` 必须为**同一值**（同源）；access log / error log 一律使用该 traceId，禁止再引入 requestId 等分裂字段。
-- **getApplicationContext()**：返回当前 NetonContext，用于在 handler 内获取 ValidatorRegistry、LoggerFactory 等；neton-http 实现中在构造 HttpContext 时注入。
+- **getApplicationContext()**：返回当前 NetonContext，用于在 handler 内获取 LoggerFactory 等应用组件；neton-http 实现中在构造 HttpContext 时注入。
 
 ### 3.2 HttpRequest（neton-core）
 

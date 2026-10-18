@@ -199,6 +199,21 @@ fun create(@Body request: BindingUserRequest): String
 - **Body DTO（JSON）**：字段类型已由编译期确定，JSON 反序列化失败（类型不符、格式错误、未知字段）→ **400**，信封 `code = 10105`、`message = INVALID_JSON`，errors 含 `field = "$"`、`code = INVALID_JSON`；由生成代码 try/catch 收口。
 - **Query / Path / Header（字符串→类型）**：转换失败（含溢出、非数字等）→ **ValidationException**（`VALIDATION_FAILED`），统一 400 + errors。**缺失必填参数** → `code = REQUIRED`；**存在但解析失败** → Int/Long `INVALID_INTEGER`，Double/Float `INVALID_NUMBER`，Boolean `INVALID_BOOLEAN`，其他 `INVALID_VALUE`（message 均与 code 相同）。
 
+**规则 6：声明式校验必须执行（fail closed，安全红线）**
+
+- 请求体 DTO 上的约束注解（`@NotBlank`/`@NotNull`/`@Size`/`@Min`/`@Max`/`@Pattern`/`@Email`/`@Valid`）**一定**在 handler 运行之前执行；
+  违反 → 400，信封 `code = 10100`、`message = VALIDATION_FAILED`，errors 按 [错误码规范](./error-codes.md) §3（`REQUIRED`/`TOO_SHORT`/… + `params`，或注解给的模块码），handler 不执行。
+- 实现：KSP 为每个带约束的类型生成同包的 `<Name>NetonValidator`（嵌套类 `Outer.Inner` → `Outer_InnerNetonValidator`，可见性跟随 DTO），
+  生成的路由代码**按名直接调用**它。**不存在运行期注册表查找**，因而不存在「查不到校验器就跳过」的路径：校验器缺失 = 编译失败。
+  - 请求体是 `List<Dto>` / `Set<Dto>` 时逐元素校验，`path = "[i].field"`；`@Valid` 嵌套 `path = "child.field"`、集合 `items[i].field`。
+  - DTO 来自依赖模块时引用该模块生成的校验器——DTO 所在模块必须跑 neton-ksp（注解是 SOURCE 保留，依赖里看不到）。
+- 写了不会执行的约束一律**编译失败**：标在 handler 方法参数 / 普通函数参数 / 非 `val` 构造参数 / 顶层属性上；DTO 为 private/local；
+  `@Size` 用在非 String/集合/数组上，`@Min`/`@Max` 用在非数值上，`@NotBlank`/`@Pattern`/`@Email` 用在非 String 上；`@Valid` 指向没有约束的类型。
+- 回归测试：neton-ksp `BodyValidationEnforcementTest`（生成 + 拒绝编译 + JVM 上真跑校验器）、examples/multigroup `ValidationEnforcementTest`
+  （生成路由 → 标准 dispatcher：400 `VALIDATION_FAILED`、handler 不执行）、宿主 `realm-session-e2e.sh` [9]。
+- 历史（2026-10-18 修复）：旧实现每个模块 `bindIfAbsent(ValidatorRegistry)`，生成路由运行期按类型查、查不到跳过。多模块宿主里只有第一个装配的
+  模块（各宿主都是 `system`）生效，其余模块（account/member/payment/platform/infra 及产品模块）的 DTO 注解全部静默失效；单应用模式从未绑定注册表。
+
 ### 5.4 必填/可缺省判定规则（v1 冻结）
 
 - **nullable**（如 `String?`、`Int?`）→ 可缺省，缺失不报错，解析为 null。

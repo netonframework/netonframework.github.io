@@ -51,7 +51,7 @@ system（管理员登录 / MFA / 用户、角色、部门、岗位、菜单 / �
 | `VERIFICATION_UNAVAILABLE` | SERVICE_UNAVAILABLE | 验证码服务没有 Redis | — |
 | `VERIFICATION_CHANNEL_UNAVAILABLE` | SERVICE_UNAVAILABLE | 没有可用的发送通道 / 模板 | — |
 | `VERIFICATION_SEND_FAILED` | SERVICE_UNAVAILABLE | 通道发送失败（原因见消息日志） | — |
-| `VERIFICATION_TOO_FREQUENT` | RATE_LIMIT_EXCEEDED | 同一接收方冷却期内重复发码 | — |
+| `VERIFICATION_TOO_FREQUENT` | RATE_LIMIT_EXCEEDED | 同一接收方冷却期内重复发码；冷却剩余秒数在响应头 `Retry-After` | — |
 | `VERIFICATION_DAILY_LIMIT` | DAILY_QUOTA_EXCEEDED | 同一接收方当日发码次数用完 | — |
 | `VERIFICATION_DAILY_BUDGET_EXHAUSTED` | SERVICE_UNAVAILABLE | 全站当日发码预算用完 | — |
 

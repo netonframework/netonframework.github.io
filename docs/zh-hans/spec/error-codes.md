@@ -74,6 +74,7 @@
 - `@RateLimit(message = ...)` 原样成为 429 信封的 `message`（数字 code 固定 `10300`，不是 HTTP 码 429），
   缺省 `RATE_LIMITED`；`Retry-After` / `X-RateLimit-*` 头照常下发。
 - 两者写了句子都会**编译失败**（KSP：`... is not a machine code`）。
+- 约束注解**必须执行**：请求体 DTO 违反约束一律 400 `VALIDATION_FAILED`、handler 不执行；写在不会执行的位置编译失败（[参数绑定](./parameter-binding.md) §5.3 规则 6）。
 
 ## 5. 数字 code 段位
 
