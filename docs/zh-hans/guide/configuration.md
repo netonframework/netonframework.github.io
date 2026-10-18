@@ -206,6 +206,19 @@ export NETON_APPLICATION__DEBUG=false
 ./my-app --server.port=9090 --application.debug=false --env=prod
 ```
 
+模块配置文件是根级平铺的（文件名 = 命名空间），覆盖模块配置时第一段必须是命名空间：
+`--database.default.uri=...` 对应 `database.conf` 的 `[default] uri`，`NETON_REDIS__HOST` 对应
+`redis.conf` 的 `host`。
+
+每个覆盖项都必须落到某份配置上。第一段既不是 `application.conf` 的根段、也不是模块命名空间时，
+启动失败、退出码 1：
+
+```text
+ERROR neton.config.override.unknown code=CONFIG_OVERRIDE_UNKNOWN_ROOT source=CLI arg=--default.uri root=default hint=--database.default.uri
+```
+
+未知根的 `NETON_*` 环境变量只打 `neton.config.override.unused` 告警——共享 shell 里的变量可能属于本宿主没装配的模块。
+
 ### 环境配置文件
 
 通过 `--env` 参数或 `NETON_ENV` 环境变量指定运行环境（默认 `dev`），框架会自动加载对应的环境配置文件并与基础配置合并：

@@ -209,6 +209,20 @@ Use `--key=value`, where the key is a dotted path:
 ./my-app --server.port=9090 --application.debug=false --env=prod
 ```
 
+Module files are flat (filename = namespace), so overrides of module config carry the namespace
+as their first segment: `--database.default.uri=...` sets `[default] uri` in `database.conf`, and
+`NETON_REDIS__HOST` sets `host` in `redis.conf`.
+
+Every override must land somewhere. If the first segment is neither a top-level section of
+`application.conf` nor a module namespace, startup fails with exit code 1:
+
+```text
+ERROR neton.config.override.unknown code=CONFIG_OVERRIDE_UNKNOWN_ROOT source=CLI arg=--default.uri root=default hint=--database.default.uri
+```
+
+Unknown `NETON_*` roots only log a `neton.config.override.unused` warning, because a shared shell
+may carry variables for modules this host does not assemble.
+
 ### Environment files
 
 Select the environment with `--env` or `NETON_ENV` (default `dev`). The matching file is loaded

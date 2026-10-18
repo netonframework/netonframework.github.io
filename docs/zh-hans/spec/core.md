@@ -402,7 +402,7 @@ object EmptyNetonConfigRegistry : NetonConfigRegistry { ... }
 | **4. 默认配置** | `&lt;module&gt;.conf`（如 `application.conf`），基础层。 |
 | **5. 代码默认值** | 最低。 |
 | **合并规则** | **table**：深度合并（同 key 环境覆盖基础，未出现 key 保留）。**数组/列表**：整体覆盖，不逐项 merge。 |
-| **路径命名空间** | 点分路径**第一段固定为模块名**：`server.port` 属 application.conf、`database.url` 属 database.conf、`redis.endpoint` 属 redis.conf。禁止跨模块用裸 `"url"` 等弱路径；读配置 API 需体现模块作用域。 |
+| **路径命名空间** | 点分路径**第一段固定为模块名**：`server.port` 属 application.conf、`database.default.uri` 属 database.conf（文件里的 `[default] uri`）、`redis.host` 属 redis.conf。禁止跨模块用裸 `"url"` 等弱路径；读配置 API 需体现模块作用域。 |
 | **读配置 API** | 建议：`ctx.config("database").getString("url")` 或 `registry.module("database").getString("url")`；类型化 getInt/getString/getBoolean 仅支持标量 + 嵌套 table，v1 不要求完整 Bean 绑定。 |
 | **真实加载** | 必须做真实 I/O + **TOML** 解析，禁止 when 占位。解析失败与 unknown/type 策略见 6.6。 |
 | **文件名** | 主配置：`application.conf` / `application.&lt;env&gt;.conf`。模块：`&lt;module&gt;.conf` / `&lt;module&gt;.&lt;env&gt;.conf`。仅在此两类文件名下查找，不扫其它文件。 |
@@ -463,7 +463,7 @@ codec = "json"
 | 前缀 | 环境变量统一前缀：**NETON_**。无此前缀的 ENV 不参与配置覆盖。 |
 | 路径分隔 | 点分路径中的 `.` 在 ENV 中用 **双下划线 `__`** 表示。 |
 | **路径大小写** | 去掉前缀、将 `__` 替换为 `.` 后，**路径整体转小写**，与 TOML table 命名一致（如 `NETON_SERVER__PORT` → `server.port`）。 |
-| 示例 | `NETON_SERVER__PORT=8081` → `server.port = 8081`；`NETON_DATABASE__URL=...` → `database.url = ...`。 |
+| 示例 | `NETON_SERVER__PORT=8081` → `server.port = 8081`；`NETON_DATABASE__DEFAULT__URI=...` → database.conf 的 `[default] uri`。 |
 | v1 范围 | 仅支持**标量**（string/int/bool/float）。**数组/table 不支持通过 ENV 注入**（v1 不提供 list 的 ENV 语法，避免与「禁止插值」一致）。 |
 
 **CLI 规则（冻结）**
@@ -471,14 +471,50 @@ codec = "json"
 | 规则 | 说明 |
 |------|------|
 | 形式 | `--key=value`，`key` 为点分路径。 |
-| 示例 | `--server.port=8081`、`--database.url=...`。 |
+| 示例 | `--server.port=8081`、`--database.default.uri=...`。 |
 | v1 范围 | 只支持**标量**（string/int/bool）；list/table 不支持（v1 简化，避免歧义）。 |
+
+**作用域：application 与模块命名空间（冻结）**
+
+| 规则 | 说明 |
+|------|------|
+| application.conf | 无命名空间前缀：`--server.port` / `NETON_SECURITY__JWT__SECRETKEY` 直接对应文件里的 `[server] port` / `[security.jwt] secretKey`。覆盖可以给已有根段新增键。 |
+| 模块配置 | 模块文件根级平铺（文件名 = 命名空间），覆盖**必须带命名空间前缀**，且只有 `<namespace>.` 这一支作用于 `<namespace>.conf`：`--database.default.uri=...` → database.conf 的 `[default] uri`；`NETON_REDIS__HOST` → redis.conf 的 `host`。前缀在合并前剥掉，别的命名空间的覆盖不会串进来。 |
+| 键名对齐 | ENV 路径转小写后按**忽略大小写**对齐到文件里已有的键（`secretkey` → `secretKey`）。 |
+
+**覆盖项必须被消费（fail-fast，冻结；代码注释记作 5.4.2）**
+
+每个 CLI `--key=value` 与每个形如路径的 `NETON_*` 变量都必须落到某份配置上。判定只看**第一段**（根）：
+
+| 已知根 | 说明 |
+|--------|------|
+| application.conf 的根段 | 含 `application.<env>.conf`；按文件内容判定，不含覆盖自己新增的根。 |
+| 框架读取的 application 根段 | `server`、`http`、`cors`、`logging`、`websocket`、`application`——文件里没写也合法。 |
+| 框架参数 | `env`（`--env=prod` / `NETON_ENV`）。框架不定义其它 `--key=value` 参数；**没有** `--config-path` / `--config-dir`，配置目录固定为工作目录下的 `config/`。 |
+| 模块命名空间 | 本进程已加载的命名空间（`loadModuleConfig`），或配置目录里存在 `<ns>.conf` / `<ns>.<env>.conf`（覆盖懒加载的模块）。 |
+
+- **只校验根，不校验更深的路径**：模块有大量带代码默认值、文件里不写的键，没有 schema 可对，深层校验只会误报；漏写命名空间前缀才是这类错误的全部形状。
+- **不参与校验**：子命令与位置参数（`migrate up`）、不含 `=` 的开关（`--tls`）、单 `-` 参数、不含 `__` 的单段 `NETON_X` 变量（`NETON_IO_DRIVER`、`NETON_WALLET_CARD_ENC_KEY` 这类进程开关/密钥本来就不是配置路径）。
+- **CLI 未知根 → 启动失败**：命令行是显式意图，静默忽略会让进程连到错误的库/端口。打错误日志 `neton.config.override.unknown`，抛 `ConfigOverrideException`；未被捕获时进程以**退出码 1** 结束并输出 `STARTUP ABORTED: CONFIG_OVERRIDE_UNKNOWN_ROOT ...`（与端口占用一致，不是 K/N 默认的 abort 134）。`migrate` 子命令自己捕获并按自身退出码约定返回。
+- **ENV 未知根 → 只告警**：进程环境里的变量可能来自共享 shell、目标是本宿主没装配的模块。打 `neton.config.override.unused` 告警，不失败。
+- **hint**：未知根恰好是某个已加载模块文件里的段时，给出带命名空间的正确写法——`--default.uri` → `hint=--database.default.uri`，`NETON_DEFAULT__URI` → `hint=NETON_DATABASE__DEFAULT__URI`。
+- **日志/异常格式**（机器可解析，按 `code` 判别）：
+
+  ```
+  ERROR neton.config.override.unknown code=CONFIG_OVERRIDE_UNKNOWN_ROOT source=CLI arg=--default.uri root=default hint=--database.default.uri
+  ```
+
+- **校验时机**：
+  1. `loadModuleConfig` 加载某模块时，先拦下最常见的形状——CLI 根不是本命名空间、却等于本模块文件里的段，且不是任何已知根（框架组件命名空间 `database/redis/cache/storage/jobs/routing/ai` 此时一律视为已知）。这一步覆盖不走 `Neton.run` 的路径：`migrate` 子命令与启动前 precheck 只加载 database.conf 就连库。
+  2. `Neton.run` 在全部组件 init/configure/prepare 与用户块执行完、`markValidating` 之前调用一次 `ConfigLoader.validateOverrides(...)`，按上表严格校验全部 CLI 与 ENV 覆盖。
+
+> 背景：模块覆盖改为命名空间作用域（neton 75fe66d，2026-08-04）之后，`--default.uri=...` 既落不到 application.conf（被当作新增根吞掉）也落不到任何模块，privchat-application 的 4 个冒烟/E2E 脚本因此连着默认本地开发库跑了两个月。
 
 **Unknown key 与类型错误（冻结）**
 
 | 策略 | 说明 |
 |------|------|
-| **unknown key** | **默认忽略**（兼容未来新增字段、向前兼容）。可选：debug 模式下对 unknown key 打 **warn** 日志，便于发现拼写错误。 |
+| **unknown key** | 根之下的未知键**默认忽略**（兼容未来新增字段、向前兼容）；覆盖项的**未知根**按上文 fail-fast / 告警。可选：debug 模式下对 unknown key 打 **warn** 日志，便于发现拼写错误。 |
 | **类型错误** | **fail-fast**：启动时直接报错退出。错误信息必须包含：**文件名、行号、key 路径、期望类型、实际类型**。禁止「类型错时降级为 string」或静默忽略，保证配置错即立即死、不带病上线。 |
 
 ### 6.7 配置 Merge 优先级
