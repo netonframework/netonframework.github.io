@@ -2,7 +2,7 @@
 
 > 标识：NETON-APP-AUTH-ABUSE-P0
 > 日期：2026-10-11（r2，纳入入口覆盖、统一客户端 IP 与验证码尝试预算评审）
-> 状态：设计基线；P0-b 主体已在本地实现（见 §1.1），P1 人机验证未实现，P2 见 [mfa.md](mfa.md)。本文不表示功能已上线。
+> 状态：设计基线；P0-b 主体已在本地实现（见 §1.1），P0-a 与 P1 人机验证 v1 已在本地实现（见 §1.3），P2 见 [mfa.md](mfa.md)。本文不表示功能已上线。
 > 归属：Neton Application 应用层及部署集成，不改变 Neton Framework 的认证、授权抽象。
 
 ## 1. 范围与分期
@@ -31,7 +31,7 @@
 | 发送额度（§5） | 每接收方冷却（默认 60 秒）与每日上限（默认 10）、每通道全站每日预算 `security.verification.daily_limit_global`（默认 0 = 不限，生产须按短信预算设置）；发送失败退还冷却位；无发送通道时报错，仅 `simulate = true` 的开发环境只存不发（规则见 §5.2） | 无（B06 待补） |
 | 预校验接口 | 删除可复用布尔结果的 `/validate-sms-code`，不改造为业务凭证 | — |
 
-未完成：P1 人机验证；风险告警出口；B06/B07/B08/B10 自动化；时序统计验收（B05）。
+未完成：风险驱动的人机验证（v1 按动作静态开启，见 §1.3）；风险告警出口；B06/B07/B08/B10 自动化；时序统计验收（B05）。
 
 ### 1.2 实施记录（2026-10-18）
 
@@ -43,6 +43,18 @@
 | 新密码长度 | 短信、邮件两条找回路径在逻辑层显式校验 8–128（`PASSWORD_TOO_SHORT` / `PASSWORD_TOO_LONG`），且在核验验证码**之前**：密码不合规不消耗用户的码 |
 | 假哈希 | 会员登录的假哈希改为构造时生成（§4.2），不再让首次失败登录多付一次哈希 |
 | 登录耗时约 2 秒的根因 | 见 §4.4：框架 `PasswordHasher` 手写 PBKDF2 循环，逐轮重新导入 HMAC 密钥。改用平台原生 KDF，参数不变 |
+
+### 1.3 实施记录（2026-10-20）
+
+本地实现，**未部署**：
+
+| 项 | 实现 |
+| --- | --- |
+| Next.js 转发来源（§3.2） | 用户中台 runtime 新增 `forwardedClientHeaders`：登录、注册、找回密码、退出与 `/api/backend` 代理都原样转发边缘写入的 `X-Forwarded-For` 与 `User-Agent`，不拼接、不转发 `X-Real-IP`。实测 Caddy 2.11 → `next start` → 后端：外部伪造的 XFF 与 X-Real-IP 被 Caddy 丢弃，后端收到的 XFF 是真实对端；直连 Next 时 Next 自己把 XFF 填为 socket 对端 |
+| 统一来源（§3.3） | 网关 Key IP 白名单、支付审计 IP 改用框架 `clientAddress`，不再私自解析转发头。旧变量 `NEWGATE_TRUSTED_PROXIES` 设了就拒绝启动（静默忽略会让反代后所有带白名单的令牌 403） |
+| Caddy（§3.2） | 部署示例每个 `reverse_proxy` 加 `header_up -X-Real-IP` |
+| 短信预算（§5） | NetonAPI 配置默认 `daily_limit_global = 1000`（每通道每天），不再以「不限」出厂 |
+| 人机验证 v1（§6.1） | `module-system` `CaptchaService`：供应商 Turnstile；开关、站点 key、动作在配置 `system.security.captcha.{enabled,site_key,actions}`，默认关闭；secret 只来自环境变量 `NETON_CAPTCHA_SECRET`。凭证经请求头 `X-Captcha-Token`，后端向 siteverify 核验并比对签发动作，一次性由 Turnstile 保证；开了却缺 secret 或供应商不可达返回 503 `CAPTCHA_UNAVAILABLE`，不放行。接入：会员注册、用户名/密码登录、匿名发短信/邮件验证码，管理员登录与匿名发短信。公开配置随 `/admin/system/site/public` 下发；管理台与用户中台的登录/注册/找回密码页按配置渲染组件。动作由后台静态选择，尚未做风险驱动（如失败 N 次后才要求） |
 
 验证码只能提高自动化攻击成本，不能承诺阻止 AI 或代答服务。基础请求限流、业务失败节流、短信额度和 MFA 各自承担不同职责。
 
