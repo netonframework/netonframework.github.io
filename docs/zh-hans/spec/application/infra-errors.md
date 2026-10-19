@@ -52,7 +52,9 @@ infra（文件上传与读取、媒体服务、后台文件配置 / 定时任务
 | `ACCESS_DENIED` | attach | 复用 DELEGATED 文件时看不到任何引用对象 |
 | `INVALID_ARGUMENT` | attach | 参数为空或超长 |
 | `INVALID_URL` | importFromUrl | 地址为空 / 超长 / 无主机 / 含 userinfo 或空白 |
-| `UNSUPPORTED_SCHEME` | importFromUrl | 不是 http/https |
-| `FORBIDDEN_HOST` | importFromUrl | 内网 / 本机等禁止的主机 |
+| `URL_SCHEME_FORBIDDEN` | importFromUrl / 采集抓取 | 不是 http/https |
+| `URL_TARGET_FORBIDDEN` | importFromUrl / 采集抓取 | 主机是或解析到非公网地址（本机、内网、链路本地、CGNAT、基准测试、组播、保留段等；任一解析结果命中即拒），或是非规范 IP 写法（`2130706433`、`0x7f.1`、`127.1`） |
+| `URL_PORT_FORBIDDEN` | importFromUrl / 采集抓取 | 端口不在 `[untrusted_fetch] allowed_ports`（默认 80、443） |
+| `URL_RESOLVE_FAILED` | importFromUrl / 采集抓取 | 域名解析失败或无地址 |
 | `FETCH_FAILED` | importFromUrl | 拉取远端失败 |
 | `NOT_AVAILABLE` | importFromUrl | 部署没有出站 HTTP 客户端 |

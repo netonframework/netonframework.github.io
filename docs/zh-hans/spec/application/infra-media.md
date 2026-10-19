@@ -14,7 +14,7 @@
 | `port.MediaService`：attach / detach / detachAll / resolve / importFromUrl，行锁内校验 | M1 已实现 |
 | `DELEGATED` 访问（唯一绑定的 `port.MediaOwnerAccess`）、非公开文件短期 HMAC 签名地址 | M1 已实现 |
 | 清理任务 `infra-media-cleanup`（每小时第 41 分），路径咨询锁内物理删除 | M1 已实现 |
-| 服务端转存 `importFromUrl`（http/https、字面内网地址拦截、超时、大小上限、MIME 嗅探） | M1 已实现（SSRF 有已知缺口，见 §11） |
+| 服务端转存 `importFromUrl`（http/https、按解析结果拦截内网并钉住地址、超时、大小上限、MIME 嗅探） | 已实现 |
 | 后台媒体上传 `POST /admin/infra/media/upload`、后台读取 `GET /admin/infra/media/get/{fileId}`、`MediaService.resolveForAdmin`（V008） | 已实现（ce01341） |
 | 默认 `SerializerDomainEventCodec` 由 infra 绑定（套件模块向它登记可重试事件） | 已实现 |
 | 用途级引用数量上限、视频「处理中」状态校验 | 延后（随 M4） |
@@ -145,10 +145,12 @@ ctx.get(FileBusinessPolicyRegistry::class).register(
 
 供其他模块（如 collect 转存外链图片、content 写入外部图片）调用：`MediaService.importFromUrl(businessType, url, ownerUserId): ImportResult`。
 
-- 只允许 http / https；拒绝带用户信息（`user@host`）、含空白的地址，以及字面上指向本机 / 内网的主机（loopback、私网、链路本地、十六进制 / 整数写法等）。
+- 只允许 http / https；拒绝带用户信息（`user@host`）、含空白的地址（`MediaImportRules.checkUrl`，纯语法）。
+- 出站走不可信 URL 客户端 `port.UntrustedHttpClient`（neton-http `OutboundAddressPolicy`）：每条连接解析一次主机名，**任一**解析结果不是公网地址即拒（IANA 特殊用途 IPv4 / IPv6 段；IPv4 映射、NAT64、6to4 按内嵌 IPv4 判断），非规范 IP 字面写法直接拒，端口须在放行列表；然后只连校验过的地址（防 DNS 重绑定），TLS 仍按原主机名做 SNI 与证书校验。不跟随重定向（3xx 即 `FETCH_FAILED`）。
+- 配置 `infra.conf [untrusted_fetch]`：`allowed_ports`（默认 `80,443`）；本地开发逃生口 `allowed_hosts`（主机名精确匹配，任意地址与端口）/ `allowed_networks`（CIDR，端口仍校验），默认空，非空时启动打 WARN `infra.untrusted-fetch.allowlist-enabled`。
 - 带超时；声明长度或实际读取超过 businessType 的 `maxSizeBytes` 拒绝；按文件头嗅探 MIME；嗅探不到时图片 / 视频 / PDF 不信任声明类型（拒绝），其他类型才用声明值；结果不在白名单拒绝。
 - 走正常落盘路径，文件归属 `ownerUserId`；托管类型的结果同样是 temporary，需要再 attach。
-- 结果：`ImportResult.Imported(MediaView)` / `ImportResult.Rejected(code, message)`，错误码 `INVALID_BUSINESS_TYPE` / `INVALID_URL` / `UNSUPPORTED_SCHEME` / `FORBIDDEN_HOST` / `FETCH_FAILED` / `FILE_TOO_LARGE` / `INVALID_MIME_TYPE` / `EMPTY_FILE` / `NOT_AVAILABLE`（部署没有出站 HTTP 客户端）。
+- 结果：`ImportResult.Imported(MediaView)` / `ImportResult.Rejected(code, message)`，错误码 `INVALID_BUSINESS_TYPE` / `INVALID_URL` / `URL_SCHEME_FORBIDDEN` / `URL_TARGET_FORBIDDEN` / `URL_PORT_FORBIDDEN` / `URL_RESOLVE_FAILED` / `FETCH_FAILED` / `FILE_TOO_LARGE` / `INVALID_MIME_TYPE` / `EMPTY_FILE` / `NOT_AVAILABLE`（部署没有出站 HTTP 客户端）。
 - 已知缺口见 §11。
 
 ## 5. 处理（M2 / M4，未实现）
@@ -294,6 +296,6 @@ M1 已有：文件页展示生命周期与引用数；后台媒体上传 / 读�
 
 ## 11. 已知限制（M1）
 
-- **SSRF 未完全覆盖**：`importFromUrl` 只拦截**字面**指向本机 / 内网的地址。域名解析到内网（DNS rebinding）和上游重定向到内网不在拦截范围内，需要出站代理或网络层出口策略兜底；对外开放转存能力前必须先补上。
+- **SSRF**：已按解析结果拦截并钉住连接地址（见 §4.3）。不可信 URL 客户端不能配代理（代理会自行解析目标）；部署若必须经代理出网，需由代理侧执行同等出口策略。
 - **multipart 上传不嗅探 MIME**：`POST /app/infra/file/upload` 与 `POST /admin/infra/media/upload` 按客户端声明的 Content-Type 对照白名单，不检查文件内容；只有 `importFromUrl` 做嗅探。后台读取接口用 `nosniff` + 沙箱 CSP + 可执行类型按附件下载降低风险，App 侧读取依赖声明类型。
 - 用途级引用数量上限、视频处理中状态、事件均未实现（见文首表）。

@@ -307,6 +307,9 @@ enum class HttpClientCapability {
 
     /** 支持 HTTP 代理。 */
     PROXY,
+
+    /** 执行 addressPolicy / hostResolver：每条新连接解析、校验全部地址、只连校验过的地址。 */
+    ADDRESS_POLICY,
 }
 ```
 
@@ -316,6 +319,17 @@ enum class HttpClientCapability {
 选项（如在无 `PROXY` 的引擎上设 `proxyUrl`），`createWith` **必须在返回前失败**，
 错误信息包含「哪个选项」与「哪个引擎缺哪项能力」。不允许静默忽略——静默忽略的
 `proxyUrl` 意味着请求从错误的网络出口发出去，这是安全问题，不是便利问题。
+`addressPolicy` / `hostResolver` 同理（无 `ADDRESS_POLICY` 即失败）；`addressPolicy` 与 `proxyUrl` 互斥（代理自行解析目标，钉不住地址）。
+
+**出站地址策略（`OutboundAddressPolicy`）**：给抓取不可信 URL 的客户端用。每条新连接：校验 scheme（http/https）与端口
+（`allowedPorts`，默认 80/443）→ IP 字面量直接取地址（`2130706433` / `0x7f.1` / `127.1` / `0177.0.0.1` 这类非规范写法直接拒）、
+域名解析一次 → **任一**地址落在 IANA 特殊用途段即拒（IPv4：0/8、10/8、100.64/10、127/8、169.254/16、172.16/12、192.0.0/24、
+192.0.2/24、192.88.99/24、192.168/16、198.18/15、198.51.100/24、203.0.113/24、224/4、240/4、255.255.255.255；IPv6：::、::1、
+::/96、64:ff9b:1::/48、100::/64、2001::/23、2001:db8::/32、fc00::/7、fe80::/10、fec0::/10、ff00::/8；`::ffff:0:0/96`、
+`64:ff9b::/96`、`2002::/16` 按内嵌 IPv4 判断）→ 只按 IP 字面量连接校验过的地址（不二次解析，防 DNS 重绑定）；TLS 的 SNI
+与证书校验仍用 URL 主机名。被拒为 `HttpClientError.TargetRejected(reason = SCHEME | PORT | ADDRESS | RESOLVE)`，不发出任何字节。
+客户端不跟随重定向；调用方手动跟随时每一跳都是新请求，同样经过策略。逃生口 `allowedHosts`（精确主机名，任意地址与端口）/
+`allowedNetworks`（CIDR，端口仍校验）默认空，`isRelaxed` 供应用在启动时告警。
 
 ### 5.3 能力现状矩阵
 
@@ -325,6 +339,7 @@ enum class HttpClientCapability {
 | `STREAMING_BODY` | ✅ 读帧即 emit，反应器侧有界队列（8）背压 | ✅ | ✅ `OnChunk` + `PAUSE/resume` 背压 |
 | `CANCELLATION` | ✅ Flow 取消 → 关闭响应体：HTTP/1 关连接，HTTP/2 RST 该 stream | ✅ | ✅ `hyper4k_client_cancel`，回调线程安全 |
 | `CUSTOM_CA` | ❌ 引擎可配信任根，但 `HttpClientConfig` 无 CA 选项，不声明 | ❌ `HttpClientConfig` 无 CA 选项 | 引擎 ✅；**neton 层暂不声明**，见下 |
+| `ADDRESS_POLICY` | ✅ 连接器内解析 + 校验 + 钉住地址；套件 `address_policy_refuses_internal_targets` + `NetonStreamAddressPolicyTest`（重绑定、混合应答、TLS SNI） | ❌ 不声明 | ❌ 不声明 |
 | `PROXY` | ✅ `https://` 目标走 CONNECT 隧道（TLS 端到端，隧道连接入池）、`http://` 目标 absolute-form；proxy URL 的 userinfo 发 Basic `Proxy-Authorization`；`https://` 代理亦可 | ✅ HTTP 代理 | ✅ ABI 4.1：`http://` absolute-form、`https://` CONNECT 隧道；套件 `proxy_url_routes_through_the_proxy` 通过 |
 
 > ✅ 的依据必须是 Client 一致性套件里对应的测试通过，不是 ABI 文档说有。
@@ -422,6 +437,7 @@ abstract class HttpClientConformanceSuite {
     @Test fun http2_is_negotiated_when_origin_offers_it()     // HTTP_2
     @Test fun custom_ca_is_trusted_and_system_ca_is_not()     // CUSTOM_CA
     @Test fun proxy_url_routes_through_the_proxy()            // PROXY
+    @Test fun address_policy_refuses_internal_targets()       // ADDRESS_POLICY
 }
 ```
 
