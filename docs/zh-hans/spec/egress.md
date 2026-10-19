@@ -61,6 +61,8 @@ allowed_networks = ""             # CIDR：这些特殊用途网段放行（端�
 - 代理端点本身按同一地址规则校验（`OutboundAddressPolicy.admitProxy`，端口不限）：公网，或被 `[egress]` 放行；同样只连校验过的地址。
 
 被拒 = `HttpClientError.TargetRejected(SCHEME | PORT | ADDRESS | RESOLVE | PROXY)`，不发出任何字节。
+拒绝信息与日志里的地址一律是规范文本：IPv4 点分十进制，IPv6 按 RFC 5952（小写、去前导零、最长一段连续零组压成 `::`，
+IPv4 映射写成 `::ffff:a.b.c.d`）；`allowed_hosts` 里的 IP 字面量也按规范文本匹配（写 `0:0:0:0:0:0:0:1` 与 `::1` 等价）。
 SMTP 被拒 = `SmtpTargetRejectedException(reason)`。
 
 **重定向**：客户端不自动跟随。需要跟随的调用方（采集、媒体转存）手动跟随，最多 5 跳，每一跳重新做语法检查（只许 http / https）并
@@ -78,11 +80,11 @@ SMTP 被拒 = `SmtpTargetRejectedException(reason)`。
 | --- | --- | --- | --- |
 | infra 媒体转存 | 用户 / 内容给的图片地址，跟随 ≤5 跳重定向 | 受控（`port.UntrustedHttpClient`，由 `GuardedHttpClientProvider` 建） | `URL_TARGET_FORBIDDEN` / `URL_PORT_FORBIDDEN` / `URL_RESOLVE_FAILED` / `URL_SCHEME_FORBIDDEN` / `TOO_MANY_REDIRECTS` |
 | collect 采集 | 入口、列表 / 详情 / 翻页链接、robots.txt，跟随 ≤5 跳 | 受控（同上） | 同上（采集记录错误码） |
-| gateway | 渠道转发、探测、拉模型、能力校验、Vertex 换 token（`token_uri` 只许 https） | 受控（按渠道代理与超时建，经代理亦钉住目标） | 写入时字段 400：`UPSTREAM_URL_*` / `UPSTREAM_PROXY_FORBIDDEN`；请求时：转发换下一渠道（不计 Key 失败，全拒 503 `no_available_channel`），探测 / 拉模型结果 `errorCode` |
+| gateway | 渠道转发、探测、拉模型、能力校验、Vertex 换 token（`token_uri` 只许 https） | 受控（按渠道代理与超时建，经代理亦钉住目标；按渠道缓存，渠道改 / 删 / 停用即退役，空闲 10 分钟或超过 256 条回收，在用的请求归还后才关，进程停止全部关闭） | 写入时字段 400：`UPSTREAM_URL_*` / `UPSTREAM_PROXY_FORBIDDEN`；请求时：转发换下一渠道（不计 Key 失败，全拒 503 `no_available_channel`），探测 / 拉模型结果 `errorCode` |
 | gateway 价目表同步 | `NEWGATE_PRICE_SYNC_URL`（环境变量） | 普通 | — |
 | system 短信 / 邮件 | 渠道 `apiUrl`、邮件 `endpoint`、SMTP 主机 | 受控 HTTP 客户端 + SMTP `smtpPolicy` | `MESSAGE_ENDPOINT_FORBIDDEN` |
 | system 人机验证 | `NETON_CAPTCHA_VERIFY_URL`（环境变量） | 普通 | — |
-| payment | 支付宝 `serverUrl`、四方 `apiUrl`（渠道配置） | 受控（payment 自建；宿主只经 `PayCallbackHooks` 给回调地址） | 平台调用失败（与网络失败同一路径，下单 / 查单失败） |
+| payment | 支付宝 `serverUrl`、四方 `apiUrl`（渠道配置） | 受控（payment 自建，宿主不能 bind 注册表；宿主只经 `PayCallbackHooks` 给回调地址） | `PAY_ENDPOINT_FORBIDDEN`（503，与网络失败 / 平台报错区分；原因与地址只进服务端日志 `pay.platform.endpoint_forbidden`）；对账任务记下后跳过该单 |
 | push FCM、AI、storage、cs→privchat | 部署配置 | 普通 | — |
 
 ## 6. 不在本文

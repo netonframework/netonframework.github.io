@@ -71,3 +71,4 @@ payment 模块所有业务错误的 `message` 都是模块自己的机器码（`
 | `PAY_ORDER_NOT_FOUND` | RESOURCE_NOT_FOUND | 渠道回调或退款时订单不存在 | — |
 | `PAY_ORDER_NOT_PAID` | INVALID_PARAMS | 订单未支付成功就退款 | — |
 | `MOCK_PAY_DISABLED` | RESOURCE_NOT_FOUND | 模拟支付开关关闭时访问模拟收银台 / 模拟回调 | — |
+| `PAY_ENDPOINT_FORBIDDEN` | SERVICE_UNAVAILABLE | 下单 / 查单 / 退款时渠道配置的平台网关地址（支付宝 `serverUrl`、四方 `apiUrl`）被运维出站策略 `[egress]` 拒绝（内网 / 回环 / 链路本地、非放行端口、解析不出）；未发出任何请求。原因与地址只进服务端日志 `pay.platform.endpoint_forbidden`。见 [出站策略](../egress.md) | — |
