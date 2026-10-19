@@ -319,7 +319,9 @@ enum class HttpClientCapability {
 选项（如在无 `PROXY` 的引擎上设 `proxyUrl`），`createWith` **必须在返回前失败**，
 错误信息包含「哪个选项」与「哪个引擎缺哪项能力」。不允许静默忽略——静默忽略的
 `proxyUrl` 意味着请求从错误的网络出口发出去，这是安全问题，不是便利问题。
-`addressPolicy` / `hostResolver` 同理（无 `ADDRESS_POLICY` 即失败）；`addressPolicy` 与 `proxyUrl` 互斥（代理自行解析目标，钉不住地址）。
+`addressPolicy` / `hostResolver` 同理（无 `ADDRESS_POLICY` 即失败）。`addressPolicy` 可与 `proxyUrl` 同时设置：目标仍由客户端解析校验，
+代理只拿到校验过的 IP（https `CONNECT <ip>:<port>`，隧道内 TLS 用原主机名；http absolute-form 写 IP、`Host` 保留原 authority），
+代理端点本身按 `admitProxy`（同一地址规则、端口不限）校验并钉住。哪些请求必须带策略、策略从哪来，见 [出站策略](./egress.md)。
 
 **出站地址策略（`OutboundAddressPolicy`）**：给抓取不可信 URL 的客户端用。每条新连接：校验 scheme（http/https）与端口
 （`allowedPorts`，默认 80/443）→ IP 字面量直接取地址（`2130706433` / `0x7f.1` / `127.1` / `0177.0.0.1` 这类非规范写法直接拒）、
@@ -327,9 +329,11 @@ enum class HttpClientCapability {
 192.0.2/24、192.88.99/24、192.168/16、198.18/15、198.51.100/24、203.0.113/24、224/4、240/4、255.255.255.255；IPv6：::、::1、
 ::/96、64:ff9b:1::/48、100::/64、2001::/23、2001:db8::/32、fc00::/7、fe80::/10、fec0::/10、ff00::/8；`::ffff:0:0/96`、
 `64:ff9b::/96`、`2002::/16` 按内嵌 IPv4 判断）→ 只按 IP 字面量连接校验过的地址（不二次解析，防 DNS 重绑定）；TLS 的 SNI
-与证书校验仍用 URL 主机名。被拒为 `HttpClientError.TargetRejected(reason = SCHEME | PORT | ADDRESS | RESOLVE)`，不发出任何字节。
-客户端不跟随重定向；调用方手动跟随时每一跳都是新请求，同样经过策略。逃生口 `allowedHosts`（精确主机名，任意地址与端口）/
-`allowedNetworks`（CIDR，端口仍校验）默认空，`isRelaxed` 供应用在启动时告警。
+与证书校验仍用 URL 主机名。被拒为 `HttpClientError.TargetRejected(reason = SCHEME | PORT | ADDRESS | RESOLVE | PROXY)`，不发出任何字节。
+客户端不跟随重定向；调用方手动跟随时每一跳都是新请求，同样经过策略（`stream()` 的非 2xx `HttpClientError.Http` 带 `headers`，从中读
+`Location`）。放行项 `allowedHosts`（精确主机名，任意地址与端口）/ `allowedNetworks`（CIDR，端口仍校验）只来自运维的
+`application.conf [egress]`（`EgressSettings`），应用经 `GuardedHttpClientProvider` 建受控客户端，不自行构造策略。
+`admitEndpoint` 供非 HTTP 协议（SMTP：`SmtpTransport.send(account, message, addressPolicy)`）复用同一判定。
 
 ### 5.3 能力现状矩阵
 

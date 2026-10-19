@@ -146,11 +146,12 @@ ctx.get(FileBusinessPolicyRegistry::class).register(
 供其他模块（如 collect 转存外链图片、content 写入外部图片）调用：`MediaService.importFromUrl(businessType, url, ownerUserId): ImportResult`。
 
 - 只允许 http / https；拒绝带用户信息（`user@host`）、含空白的地址（`MediaImportRules.checkUrl`，纯语法）。
-- 出站走不可信 URL 客户端 `port.UntrustedHttpClient`（neton-http `OutboundAddressPolicy`）：每条连接解析一次主机名，**任一**解析结果不是公网地址即拒（IANA 特殊用途 IPv4 / IPv6 段；IPv4 映射、NAT64、6to4 按内嵌 IPv4 判断），非规范 IP 字面写法直接拒，端口须在放行列表；然后只连校验过的地址（防 DNS 重绑定），TLS 仍按原主机名做 SNI 与证书校验。不跟随重定向（3xx 即 `FETCH_FAILED`）。
-- 配置 `infra.conf [untrusted_fetch]`：`allowed_ports`（默认 `80,443`）；本地开发逃生口 `allowed_hosts`（主机名精确匹配，任意地址与端口）/ `allowed_networks`（CIDR，端口仍校验），默认空，非空时启动打 WARN `infra.untrusted-fetch.allowlist-enabled`。
+- 出站走不可信 URL 客户端 `port.UntrustedHttpClient`，由全进程唯一的 `GuardedHttpClientProvider` 建（[出站策略](../egress.md)）：每条连接解析一次主机名，**任一**解析结果不是公网地址即拒（IANA 特殊用途 IPv4 / IPv6 段；IPv4 映射、NAT64、6to4 按内嵌 IPv4 判断），非规范 IP 字面写法直接拒，端口须在放行列表；然后只连校验过的地址（防 DNS 重绑定），TLS 仍按原主机名做 SNI 与证书校验。
+- 跟随重定向（301 / 302 / 303 / 307 / 308，GET 重发）：最多 5 跳，超过为 `TOO_MANY_REDIRECTS`；`Location` 相对当前地址解析，每一跳重新做语法检查（非 http/https 为 `URL_SCHEME_FORBIDDEN`）并经同一个客户端发出，所以每一跳都重新解析、校验地址（公网 302 到内网在第二跳被拒）。3xx 无 `Location` 为 `FETCH_FAILED`。
+- 放行列表只有运维的 `application.conf [egress]`（`allowed_ports` 默认 `80,443`、`allowed_hosts`、`allowed_networks`），infra 不另设配置；非空时启动打 WARN `egress.allowlist.enabled`。
 - 带超时；声明长度或实际读取超过 businessType 的 `maxSizeBytes` 拒绝；按文件头嗅探 MIME；嗅探不到时图片 / 视频 / PDF 不信任声明类型（拒绝），其他类型才用声明值；结果不在白名单拒绝。
 - 走正常落盘路径，文件归属 `ownerUserId`；托管类型的结果同样是 temporary，需要再 attach。
-- 结果：`ImportResult.Imported(MediaView)` / `ImportResult.Rejected(code, message)`，错误码 `INVALID_BUSINESS_TYPE` / `INVALID_URL` / `URL_SCHEME_FORBIDDEN` / `URL_TARGET_FORBIDDEN` / `URL_PORT_FORBIDDEN` / `URL_RESOLVE_FAILED` / `FETCH_FAILED` / `FILE_TOO_LARGE` / `INVALID_MIME_TYPE` / `EMPTY_FILE` / `NOT_AVAILABLE`（部署没有出站 HTTP 客户端）。
+- 结果：`ImportResult.Imported(MediaView)` / `ImportResult.Rejected(code, message)`，错误码 `INVALID_BUSINESS_TYPE` / `INVALID_URL` / `URL_SCHEME_FORBIDDEN` / `URL_TARGET_FORBIDDEN` / `URL_PORT_FORBIDDEN` / `URL_RESOLVE_FAILED` / `TOO_MANY_REDIRECTS` / `FETCH_FAILED` / `FILE_TOO_LARGE` / `INVALID_MIME_TYPE` / `EMPTY_FILE` / `NOT_AVAILABLE`（部署没有出站 HTTP 客户端）。
 - 已知缺口见 §11。
 
 ## 5. 处理（M2 / M4，未实现）

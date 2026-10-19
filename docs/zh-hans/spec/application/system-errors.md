@@ -124,6 +124,7 @@ system（管理员登录 / MFA / 用户、角色、部门、岗位、菜单 / �
 | `MESSAGE_PROVIDER_UNAVAILABLE` | SERVICE_UNAVAILABLE | 通道类型没有装配发送实现 | — |
 | `SMS_PROVIDER_NOT_CONFIGURED` | SERVICE_UNAVAILABLE | 短信通道没填账号（通道配置或 `SMS_SMSBAO_*` 环境变量） | — |
 | `SMTP_TRANSPORT_UNAVAILABLE` | SERVICE_UNAVAILABLE | 邮箱账号选了 smtp，但应用没有装配 `SmtpTransport` | — |
+| `MESSAGE_ENDPOINT_FORBIDDEN` | SERVICE_UNAVAILABLE | 消息渠道配置的地址（短信 `apiUrl`、邮件 `endpoint`、SMTP 主机）被运维出站策略 `[egress]` 拒绝：回环 / 内网 / 链路本地 / 端口不在放行列表 / 解析不出（细节记日志） | — |
 | `EMAIL_VENDOR_UNSUPPORTED` | SERVICE_UNAVAILABLE | 邮箱账号的厂商不是 smtp / resend / sendgrid / mailgun / brevo / http（厂商名记日志） | — |
 
 provider 的异常在正常发送路径里被 `MessageSendLogic` 接住并记成发送失败，`message_log.error_message` 里记的就是机器码；

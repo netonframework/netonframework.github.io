@@ -25,11 +25,17 @@ gateway（LLM 网关：渠道 / 定价 / 计费组 / 用户级例外 / 额度 / 
 | `CHANNEL_CAPABILITY_UNKNOWN` | INVALID_PARAMS | 能力清单含未知能力名（chat / embeddings / images / rerank / audio 之外） | `capabilities` |
 | `CHANNEL_LOSS_POLICY_INVALID` | INVALID_PARAMS | 损耗策略不是 allow / safe / strict | `lossPolicy` |
 | `UPSTREAM_URL_EMPTY` | INVALID_PARAMS | SSRF 校验：地址为空 | `baseUrl` / `proxyUrl` |
-| `UPSTREAM_URL_SCHEME_INVALID` | INVALID_PARAMS | SSRF 校验：不是 http / https | `baseUrl` / `proxyUrl` |
+| `UPSTREAM_URL_SCHEME_INVALID` | INVALID_PARAMS | SSRF 校验：不是 http / https（服务账号 `token_uri` 只许 https） | `baseUrl` / `proxyUrl` / `apiKey` |
 | `UPSTREAM_URL_USERINFO_NOT_ALLOWED` | INVALID_PARAMS | SSRF 校验：地址带 userinfo | `baseUrl` / `proxyUrl` |
 | `UPSTREAM_URL_HOST_EMPTY` | INVALID_PARAMS | SSRF 校验：缺主机名 | `baseUrl` / `proxyUrl` |
-| `UPSTREAM_URL_PRIVATE_ADDRESS` | INVALID_PARAMS | SSRF 校验：字面量或解析结果是回环 / 内网 / 链路本地 | `baseUrl` / `proxyUrl` |
-| `UPSTREAM_URL_UNRESOLVABLE` | INVALID_PARAMS | SSRF 校验：域名解析不出地址（fail-closed） | `baseUrl` / `proxyUrl` |
+| `UPSTREAM_URL_PRIVATE_ADDRESS` | INVALID_PARAMS | SSRF 校验：字面量或任一解析结果不在公网且运维 `[egress]` 未放行（回环 / 内网 / 链路本地 / 云元数据…） | `baseUrl` / `apiKey`（`token_uri`） |
+| `UPSTREAM_URL_UNRESOLVABLE` | INVALID_PARAMS | SSRF 校验：域名解析不出地址（fail-closed） | `baseUrl` / `apiKey` |
+| `UPSTREAM_URL_PORT_FORBIDDEN` | INVALID_PARAMS | SSRF 校验：端口不在 `[egress] allowed_ports`（默认 80、443）或不是合法端口 | `baseUrl` / `apiKey` |
+| `UPSTREAM_PROXY_FORBIDDEN` | INVALID_PARAMS | 代理地址不在公网且 `[egress]` 未放行，或解析不出 | `proxyUrl` |
+| `CHANNEL_KEY_SERVICE_ACCOUNT_INVALID` | INVALID_PARAMS | Key 以 `{` 开头却不是 JSON 对象 | `apiKey` |
+
+上面 `UPSTREAM_*` 同时是**请求时**的机器码：渠道探测 / 拉模型结果的 `errorCode` 字段（受控客户端在连接前拒绝目标时），
+以及转发全部候选被拒时 `503 no_available_channel` 消息里的码。写入时校验与请求时强制用同一个运维出站策略，见 [出站策略](../egress.md)。
 | `PRICE_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台更新定价，id 不存在 | — |
 | `PRICE_INVALID` | INVALID_PARAMS | 价格不是非负十进制数（整数位 ≤ 7） | 价格字段名，如 `inputPrice`、`saleOverride.input` |
 | `RATIO_INVALID` | INVALID_PARAMS | 倍率 / 折扣不是十进制数 | `ratio` / `costDiscount` |
