@@ -7,7 +7,6 @@
 - [应用架构与配置](./SPEC.md)
 - [模块模板](./module-template-spec.md)
 - [模块提取与迁移](./MODULE_EXTRACTION_MIGRATION.md)
-- [网关计价与定价管理](./gateway-pricing-spec.md)
 
 ## 身份与安全
 
