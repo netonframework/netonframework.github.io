@@ -103,6 +103,8 @@ CollectRecordTypeDefinition(
 
 内置三种：`article`（标题、摘要、正文 HTML、作者、发布时间、封面、图片、标签、原文链接）、`comment`（如上）、`media`（图片 / 视频地址、尺寸、时长）。产品可以注册 `product`、`price`、`rank_entry` 等。
 
+**外部站点身份字段（2026-10-19，配合 [external-identity-module](external-identity-module.md)）**：`comment` 增加 `siteUserId` / `siteUserUrl`，`article` 增加 `authorId` / `authorUrl`，由各源抽取规则填充（IT之家评论 `Ui` → `siteUserId`、`UserIndexUrl` → `siteUserUrl`；少数派作者 `slug` → `authorId`）。`content.draft` 端口在交付带 `authorId` 的文章时、`comment.import` 端口在导入带 `siteUserId` 的评论时，经 `ExternalSiteIdentityWriter`（`ctx.getOrNull`，`site_id` 取来源 `code`）登记 / 更新一条外部身份；external-identity 未装时跳过、照常展示作者名。
+
 ## 5. 采集执行
 
 ### 5.1 内置抓取器（在服务端进程内运行，适合大多数站点）

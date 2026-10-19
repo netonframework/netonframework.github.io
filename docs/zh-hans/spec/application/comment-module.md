@@ -84,7 +84,7 @@
 
 | 分组 | 字段 |
 | --- | --- |
-| 归属 | id, target_type, target_id, user_id?（导入的评论可以没有平台账号）, external_author?（text JSON：名称、头像，导入时使用）, origin(`native`/`imported`), source_ref?（来源记录，如采集记录 ID；(target, source_ref) 部分唯一）, import_batch?（导入批次） |
+| 归属 | id, target_type, target_id, user_id?（导入的评论可以没有平台账号）, external_author?（text JSON：名称、头像，导入时使用）, origin(`native`/`imported`), source_ref?（来源记录，如采集记录 ID；(target, source_ref) 部分唯一）, import_batch?（导入批次）, external_identity_id?（导入评论作者的外部站点身份，弱引用 external_site_users.id） |
 | 树 | parent_id?（回复的是哪条）, root_id（所在顶层评论）, path（祖先 ID 串 `/1/5/`，从顶层到父级，varchar）, depth, reply_to_user_id? |
 | 楼层 | floor：**每条评论都有楼号**（含回复），唯一(target_type, target_id, floor)。盖楼形态下引用链上每一层都显示自己的楼号；楼中楼形态下只在顶层显示 |
 | 内容 | content（纯文本，最长可配置）, mentions（text JSON：@ 的用户；P1 未使用）, images（text JSON：fileId 数组，上传业务类型 `comment.image`）, emoji 用文本占位符表示，客户端渲染 |
@@ -232,7 +232,8 @@ interface CommentImporter {
     /** 按 sourceRef 幂等。replyToSourceRef 指向同批或已导入的另一条评论，用于还原盖楼关系。 */
     suspend fun import(target: ObjectRef, items: List<ImportedComment>, options: CommentImportOptions = CommentImportOptions()): CommentImportResult
 }
-// ImportedComment(sourceRef, content, authorName?, authorAvatarUrl?, userId?, publishedAt, likes = 0, ipRegion?, replyToSourceRef?)
+// ImportedComment(sourceRef, content, authorName?, authorAvatarUrl?, userId?, publishedAt, likes = 0, ipRegion?,
+//                 replyToSourceRef?, siteId?, siteUserId?, siteUsername?, siteUserUrl?)   // 后四项：外部站点身份（可空，向后兼容）
 // CommentImportOptions(likesAsSupport = true, countTowardsHot = true, batch?)
 // CommentImportResult(imported, skipped, failed: List<String>)   // 每条 "<sourceRef>:<错误码>"，错误码见 CommentImportCodes
 ```
@@ -241,7 +242,8 @@ interface CommentImporter {
 
 - 导入的评论 `origin=imported`：没有平台账号时用 external_author 展示名称和头像；也可以指定平台账号（如迁移旧站用户）。
 - 楼层按原始发布时间顺序分配；同一批里先导入被回复的评论，盖楼关系照常还原。
-- 原始点赞数可以作为初始支持数（按参数决定），之后的投票正常累加。
+- 原始点赞数可以作为初始支持数（按参数决定），之后的投票正常累加。采集源第二次复查时，若评论正文不变、点赞数变化（`sourceRef` 已存在），对**导入评论**（`origin=imported`、`likesAsSupport=true`）同步 `support_count` 与 `hot_score`（不新建、不动楼号 / 可见数）；平台原生评论的支持数来自真实投票，不被采集覆盖。
+- 外部站点身份（[external-identity-module](external-identity-module.md)）：`ImportedComment` 带齐 `siteId + siteUserId` 且 `ExternalSiteIdentityWriter` 已绑定时，导入先 upsert 一条外部身份，写进 `comment_comments.external_identity_id`（弱引用，不加外键；模块没装时为 null）。未认领前仍按「来自 X 的网友 + 昵称」展示。
 - 导入的评论同样过敏感词和审核模式；不发 `CommentActivity` 事件，因此不触发「被回复 / 被 @」通知。
 - 后台可以按 origin 和来源筛选，批量隐藏或删除某次导入。
 - 导入也会更新对象的评论数，并参与热门评论计算（`countTowardsHot = false` 时不参与）。
