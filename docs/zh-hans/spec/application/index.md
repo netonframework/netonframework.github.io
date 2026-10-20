@@ -21,5 +21,6 @@
 - [工程硬规范](./ENGINEERING_RULES.md)
 - [1.0 标准化](./NETON-1.0-STANDARDIZATION-RC.md)
 - [模块源码归一化待办](./backlog/MODULE-SOURCE-CANONICALIZE-P0.md)
+- [Application 与 Front 全维度评审（2026-10-11）](./reviews/2026-10-11-application-review.md)
 
 迁移保留历史文档原名与相互引用；文内历史状态不代表当前全部完成。新增规范须归入上述类别并在此建立索引。
