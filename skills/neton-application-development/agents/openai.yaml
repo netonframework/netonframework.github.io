@@ -1,0 +1,4 @@
+interface:
+  display_name: "Neton Application Development"
+  short_description: "Build Neton Application business modules and forks consistently"
+  default_prompt: "Use $neton-application-development to implement this business feature using the existing module contracts and verify its acceptance cases."

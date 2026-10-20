@@ -2,6 +2,12 @@
 
 neton.tech 的用户指南与能力入口。覆盖 Neton 框架、独立网络协议库和 msgtrans，基于 VitePress 构建。
 
+## AI 开发 Skills
+
+[Skills 安装与分发说明](skills/README.md)：集中维护 Neton Framework 和 Neton Application
+两个技能，使用者按需安装。未来分发标识为 `neton/framework.skill` 和
+`neton/application.skill`，目前不代表已注册的包或可执行的安装命令。
+
 ## 本地开发
 
 ```bash

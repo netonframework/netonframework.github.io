@@ -14,6 +14,7 @@
 - [登录与短信防滥用](./auth-abuse-protection-spec.md)
 - [账号偏好](./account-preferences.md)
 - [TOTP MFA 与三态登录](./mfa.md)
+- [MFA 数据库并发与浏览器验收](./mfa-acceptance.md)
 
 ## 工程与交付
 
