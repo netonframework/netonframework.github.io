@@ -143,7 +143,7 @@ interface Authenticator {
 
 - 每个注册到 `SecurityBuilder` 的 `Authenticator` 必须具有唯一 `name`
 - 重复 `name` 在启动阶段 **fail-fast**（`require()` 抛出）
-- 覆盖同一注册槽位（default / group）时允许替换，但最终注册表中 `name` 仍必须全局唯一
+- 同一注册槽位不允许隐式覆盖（见 §6.3）；经 `replace*` 显式替换时先释放旧 name 再校验，最终注册表中 `name` 仍必须全局唯一
 
 **v1 内建认证器 name 表（已冻结）**：
 
@@ -497,8 +497,15 @@ interface SecurityBuilder {
     fun setGroupAuthenticator(group: String, auth: Authenticator)
     fun setGroupGuard(group: String, guard: Guard)
     fun setPermissionEvaluator(evaluator: PermissionEvaluator)
+    // 显式覆盖（唯一允许替换已占用槽位的入口，见 §6.3）
+    fun replaceDefaultAuthenticator(replaces: String, auth: Authenticator)
+    fun replaceGroupAuthenticator(group: String, replaces: String, auth: Authenticator)
+    fun replaceDefaultGuard(replaces: String, guard: Guard)
+    fun replaceGroupGuard(group: String, replaces: String, guard: Guard)
+    fun replacePermissionEvaluator(replaces: String, evaluator: PermissionEvaluator)
     fun build(): SecurityConfiguration
     fun getAuthenticationContext(): AuthenticationContext
+    fun getGroupConfigSummary(): List<SecurityGroupConfig>
 }
 ```
 
@@ -516,6 +523,59 @@ data class SecurityConfiguration(
     val getGuardByGroup: ((String?) -> Guard?)?,
     val permissionEvaluator: PermissionEvaluator?
 )
+```
+
+### 6.3 注册槽位唯一：禁止按装配顺序静默覆盖（v1 终态）
+
+**背景**：曾有发行版自带一份不校验身份域的旧 SecurityConfig + 认证桥，与 module-system 的
+`SystemSecurityConfig` 同为 `order = 0`。它之所以无害，只是因为 system 的配置器恰好排在后面、
+把默认认证器覆盖掉了——安全性取决于装配顺序。本条把这种依赖变成启动期错误。
+
+**槽位**：以下每一项是一个槽位，**只能被注册一次**：
+
+| 槽位 | 注册入口 |
+|------|----------|
+| `authenticator[default]` | `setDefaultAuthenticator` / `registerAuthenticator(auth)` / `register{Jwt,Basic,Mock}Authenticator` |
+| `authenticator[<group>]` | `setGroupAuthenticator` / `registerAuthenticator(name, auth)` / `registerMockAuthenticator(name, ...)` |
+| `guard[default]` | `setDefaultGuard` / `bindGuard(guard)` / `bind{Default,Admin,Role,Anonymous}Guard` |
+| `guard[<group>]` | `setGroupGuard` / `bindGuard(name, guard)` / `bindNamedRoleGuard` |
+| `permissionEvaluator` | `setPermissionEvaluator` |
+
+**规则**：
+
+1. **来源**：每次注册都记录来源——`@NetonConfig("security")` 配置器的全限定类名
+   （`NetonConfigurer.source`，经 `NetonConfigurers.ordered` 保留）及其 order；`Neton.run { security { } }`
+   DSL 块里的注册来源记为 `security-dsl`。
+2. **冲突即失败**：已占用的槽位再被 `set*` / `register*` / `bind*` 注册，启动期抛
+   `SecurityRegistrationException`，`code = security.registration.conflict`，消息同时列出双方：
+   ```
+   security.registration.conflict slot=authenticator[default] existing=realm-jwt@config.SystemSecurityConfig(order=0) incoming=realm-jwt@config.SecurityConfig(order=0) hint=...
+   ```
+   **order 不同也一样失败**：更大的 order 不是覆盖声明。DSL 与配置器注册同一槽位同样冲突。
+3. **显式覆盖**：要替换别人的注册，用 `replace*(replaces = "<占用方来源>", ...)`，且替换方必须在被替换方之后执行
+   （更大的 order）。
+   - 槽位尚未被注册（被替换方没先跑）→ `security.replace.target_missing`
+   - `replaces` 与实际占用方不符 → `security.replace.target_mismatch`
+   - 替换成功记 INFO `security.registration.replaced slot=... replaced=... by=...`
+4. **清空也是覆盖**：对已占用槽位传 `null`（`setDefaultAuthenticator(null)` 等）按冲突处理；对空槽位传 `null` 为 no-op。
+5. **启动审计**：所有配置器执行完后，每个路由组输出一行 INFO
+   `security.group.config group=<g> authenticator=<name> authenticatorSource=<来源> guard=<name> guardSource=<来源>`，
+   一眼可见每个组由谁的认证器服务。
+6. 旧的 `neton.security.security { }` → `SecurityRegistry` 同样拒绝对同一槽位的二次注册。
+
+**示例**（发行版在 system 的认证器外包一层 Cookie 别名）：
+
+```kotlin
+@NetonConfig("security", order = 1)
+class ClientSessionCookieSecurityConfig : SecurityConfigurer {
+    override fun configure(ctx: NetonContext, target: SecurityBuilder) {
+        target.replaceDefaultAuthenticator(
+            replaces = "config.SystemSecurityConfig",
+            auth = ClientCookieAliasAuthenticator(delegate = /* 用同一批 ctx 组件重建的 RealmAuthenticator */),
+        )
+        // 默认守卫、权限评估器沿用 system 的注册，不再重复 bind
+    }
+}
 ```
 
 ---
@@ -894,6 +954,21 @@ class SecurityIdentityContractTest {
 
 ---
 
+### 11.6 注册槽位契约测试（`SecurityRegistrationContractTest`，11 条）
+
+| 场景 | 期望 |
+|------|------|
+| 同 order 两个配置器注册默认认证器 | `security.registration.conflict`，消息含双方 `name@FQN(order=0)` |
+| 更大 order 未声明替换 | 同样 conflict |
+| `replaceDefaultAuthenticator(replaces = 占用方)` | 替换生效，summary 的 authenticatorSource 为替换方 |
+| `replaces` 写错 | `security.replace.target_mismatch` |
+| 替换方先于被替换方执行 | `security.replace.target_missing` |
+| DSL 与配置器注册同一槽位 | conflict，来源含 `security-dsl` |
+| 权限评估器 / 默认守卫设两次 | conflict |
+| 不同路由组各自注册 | 共存，分别归属各自来源 |
+| 同一路由组注册两次 | conflict（`authenticator[<group>]`） |
+| 旧 `security { }` → `SecurityRegistry` 二次注册 | conflict |
+
 ## 十二、已冻结边界（v1 终态）
 
 本节汇总 Security 模块在 v1 已明确冻结的边界决策，不得在后续版本中静默破坏。
@@ -912,7 +987,7 @@ throw     → 系统错误（如存储不可用），框架返回 500
 
 - 每个注册到 `SecurityBuilder` 的 `Authenticator` 的 `name` 在注册表中全局唯一
 - `SecurityBuilderImpl` 在 `setDefaultAuthenticator()` / `setGroupAuthenticator()` 时 fail-fast
-- 覆盖同一槽位（default / group）时先释放旧 name 再校验，不触发假冲突
+- 经 `replace*` 显式替换同一槽位时先释放旧 name 再校验，不触发假冲突；隐式覆盖按 §6.3 直接失败
 - 自定义认证器的 `name` 不得与内建保留名（`"jwt"` / `"basic"` / `"mock"` / `"anonymous"`）冲突
 
 ### 12.3 Session 认证 v1 不内建
@@ -931,6 +1006,13 @@ Authenticator → Guard → RateLimit(USER scope)
 - Authenticator 先行，设置 Identity
 - Guard（RequireAuth / @Permission）依赖 Identity，必须在其后
 - RateLimit USER scope 依赖 Identity，必须在 Authenticator 之后
+
+### 12.5 注册槽位唯一（不按装配顺序决定胜负）
+
+- 默认 / 各组认证器、默认 / 各组守卫、权限评估器各自只能注册一次；二次注册启动期 `security.registration.conflict`，消息含双方来源与 order
+- 覆盖只能经 `replace*(replaces = <占用方来源>)` 显式声明，替换方须更晚执行；目标缺失 / 不符分别为 `security.replace.target_missing` / `security.replace.target_mismatch`
+- 启动期按路由组输出 `security.group.config`（含 authenticatorSource / guardSource）
+- 详见 §6.3
 
 ## 十三、已删除项
 

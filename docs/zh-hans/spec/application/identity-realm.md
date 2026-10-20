@@ -59,7 +59,7 @@
 |---|---|
 | module-system | `TokenRealm` 契约、`TokenRealmRegistry`、`RealmAuthenticator`、管理员域 `AdminTokenRealm`、统一装配 `SystemSecurityConfig`（`@NetonConfig("security", order = 0)`） |
 | module-account | 账号域 `AccountTokenRealm`；`AccountIdentityAdapter.acceptsAccessToken` 由内置后端实现 |
-| 发行版 | 只装配模块，不再自带 SecurityConfig / 认证桥。外部令牌由产品模块在 `order < 0` 绑定 `UnifiedTokenAuthenticator` |
+| 发行版 | 只装配模块，不再自带 SecurityConfig / 认证桥。外部令牌由产品模块在 `order < 0` 绑定 `UnifiedTokenAuthenticator`。确需包装 system 的认证器时必须 `replaceDefaultAuthenticator(replaces = "config.SystemSecurityConfig", ...)` 显式声明——同槽位隐式覆盖在启动期失败（security §6.3） |
 
 ## 6. 签名密钥
 

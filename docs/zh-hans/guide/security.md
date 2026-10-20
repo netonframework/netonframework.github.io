@@ -94,6 +94,19 @@ class AppSecurityConfig : SecurityConfigurer {
 }
 ```
 
+### 每个槽位只注册一次
+
+默认认证器、各组认证器与守卫、默认守卫、权限评估器各自只能注册**一次**。第二次注册（来自另一个配置器、
+`security { }` DSL 块或同一配置器）在启动期以 `security.registration.conflict` 失败，消息给出槽位与双方来源；
+更大的 `order` 不算覆盖声明。要包装或替换其他配置器的注册，必须显式声明：
+
+```kotlin
+target.replaceDefaultAuthenticator(replaces = "config.SystemSecurityConfig", auth = myWrapper)
+```
+
+替换方必须更晚执行（更大的 order）。启动时每个路由组输出一行 `security.group.config`，
+列出服务它的认证器、守卫及其注册来源。
+
 ### 关键 API 说明
 
 | 方法 | 作用 |

@@ -94,6 +94,21 @@ class AppSecurityConfig : SecurityConfigurer {
 }
 ```
 
+### One registration per slot
+
+The default authenticator, each group's authenticator and guard, the default guard and the
+permission evaluator can each be registered **once**. A second registration — from another
+configurer, the `security { }` DSL block, or the same configurer — aborts startup with
+`security.registration.conflict`, naming the slot and both sources; a higher `order` is not an
+override. To wrap or replace another configurer's registration, declare it:
+
+```kotlin
+target.replaceDefaultAuthenticator(replaces = "config.SystemSecurityConfig", auth = myWrapper)
+```
+
+The replacing configurer must run later (higher `order`). At startup each route group logs
+`security.group.config` with the serving authenticator, guard and the source that registered them.
+
 ### SecurityBuilder API
 
 | Method | Effect |
