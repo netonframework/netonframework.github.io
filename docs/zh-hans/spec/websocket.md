@@ -29,7 +29,7 @@
 > [路由规范](./routing.md)、[参数绑定规范](./parameter-binding.md)、[安全规范](./security.md)、
 > [Application Lifecycle Contract](./lifecycle.md)。
 >
-> **开发方式**：本阶段所有开发依赖**本地源码目录**，不发布任何版本（§3）。
+> **发布状态**：自 neton `1.0.0-beta24` 起，`neton-websocket` 与 netonstream 协议栈（`io:0.4.1`、`http/tls/websocket:0.3.0`、`openssl:4.0.2-3`）均以 beta 发布到 Maven Central，`neton-bom` 约束 `neton-websocket` 版本；本地源码目录只用于开发联调（§3）。
 
 ---
 
@@ -169,9 +169,14 @@ neton-websocket ─→ neton-http ─→ neton-core
 
 ## 三、开发依赖方式：本地源码目录
 
+> **2026-10-20 更新**：集成阶段已结束，§3.4 闸门已在 `1.0.0-beta24` 走完。`neton-websocket` 作为可选模块以 beta 发布
+>（`core`/`http`/`neton` 聚合模块仍不得依赖它，由 `verifyWebSocketBoundaries` 守住），默认 provider 即内置 netonstream
+> websocket。下文 §3.1–§3.3 保留为**开发期源码替换**的说明：`netonstream.local=true` 只影响本地构建，发布任务在它开启时拒绝执行，
+> 发布时传 `-Pnetonstream.local=false`（neton `RELEASING.md`）。文中的旧版本号为当时记录，以 neton 构建脚本为准。
+
 ### 3.1 规则
 
-1. 本阶段**不发布** `io`、`http`、`tls`、`openssl`、`websocket`、`neton` 的任何版本。
+1. ~~本阶段**不发布** `io`、`http`、`tls`、`openssl`、`websocket`、`neton` 的任何版本。~~（集成阶段规则，已随 beta24 发布失效。）
 2. neton 通过 Gradle **composite build** 直接使用兄弟目录的源码：
    `../io`、`../http`、`../tls`、`../websocket`。
    `openssl` 例外：默认使用 `tls` 已钉住的已发布版本 `com.netonstream:openssl:4.0.2`，**不是新发布**。原因见 §3.3。需要时用 `-Pnetonstream.local.openssl=true` 改为本地源码。
