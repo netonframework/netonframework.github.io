@@ -481,9 +481,9 @@ interface ContentDraftWriter {
 | `GET sitemap/items?shard&cursor&limit` | 分片内的内容（发布时间升序、键集游标，`limit` ≤ 5000，缺省 5000）：`{ list: [{ id, type, slug?, shareUrl?, publishedAt, contentUpdatedAt, cover? }], nextCursor? }`；分片格式不对或没有内容 `SITEMAP_SHARD_NOT_FOUND` |
 | `GET author/{userId}` | 作者资料（`ContentAuthorResolver`）与匿名可见的已发布内容数：`{ userId, nickname?, avatar?, bio?, itemCount }`；既没有资料也没有内容 `AUTHOR_NOT_FOUND` |
 | `GET item/ranking?period&by&types&cursor&limit` | 排行（period 默认 day，by 默认 views） |
-| `GET item/search?q&types&cursor&limit` | 搜索（按真实客户端 IP 限流，网页服务经 `ratelimit.trusted_proxies` 转发） |
+| `GET item/search?q&types&cursor&limit` | 搜索（按真实客户端 IP 限流，每分钟 60 次，超限 429 `CONTENT_SEARCH_RATE_LIMITED`；网页服务经 `ratelimit.trusted_proxies` 转发） |
 | `GET collection/get/{code}` | 推荐位或专题（含分区与条目） |
-| `GET submission/form?type`（匿名可读）、`POST submission/create`（每用户每小时 10 次，超限 429 `CONTENT_SUBMIT_RATE_LIMITED`）、`GET submission/mine` | 投稿（字段见 §11） |
+| `GET submission/form?type`（匿名可读）、`POST submission/create`（每用户每小时 10 次，超限 429 `CONTENT_SUBMIT_RATE_LIMITED`）、`GET submission/mine`（每条带状态、驳回原因；已发布的带 `shareUrl`，链到公开页） | 投稿（字段见 §11） |
 
 **限流**（产品决定 8，[site-module](site-module.md) §13）：匿名、可缓存的只读接口——详情、slug 解析、通用查询、排行、`term/*`、`collection/get`、`sitemap/*`、`author/*`——**不按 IP 限流**：网页服务的渲染都来自同一个出口，按 IP 限流等于所有访客一起被限，滥用防护放在边缘（CDN / nginx）。搜索、浏览信标与写接口照常限流。
 
