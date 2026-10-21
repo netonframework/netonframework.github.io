@@ -16,6 +16,14 @@
 - [TOTP MFA 与三态登录](./mfa.md)
 - [MFA 数据库并发与浏览器验收](./mfa-acceptance.md)
 
+## C 端门户（Draft，未实现）
+
+- [站点发布：渲染缓存失效与搜索引擎推送（module-site）](./site-module.md)
+- [client-content：内容门户页面与投稿](./client-content.md)
+- [client-comment：评论区与我的评论](./client-comment.md)
+- [client-interaction：收藏按钮、收藏与足迹](./client-interaction.md)
+- 底座契约在 `neton-application-client/docs/spec/public-routes.md`（公开路由、SEO、缓存失效端点）
+
 ## 工程与交付
 
 - [工程硬规范](./ENGINEERING_RULES.md)
