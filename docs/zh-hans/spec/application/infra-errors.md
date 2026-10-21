@@ -28,6 +28,8 @@ infra（文件上传与读取、媒体服务、后台文件配置 / 定时任务
 | `FILE_NOT_FOUND` | RESOURCE_NOT_FOUND | App / 后台按 fileId 读取，文件不存在 | — |
 | `FILE_DELETED` | RESOURCE_NOT_FOUND | 后台按 fileId 读取，文件已删除或正在清理 | — |
 | `FILE_FORBIDDEN` | PERMISSION_DENIED | App 读取：已删除，或 OWNER / DELEGATED 文件无权读取 | — |
+| `MEDIA_URL_RATE_LIMITED` | RATE_LIMIT_EXCEEDED | `GET /app/infra/media/url/{fileId}` 超过每 IP 120 次/分钟（`@RateLimit` message） | — |
+| `MEDIA_VARIANT_UNKNOWN` | INVALID_PARAMS | `GET /app/infra/media/url/{fileId}` 的 `variant` 不是 w180 / w360 / w720 / w1080 / w1440 / og | `variant` |
 | `FILE_CONFIG_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台更新文件配置，id 不存在 | — |
 | `JOB_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台更新 / 手动触发任务，任务不存在 | — |
 | `API_ERROR_LOG_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台更新错误日志处理状态，日志不存在 | — |

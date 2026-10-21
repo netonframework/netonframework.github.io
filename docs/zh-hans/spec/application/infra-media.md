@@ -1,7 +1,7 @@
 # infra 媒体标准
 
 > 标识：NETON-APP-INFRA-MEDIA
-> 日期：2026-10-15 · 状态：Draft r2（关联契约、临时文件生命周期、按引用授权、并发安全清理；2026-10-15 按 M1 实现校准）；**§7.3 CDN 地址策略 Accepted（2026-10-22，产品决定 1；实现随 itwind C2）**
+> 日期：2026-10-15 · 状态：Draft r2（关联契约、临时文件生命周期、按引用授权、并发安全清理；2026-10-15 按 M1 实现校准）；**§7.3 CDN 地址策略 Accepted（2026-10-22，产品决定 1）并已实现（module-infra 6c8588e，见 §7.4）**
 > 归属：`neton-application-module-infra`（在现有文件上传能力上扩展）
 > 适用：所有需要图片、视频、音频、附件的模块与产品，例如新闻配图、商品图、评论图片、用户头像、视频源文件。
 
@@ -24,7 +24,7 @@
 | 视频处理、`MediaProcessor` | 延后（M4） |
 | 事件 `infra.media.*` | 延后（M1 不发事件） |
 | 后台 businessType 列表、按引用对象浏览、存储用量统计 | 延后（M1 文件页只加了生命周期与引用数） |
-| CDN 地址策略（§7.3）：可插拔的地址策略、云厂商鉴权签名、时间桶确定性签名、图片处理参数、换新地址接口 | 设计已定（Accepted），实现随 itwind C2 |
+| CDN 地址策略（§7.3）：可插拔的地址策略、云厂商鉴权签名、时间桶确定性签名、图片处理参数、换新地址接口 | 已实现（6c8588e，§7.4；V009 原图宽高；content `ContentMediaVO` 带宽高与规格 cf74f02） |
 
 ## 1. 原则
 
@@ -299,6 +299,45 @@ ctx.bindIfAbsent(port.MediaOwnerAccess::class, port.MediaOwnerAccess { viewer, t
 
 **理由**：把 CDN 鉴权做成 infra 的地址策略而不是网页服务的图片代理——地址是 infra 的职责（「只存引用、地址由 infra 生成」，§1），App、网页、分享卡片拿到同一份地址；确定性签名让「有鉴权」与「可缓存」兼得；页面缓存短于签名有效期加客户端兜底，覆盖了缓存窗口与长开标签页两种过期路径。
 
+### 7.4 CDN 地址策略的实现（module-infra 6c8588e）
+
+**配置**：`config/infra.conf`（itwind-backend 已带 `strategy = "none"` 的段），环境变量覆盖 `NETON_INFRA__MEDIA__CDN__<键>`：
+
+```toml
+[media.cdn]
+strategy = "tencent-a"                 # none | public | tencent-a..d | aliyun-a..c | hmac
+base_url = "https://img.example.com"   # 只能是 scheme://host[:port]，不带路径
+key_env = "NETON_MEDIA_CDN_KEY"        # 签名策略必填；变量缺失 / 为空即启动失败
+bucket_seconds = 1800                  # B 型（分钟时间戳）必须是 60 的整数倍
+grace_seconds = 1800
+image_params = "tencent"               # tencent | aliyun | none
+```
+
+启动校验（`MediaCdnConfig.parse`，失败抛 `MediaCdnConfigException`，进程不启动）：未知策略或方言、`base_url` 缺失 / 带路径 / 非 http(s)、签名策略缺 `key_env` 或变量为空、云厂商 Key 不是 6–40 位字母数字、`hmac` 密钥不足 32 字节、桶长 ≤ 0、宽限期 < 0。启动日志 `media.cdn.strategy` 打出生效配置（密钥打码）。
+
+**范围**：`MediaService.resolve` 只给「此刻对匿名访问者可见」的媒体 CDN 地址——`PUBLIC` 类型；`DELEGATED` 类型且任一引用对象按 `MediaOwnerAccess.canView(null, …)` 可见（登录访问者展开时同样按匿名再判一次，同一引用对象只问一次）。会员可见、仅本人（`OWNER`）、临时文件不论谁看都照旧是 §7.2 的短期签名中转地址。于是同一桶内匿名与登录访问者拿到的公开图片地址逐字节相同。`resolveForAdmin` 不变。
+
+**签名**（`logic.CdnSigners`，测试用两家官方文档的示例逐字复现，见 `MediaCdnTest` 里的文档链接）：时间戳 = 当前时间向下取整到桶起点，rand = 0、uid = 0；`expiresAt` = 桶起点 + 桶长 + 宽限期，`validitySeconds` 同值（云厂商控制台「鉴权 URL 有效时长」与门户 `media.signedUrlValiditySeconds` 都填它）。云厂商的签名串只含路径（文档：URI 不含参数），路径先按 RFC 3986 逐段编码再签名；图片处理参数原样放在查询串里，CDN 侧需要开启「保留 / 透传参数」并在缓存键里保留它（否则所有规格命中同一份缓存）。`hmac` 的签名串是 `路径[?处理参数] + "\n" + exp`，覆盖处理参数。阿里云 C 型只用路径形式（查询形式的参数名可在控制台改，不做）。
+
+**规格**（`logic.MediaVariant`，`MediaView.variants` 的键）：`w180`、`w360`、`w720`、`w1080`、`w1440`（限宽等比；已知原图宽度时不输出比原图宽的档位）与 `og`（1200×675 居中裁切）。方言：腾讯 `imageMogr2/thumbnail/<W>x`、`imageMogr2/thumbnail/1200x675r/gravity/center/crop/1200x675`；阿里 `x-oss-process=image/resize,w_<W>`、`x-oss-process=image/resize,m_fill,w_1200,h_675`。非图片、SVG、`image_params = none`、策略 `none` 时没有规格。
+
+**原图宽高**：`infra_files.width` / `height`（V009）在上传与转存时从文件头读出（`logic.ImageDimensions`：PNG、GIF、JPEG 扫描到 SOF 段且按 EXIF 方向 5–8 交换宽高、WebP VP8 / VP8L / VP8X、AVIF / HEIF `ispe`），不解码像素；去重命中旧行时补写。历史行为空。`MediaView` 与 content 的 `ContentMediaVO` 带 `width`、`height`、`variants`（响应 JSON 省略默认值：没有规格时不出现 `variants` 字段，客户端按空表处理）。
+
+**接口**：
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /app/infra/media/policy` | 匿名；`{ strategy, validitySeconds?, bucketSeconds?, imageParams }`，`Cache-Control: public, max-age=300`。`none` 时 `validitySeconds` 是中转签名的有效期（600），`public` 时为空（永不过期），签名策略为桶长 + 宽限期 |
+| `GET /app/infra/media/url/{fileId}?variant=` | 匿名；与 `resolve` 同一可见性判断，返回当前桶的 `{ url, expiresAt? }`；`variant` 不在档位表 → 400 `MEDIA_VARIANT_UNKNOWN`；档位不存在（未开图片处理、比原图宽）给原图；看不到 → 404 `FILE_NOT_FOUND`；按 IP 每分钟 120 次（`MEDIA_URL_RATE_LIMITED`）；`Cache-Control: private, max-age=60` |
+
+**CDN 回源**：CDN 地址是 `{base_url}/{infra_files.path}`，`path` 是存储源里的对象键（内容寻址：`{系统前缀}/{assetDir}/{sha[0..2]}/{sha[2..4]}/{sha}.{ext}`）。所以 CDN 的源站就是对象存储的桶（S3 / COS / OSS），回源路径与对象键一一对应；B / C 型的签名段由 CDN 去掉后再回源，源站不需要任何特殊处理，也不需要后端参与。
+
+**本地假 CDN（开发与 e2e）**：本地存储源（`storage.conf` 的 `type = "local"`、`basePath`）没有公网地址，假 CDN 直接读存储根目录即可，不需要后端新增回源路由：
+
+1. 后端以 `NETON_INFRA__MEDIA__CDN__STRATEGY=hmac`（或任一云厂商策略）、`NETON_INFRA__MEDIA__CDN__BASE_URL=http://127.0.0.1:<假 CDN 端口>`、`NETON_INFRA__MEDIA__CDN__KEY_ENV=<变量名>` 与该变量启动；
+2. 假 CDN 收到请求后按所配策略校验签名（`hmac`：`hex(HMAC-SHA256(key, 路径[?处理参数] + "\n" + exp))` 且 `exp ≥ now`；云厂商策略按 `CdnSigners` 的签名串），失败 403；
+3. 通过后去掉签名参数 / 签名路径段，读 `{工作目录}/{basePath}/{path}`（dev-backend.sh 的工作目录是 `$TMPDIR/itwind-app-dev`，`basePath = ./storage/app-files`），按扩展名给 `Content-Type`；处理参数（`imageMogr2/…`）可以忽略、直接给原图（假 CDN 不做缩放）。
+
 ## 8. 事件（未实现，M1 不发事件）
 
 | 事件 | 投递方式 |
@@ -319,7 +358,7 @@ M1 已有：文件页展示生命周期与引用数；后台媒体上传 / 读�
 | --- | --- |
 | M1（已实现） | businessType 注册表开放、临时文件与 attach / detach 校验、`DELEGATED` 访问与短期签名地址、`resolve`、并发安全清理、服务端转存；另加后台上传 / 读取与 `resolveForAdmin` |
 | M2 | 图片派生版本（按首个产品的需要安排，不阻塞 M1） |
-| CDN | §7.3 CDN 地址策略、`media/policy`、`media/url` 换新地址接口（随 itwind C2，内容详情页与首页图片的前置） |
+| CDN（已实现） | §7.3 CDN 地址策略、`media/policy`、`media/url` 换新地址接口、原图宽高（§7.4） |
 | M3 | 分片 / 断点续传、秒传 |
 | M4 | 视频处理（探测、转码、截帧、HLS）、处理器可替换 |
 
