@@ -1,7 +1,7 @@
 # client-content 内容的门户页面与投稿控制台
 
 > 标识：NETON-APP-CLIENT-CONTENT
-> 日期：2026-10-22 · 状态：**Accepted r2**（设计定稿；实现排在 itwind C2，依赖的服务端缺口 G1/G2/G6 同批补齐）
+> 日期：2026-10-22 · 状态：**Accepted r3**（P1–P2 与 P3 的归档、410 已随 itwind C2 实现，见 §12；G7 的多比例图片待 infra M2）
 > 仓库：`neton-application-client-content`（C 端模块，装配进 `neton-application-client` 的 fork）
 > 依赖：底座公开路由契约 `neton-application-client/docs/spec/public-routes.md`（client-contract 1.1.0）；服务端 [content-module.md](content-module.md) 的 App 接口；失效与推送由 [site-module.md](site-module.md) 负责
 > 套件定位：[content-platform-architecture.md](content-platform-architecture.md) §8 末条——「面向用户的展示因平台而异，套件只提供客户端 SDK 和可选的基础组件」。本模块就是 Web 端的这一份：通用的内容门户页面，产品通过站点配置调 URL、通过外壳决定布局，不改模块。
@@ -231,3 +231,21 @@ export default defineFrontModule({
 | 正文外链是否经站内跳转提示页（`/go?url=`） | 不经，直接 `nofollow`；需要跳转提示的产品以后加可选路由（noindex） |
 | 频道页（筛选器节点 `/app/channel/{code}`）放哪 | **已决（产品决定 2）**：标准模块 `client-filter`（C1 已实现）。理由：频道 / 楼层是 filter 模块的通用能力，任何装了 filter 的门户都要这一页，按定制三分法属于「缺通用扩展点」，不该让每个产品手写 |
 | 相关阅读 | 服务端 `related` 延后；先用「同栏目最新 5 篇」填 `public.object.aside` |
+
+## 12. 实现记录（itwind C2）
+
+仓库 `neton-application-client-content`（本地，未推送）。与正文的出入与补充：
+
+| 项 | 实现 |
+| --- | --- |
+| 归档路由参数 | 月、日是两位数的枚举（`/archive/2026/10/05`）：底座 `int` 规则拒绝前导零，一个日期只该有一个地址 |
+| 站点 feed | `/rss.xml` 声明为 `site: true`（底座聚合站点 feed 的约定，public-routes §11.3） |
+| 详情侧栏 | 模块自带两个 `public.object.aside` 服务端插槽：`content.category-latest`（同栏目最新 5 篇，§11 开放项的默认）、`content.ranking`（日榜）；产品用 `slots.order` / `slots.hide` 编排 |
+| 封面与正文首图 | 正文有图时详情页不在正文上方重复放封面（采集 / 转载的封面通常就是正文首图）；首屏优先图是正文首图，正文没有图时才是封面。封面仍用于卡片、OG 与 JSON-LD |
+| 详情页时间 | 详情页给精确的绝对时间，不在水合后换成相对时间（换了会改变这一行的折行，正文整体下移，实测 CLS 0.17）；卡片仍是相对时间 |
+| 图片尺寸 | 每个图片位置给出 `displayWidth`（桌面上的最大 CSS 宽度），`src` / `srcset` 取它的 1×–2× 档；窄屏 `sizes` 写 `calc(100vw - 2rem)` |
+| 卡片标题级别 | 卡片标题按列表给的 `headingLevel`（public-routes §10.3）；本模块的列表页（栏目、标签、作者、搜索）给 2 |
+| 转载署名 | `origin = compiled` 显示「综合自 …」、没有 `sourceUrl` 时不输出 `isBasedOn`；AI 编辑部的合成稿以 `compiled` 交付（newsroom 1cc838b，itwind 迁移 V005 改正存量） |
+| 公开岛屿的词条 | 客户端岛只用 `public.*` / `error.*` 词条（底座 check:locales 强制），公开页只预载这些 |
+| 测试 | 单测 64 项（块渲染与转义、状态映射、SEO / JSON-LD、canonical 与 308、卡片链接与尺寸、sitemap 分片、feed、薄页、热榜参数、搜索规范化、二维码向量）；itwind-client 的 `e2e/c2.e2e.mts` 对真实后端验收 |
+
