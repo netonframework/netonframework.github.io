@@ -319,7 +319,7 @@ image_params = "tencent"               # tencent | aliyun | none
 
 **签名**（`logic.CdnSigners`，测试用两家官方文档的示例逐字复现，见 `MediaCdnTest` 里的文档链接）：时间戳 = 当前时间向下取整到桶起点，rand = 0、uid = 0；`expiresAt` = 桶起点 + 桶长 + 宽限期，`validitySeconds` 同值（云厂商控制台「鉴权 URL 有效时长」与门户 `media.signedUrlValiditySeconds` 都填它）。云厂商的签名串只含路径（文档：URI 不含参数），路径先按 RFC 3986 逐段编码再签名；图片处理参数原样放在查询串里，CDN 侧需要开启「保留 / 透传参数」并在缓存键里保留它（否则所有规格命中同一份缓存）。`hmac` 的签名串是 `路径[?处理参数] + "\n" + exp`，覆盖处理参数。阿里云 C 型只用路径形式（查询形式的参数名可在控制台改，不做）。
 
-**规格**（`logic.MediaVariant`，`MediaView.variants` 的键）：`w180`、`w360`、`w720`、`w1080`、`w1440`（限宽等比；已知原图宽度时不输出比原图宽的档位）与 `og`（1200×675 居中裁切）。方言：腾讯 `imageMogr2/thumbnail/<W>x`、`imageMogr2/thumbnail/1200x675r/gravity/center/crop/1200x675`；阿里 `x-oss-process=image/resize,w_<W>`、`x-oss-process=image/resize,m_fill,w_1200,h_675`。非图片、SVG、`image_params = none`、策略 `none` 时没有规格。
+**规格**（`logic.MediaVariant`，`MediaView.variants` 的键）：`w180`、`w360`、`w720`、`w1080`、`w1440`（限宽等比；已知原图宽度时不输出比原图宽的档位）与 `og`（1200×675 居中裁切）。方言：腾讯 `imageMogr2/thumbnail/<W>x/format/webp`、`imageMogr2/thumbnail/1200x675r/gravity/center/crop/1200x675`；阿里 `x-oss-process=image/resize,w_<W>/format,webp`、`x-oss-process=image/resize,m_fill,w_1200,h_675`。宽度档一律转 WebP（页面图片，现行浏览器全部支持）；`og` 保持原格式（分享卡片的抓取方对 WebP 支持不一）。非图片、SVG、`image_params = none`、策略 `none` 时没有规格。
 
 **原图宽高**：`infra_files.width` / `height`（V009）在上传与转存时从文件头读出（`logic.ImageDimensions`：PNG、GIF、JPEG 扫描到 SOF 段且按 EXIF 方向 5–8 交换宽高、WebP VP8 / VP8L / VP8X、AVIF / HEIF `ispe`），不解码像素；去重命中旧行时补写。历史行为空。`MediaView` 与 content 的 `ContentMediaVO` 带 `width`、`height`、`variants`（响应 JSON 省略默认值：没有规格时不出现 `variants` 字段，客户端按空表处理）。
 
