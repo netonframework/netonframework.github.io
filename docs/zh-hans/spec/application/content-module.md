@@ -5,7 +5,7 @@
 > 仓库：`neton-application-module-content`（服务端）、`neton-application-front-content`（后台页面）
 > 参照：WordPress、PHPCMS、DedeCMS 的内容建模方式，取其通用部分，去掉模板引擎、静态生成等与 headless 架构无关的部分。
 
-## 实现状态（2026-10-15）
+## 实现状态（2026-10-22）
 
 | 项 | 状态 |
 | --- | --- |
@@ -21,13 +21,14 @@
 | 投稿来源链接 `link`（存为 `source_url`，§11）；分享链接 `shareUrl`（`content.site.base_url` + 路径模板，§5.6），对象摘要 `link.web` 同值 | 已实现（2026-10-18；真库测试全绿） |
 | 媒体：注册 `content.cover` / `content.image` / `content.video` / `content.attachment`，保存时 attach / detach，响应经 `MediaService.resolve` 展开 | 已实现 |
 | 对象解析与访问策略 `content.item`、`content.collection`；评论数 / 收藏数经 `ObjectCounterChanged` 同步回写 | 已实现 |
-| 浏览：详情读取直接计数（`content.view.dedup_seconds` 内登录用户去重，需 Redis），发布通用 `ObjectViewed` | 已实现（与原设想「先 Redis 累加再批量回写」不同） |
+| 浏览：详情读取直接计数（`content.view.dedup_seconds` 内同一访问者去重——登录按账号、匿名按客户端地址，需 Redis），发布通用 `ObjectViewed`；`view=false` 不计数（网页服务端渲染），浏览信标 `POST item/view/{id}`（§9） | 已实现（2026-10-22 补 `view=false` 与信标；与原设想「先 Redis 累加再批量回写」不同） |
+| 网页门户的补齐（[client-content](client-content.md) §9 G1–G6、G8）：不可见三态 `CONTENT_NOT_FOUND` / `CONTENT_UNAVAILABLE` / `CONTENT_GONE` 与墓碑表；线上版本更新时间 `content_updated_at`；`term/get`、`term/list?minItems`；`sitemap/shards`、`sitemap/items`；作者资料 `ContentAuthorResolver` + `author/{userId}`；首次发布发 `ObjectAvailable`、公开表示变化发 `ObjectUpdated`；来源记录 `content_sources`（canonical 指向原文，§5.6）；匿名可缓存读取不按 IP 限流 | 已实现（2026-10-22，`V004__web_portal_reads.sql`；真库测试 `ContentPortalDbTest` 全绿） |
 | 注册结果持久化快照 `content_types` / `content_taxonomies` 与启动一致性检查 | 延后 |
 | `content_field_index`（filterable / sortable 字段索引）与按字段筛选排序 | 延后（P2） |
 | 合集规则条目（`content_collection_sections.rule` 列已建未使用）、撤回时自动隐藏合集条目 | 延后（P2） |
 | 栏目级权限 `content_term_grants`、编辑锁与自动保存、回收站保留期自动清理、多语言关联 | 延后（P2） |
 | 相关内容 `content_item_relations` | 延后 |
-| `FieldTypeRegistry` / `BlockTypeRegistry` 扩展、`ContentAuthorResolver` | 延后 |
+| `FieldTypeRegistry` / `BlockTypeRegistry` 扩展 | 延后 |
 | 开放接口 `/platform/content/…` | 延后（P3） |
 | 筛选器数据源 `content.item`、挂载点 `content.term`、`item/query` 的 `filter` 参数（[filter-module](filter-module.md) §4.4、§6.7、§10.4） | 已实现（2026-10-17；一致性套件真库全绿） |
 | 内置筛选器 `content.collection:<code>`、合集分区挂载点 `content.collection_section` | 延后 |
@@ -200,9 +201,9 @@ UPDATE content_terms SET path = '/' || id || '/' WHERE taxonomy = 'category' AND
 | 标题 | title, subtitle?, title_style?（颜色 / 加粗，DedeCMS 的标题样式） |
 | 列表展示 | summary, cover（text JSON：主图 + 可选多图，均为 fileId）, list_style?（大图 / 单图 / 三图 / 无图，空则客户端自动判断） |
 | 正文 | body（text JSON 块数组，见 5.2）, body_text（纯文本，供搜索）, fields（text JSON，类型字段） |
-| 归属 | primary_term_id（主栏目，决定默认链接）, 作者：author_user_id? / author_name, 来源：source_name? / source_url?, origin(`original`/`reprint`/`compiled`) |
+| 归属 | primary_term_id（主栏目，决定默认链接）, 作者：author_user_id? / author_name, 来源：source_name? / source_url? / source_host?（线上 source_url 的主机名：小写、去 `www.` 与端口，匹配来源记录）, origin(`original`/`reprint`/`compiled`) |
 | 状态 | status（§6）, previous_status（进回收站前的状态，恢复用）, visibility(`public`/`members`/`password`), password_hash?, redirect_url?（跳转型内容）, review_note |
-| 时间 | published_at, first_published_at, original_published_at?, scheduled_at?, expire_at?, trashed_at?, created_at, updated_at |
+| 时间 | published_at, first_published_at, original_published_at?, content_updated_at?（线上版本更新时间，见下）, scheduled_at?, expire_at?, trashed_at?, created_at, updated_at |
 | 排序 | weight（越大越靠前）, pinned_until?（全局置顶到期时间）；栏目内置顶见 5.3 |
 | 计数 | view_count, comment_count, favorite_count（冗余计数：评论数、收藏数由通用事件 `ObjectCounterChanged`（counter = `comments` / `favorites`）同步回写，listenerId `content.counter-writeback`；详细统计见 §9） |
 | SEO | seo_title, seo_keywords, seo_description, canonical_url |
@@ -213,6 +214,8 @@ UPDATE content_terms SET path = '/' || id || '/' WHERE taxonomy = 'category' AND
 - 首次发布（审核通过、免审直接发布、定时到点）时：有 `original_published_at` 的内容 `published_at = min(original_published_at, now)`，没有的取 `now`；`first_published_at` 都取 `now`。转载的 IT之家文章因此按来源时间排序、进日 / 周 / 月时间窗，相对时间（「3 小时前」）也按来源算。
 - 之后撤回、重新发布、再编辑、写入方重复投递都不改 `published_at`；写入方再次投递不带时间时保留已有的 `original_published_at`。后台编辑不改 `original_published_at`（只读展示）。
 - 详情 VO 带 `originalPublishedAt`；后台编辑视图带 `firstPublishedAt`、`originalPublishedAt`。
+
+**线上版本更新时间**（`content_updated_at`，卡片与详情的 `contentUpdatedAt`）：线上版本被替换的时刻——首次发布等于 `published_at`；新版本上线（版本级审核通过、不分版本的类型原地改线上）时为当时；撤回后原样重新发布同一个版本时不变。计数回写、置顶、权重、slug 这类行更新只动 `updated_at`，不动它。网页的 `dateModified`、`og:modified_time`、sitemap `lastmod` 用它，不用 `updated_at`。迁移时已发布内容回填为 `published_at`。
 
 ### 5.2 结构化正文
 
@@ -276,6 +279,8 @@ UPDATE content_terms SET path = '/' || id || '/' WHERE taxonomy = 'category' AND
 - **出现位置**：前台卡片（`item/query`、排行、搜索、相关内容、合集条目、`content.item` 列表视图）与详情的 `shareUrl`，后台编辑视图（`item/get/{id}`）的 `shareUrl`（有线上版本时是线上地址，从未发布时是上线后的地址）与 `draftShareUrl`（有未上线的新版本、且上线后地址会变时给出）；对象摘要 `ObjectSummary.link.web` 与之同值（评论、互动等模块透传给客户端）。`link.app` 仍为 `/content/item/{id}`。
 - `shareUrl` 为空时客户端隐藏网页分享，或改用 App 内链接。配置读取缓存 30 秒，改配置最长 30 秒后生效。
 
+**来源记录与规范链接**（`content_sources`，[client-content](client-content.md) §3.1）：转载内容的 canonical 指向本站还是原文，是每个来源与本站的授权约定，随来源走。来源记录按主机名（`host`，小写、去 `www.`，唯一）登记，`canonical_to_source = true` 时：该主机名下 `origin` 为 `reprint` / `compiled` 的内容，详情的 `canonicalUrl` 为 `source_url`，且不进 sitemap（§12 `sitemap/*`）；`shareUrl` 与 `link.web` 仍是本站地址（App 分享到的是承载评论与互动的本站页面）。编辑在单篇上填的 `canonical_url` 优先于来源设置。改动来源的这一设置（新建、修改、删除）时，对受影响的已发布内容逐条发 `ObjectUpdated(changes = [link])`，网页缓存随之失效。
+
 ## 6. 状态、版本与审核
 
 ```
@@ -324,14 +329,20 @@ draft ──提交──► pending ──通过──► published ──撤回
 
 ### 6.2 生命周期影响
 
-内容状态变化时，其他模块的行为由事件驱动、在各自规范中实现，本模块只负责在对象解析和访问策略里如实反映状态。除下表的 `content.item.*` 事件外，本模块同时发布通用对象事件，能力模块（评论、互动）只需订阅通用事件、不认识 content：撤回 / 归档 / 进回收站发 `ObjectUnavailable(permanent = false)`，重新发布发 `ObjectAvailable`，彻底删除发 `ObjectUnavailable(permanent = true)`。
+内容状态变化时，其他模块的行为由事件驱动、在各自规范中实现，本模块只负责在对象解析和访问策略里如实反映状态。除下表的 `content.item.*` 事件外，本模块同时发布通用对象事件，能力模块（评论、互动、站点发布）只需订阅通用事件、不认识 content（[site-module](site-module.md) §9 U1 / U2）：
+
+- 之前不对外可见 → 上线（**首次发布**、撤回后重新发布、撤回后归档且类型允许读归档内容）发 `ObjectAvailable`；
+- 已在线的内容公开表示变化发 `ObjectUpdated`，`changes` 标出变化的方面：新版本上线 `revision`、slug 改了 `slug`、可见性改了 `visibility`、规范链接 / 跳转地址 / 来源链接（或来源记录的 canonical 设置）变了 `link`；计数、权重、置顶不发；
+- 撤回 / 进回收站 / 到期下线（以及类型不允许读的归档）发 `ObjectUnavailable(permanent = false)`；彻底删除发 `ObjectUnavailable(permanent = true)`，曾经上线过的内容同时写墓碑 `content_item_tombstones`。
+
+**详情的不可见三态**（机器码，客户端按 `message` 区分）：`CONTENT_NOT_FOUND`（10201，从未存在、类型不匹配、从未上线过的草稿 / 待审 / 定时）；`CONTENT_UNAVAILABLE`（10201，上线过、现在撤回 / 归档且类型不允许读 / 在回收站 / 已到期，之后可能回来；取代原来的 `CONTENT_WITHDRAWN`）；`CONTENT_GONE`（10203 `RESOURCE_DELETED`，墓碑存在：曾经上线、已彻底删除，按 ID 与按 slug 取都适用）。框架把 10203 映射成 HTTP 404，网页的 410 由站点模块的已删除台账给出（public-routes §7.2）。
 
 | 事件 | 对外可见性 | 评论 | 收藏 / 足迹 | 搜索 | 推送深链 | 合集条目 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 撤回 `content.item.withdrawn` | 详情返回「内容已撤回」 | 不可新增；已有评论随对象不可见 | 保留记录，列表中显示「已失效」 | 从索引移除 | 打开时提示已撤回 | 自动隐藏，重新发布后恢复（延后） |
+| 撤回 `content.item.withdrawn` | 详情返回 `CONTENT_UNAVAILABLE` | 不可新增；已有评论随对象不可见 | 保留记录，列表中显示「已失效」 | 从索引移除 | 打开时提示已撤回 | 自动隐藏，重新发布后恢复（延后） |
 | 归档 `content.item.archived` | 按类型配置 | 关闭新增，已有评论只读 | 保留 | 从索引移除 | 正常打开 | 移除 |
 | 重新发布 `content.item.published` | 恢复 | 恢复 | 恢复 | 重新索引 | 正常 | 恢复 |
-| 彻底删除 `content.item.deleted` | 404 | 由评论模块清理 | 由互动模块清理 | 移除 | 打开提示不存在 | 移除 |
+| 彻底删除 `content.item.deleted` | `CONTENT_GONE`（墓碑） | 由评论模块清理 | 由互动模块清理 | 移除 | 打开提示不存在 | 移除 |
 
 ## 7. 合集：专题与推荐位
 
@@ -379,10 +390,10 @@ draft ──提交──► pending ──通过──► published ──撤回
 
 ## 9. 统计、排行与搜索
 
-- **阅读计数**：P1 在详情读取的事务里直接 `view_count + 1` 并 upsert 按日统计表 `content_item_stats_daily(item_id, day, views, comments, favorites)`，同时发布 `ObjectViewed`。登录用户在 `content.view.dedup_seconds` 内重复浏览只计一次（用 Redis `setIfAbsent`；没有 Redis 或匿名时每次都计）。原设想的「Redis 累加、定时批量回写」留待流量需要时再做。
+- **阅读计数**：在详情读取（`view` 缺省 true）或浏览信标 `POST item/view/{id}` 的事务里直接 `view_count + 1` 并 upsert 按日统计表 `content_item_stats_daily(item_id, day, views, comments, favorites)`，同时发布 `ObjectViewed`。同一访问者在 `content.view.dedup_seconds` 内重复浏览只计一次——登录用户按账号、匿名按客户端地址（框架按 `ratelimit.trusted_proxies` 解析的可信地址），用 Redis `setIfAbsent`；没有 Redis、窗口为 0 或拿不到地址时每次都计。网页门户的服务端渲染用 `view=false`，浏览只由页面信标上报（[client-content](client-content.md) §9 G1：缓存的一次渲染对应成千上万次访问，渲染时也没有访问者身份）。原设想的「Redis 累加、定时批量回写」留待流量需要时再做。
 - **排行**：日 / 周 / 月榜按日统计表聚合（聚合列取 `::bigint`，结果按整数读）。
 - **归一化热度**（筛选器维度 `metric.popularity`，filter-module §3.4）：`s = 阅读 + 10 × 评论 + 5 × 收藏`，`p = s / (s + 1000)`；不含时间衰减，保证键集游标稳定。
-- **搜索**：`ContentSearchEngine` 接口。默认实现用 PostgreSQL `pg_trgm`（GIN 索引 title、summary、body_text），`ILIKE` 加相似度排序；需要中文分词或大规模检索时换成 zhparser 或外部搜索引擎，接口不变。搜索只覆盖已发布、公开的内容，按 IP 限流。
+- **搜索**：`ContentSearchEngine` 接口。默认实现用 PostgreSQL `pg_trgm`（GIN 索引 title、summary、body_text），`ILIKE` 加相似度排序；需要中文分词或大规模检索时换成 zhparser 或外部搜索引擎，接口不变。搜索只覆盖已发布、公开的内容，按真实客户端 IP 限流。
 
 ```kotlin
 interface ContentSearchEngine {
@@ -402,10 +413,10 @@ interface ContentSearchEngine {
 | `content.item.saved`、`content.item.submitted` | `ContentItemSaved`（created, producer?）、`ContentItemSubmitted`（submitterUserId?） | 可重试 | 编辑台、产品的 AI 加工（如 itwind newsroom） |
 | `content.item.published`、`content.item.withdrawn`、`content.item.archived`、`content.item.trashed`、`content.item.deleted` | `ContentItemPublished`（title, primaryTermId?, publishedAt, republished, revisionUpdate）、`ContentItemWithdrawn`（reason?）、`ContentItemArchived`、`ContentItemTrashed`、`ContentItemDeleted` | 可重试 | 搜索、推送、缓存 |
 | `content.term.changed`、`content.collection.changed` | `ContentTermChanged` / `ContentCollectionChanged`（action = `created` / `updated` / `deleted`） | 可重试 | 缓存、搜索 |
-| `object.viewed`、`object.unavailable`、`object.available` | 通用 `contract.core.ObjectViewed` / `ObjectUnavailable` / `ObjectAvailable` | 可重试 | 互动（足迹、失效）、评论（清理） |
+| `object.viewed`、`object.unavailable`、`object.available`、`object.updated` | 通用 `contract.core.ObjectViewed` / `ObjectUnavailable` / `ObjectAvailable` / `ObjectUpdated`（§6.2） | 可重试 | 互动（足迹、失效）、评论（清理）、站点发布（缓存失效、搜索引擎推送） |
 
 - 内容事件都实现父接口 `ContentItemEvent : SuiteEvent`（itemId, contentType, status, revisionId?），subject 为 `content.item:<id>`，subjectVersion 为内容的 `version`。
-- **没有单独的 `content.item.viewed`**：详情读取发布通用的 `ObjectViewed`（每次读取一次，匿名时 viewerUserId 为空），interaction 订阅它写足迹。
+- **没有单独的 `content.item.viewed`**：详情读取（`view` 缺省 true）与浏览信标发布通用的 `ObjectViewed`（匿名时 viewerUserId 为空），interaction 订阅它写足迹。`view=false` 的读取不发；信标在去重窗口内重复上报时，有登录访问者仍发（足迹的最近浏览时间要前进），匿名则不发。
 - 本模块订阅通用 `ObjectCounterChanged`（同步）回写 comment_count / favorite_count。
 - 以上事件类型都在 bootstrap 里登记到 `SerializerDomainEventCodec`。
 
@@ -418,9 +429,9 @@ interface ContentSearchEngine {
 | `ContentRegistry` | 注册类型、分类法（字段类型、块类型扩展延后） | 内置（`withBuiltins()`，bindIfAbsent） |
 | `ContentPublishPolicy`（`fun interface`）+ `ContentPublishPolicies`（按 producer 登记） | 决定一次提交是否免审：`decide(ContentPublishRequest): ContentPublishDecision` | 按类型 / 栏目配置 |
 | `ContentSearchEngine` | 搜索 | pg_trgm |
-| `ContentAuthorResolver` | 作者展示资料（昵称、头像） | 延后（P1 只返回 author_user_id / author_name） |
+| `ContentAuthorResolver`（`fun interface`，`authors(userIds): Map<Long, ContentAuthorProfile>`） | 作者展示资料（昵称、头像、简介，只含公开字段）：作者页 `author/{userId}` | bindIfAbsent：读账号模块的 `port.AccountProfileReader`（调用时取；注销的账号视为没有资料，没有简介）；产品在 content 之前绑定即可覆盖 |
 | `MediaService`（使用方） | 上传业务类型注册、引用登记、媒体展开 | infra 媒体标准 |
-| `ObjectResolver`（实现方） | 注册 `content.item`、`content.collection`：标题、链接、封面、拥有者和 capabilities（按类型能力与当前状态得出，如未发布不含 `comment`、`favorite`）。`content.item` 的 `link.web` 是分享链接（§5.6，未配置时为空），`link.app` 为 `/content/item/{id}`；列表视图与 `item/query` 的卡片同形 | 内置 |
+| `ObjectResolver`（实现方） | 注册 `content.item`、`content.collection`：标题、链接、封面、拥有者和 capabilities（按类型能力与当前状态得出，如未发布不含 `comment`、`favorite`）。`content.item` 的 `link.web` 是分享链接（§5.6，未配置时为空），`link.app` 为 `/content/item/{id}`，可见时带 `publishedAt` 与 `updatedAt`（= 线上版本更新时间）；列表视图与 `item/query` 的卡片同形 | 内置 |
 | `ObjectAccessPolicy`（实现方） | 回答「某人现在能否对某条内容做某事」：查看、评论、收藏、读取其媒体。考虑状态、可见性（会员 / 密码）、栏目的评论开关 | 内置 |
 
 ### 10.3 外部写入端口
@@ -461,13 +472,20 @@ interface ContentDraftWriter {
 | 接口 | 说明 |
 | --- | --- |
 | `GET term/tree?taxonomy=category` | 栏目树（只含 visible） |
-| `GET term/list?taxonomy=tag&...` | 词条列表（热门标签等） |
+| `GET term/list?taxonomy=tag&sort&keyword&limit&minItems` | 词条列表（热门标签等）；`minItems` 只给已发布内容数不少于它的词条（标签页薄页阈值） |
+| `GET term/get?taxonomy&slug` | 按 slug 取一个词条：名称、描述、封面、SEO 字段、`itemCount`、设置、物化路径；只给启用的词条，栏目还要求自身与上级都可见；否则 `TERM_NOT_FOUND` |
 | `GET item/query` | §8 通用查询 |
-| `GET item/get/{id}`、`GET item/resolve?type&slug` | 详情（按 ID 或 slug；密码内容需带 password 且登录）；记一次浏览并发出通用 `ObjectViewed`，足迹由 interaction 订阅后记录 |
+| `GET item/get/{id}`、`GET item/resolve?type&slug` | 详情（按 ID 或 slug；密码内容需带 password 且登录）。`view`（缺省 true）：记一次浏览并发出通用 `ObjectViewed`，足迹由 interaction 订阅后记录；网页服务端渲染传 `view=false`（不计数、不发事件）。不可见时按 §6.2 的三态机器码；会员可见 / 密码内容匿名 `LOGIN_REQUIRED`。`canonicalUrl` 按 §5.6（编辑填写 ∥ 来源记录指向原文 ∥ 空），带 `contentUpdatedAt` |
+| `POST item/view/{id}` | 浏览信标（网页页面可见后上报一次）：匿名可调；只有已发布内容计数，同一访问者（账号，匿名按客户端地址）在 `content.view.dedup_seconds` 内只计一次；返回 `{ counted }`；可见性错误同详情；按 IP 限流（每分钟 120 次，`CONTENT_VIEW_RATE_LIMITED`） |
+| `GET sitemap/shards` | sitemap 分片：`[{ id, lastmod, count }]`，按 `published_at` 所在 UTC 月（`2026-10`），单月超过 50 000 条拆成 `2026-10a`（1–15 日）/ `2026-10b`；只计进 sitemap 的内容：已发布、未过期、公开（非会员 / 密码）、非跳转型、规范链接不指向外站（编辑填了外站 `canonical_url`，或来源记录指向原文） |
+| `GET sitemap/items?shard&cursor&limit` | 分片内的内容（发布时间升序、键集游标，`limit` ≤ 5000，缺省 5000）：`{ list: [{ id, type, slug?, shareUrl?, publishedAt, contentUpdatedAt, cover? }], nextCursor? }`；分片格式不对或没有内容 `SITEMAP_SHARD_NOT_FOUND` |
+| `GET author/{userId}` | 作者资料（`ContentAuthorResolver`）与匿名可见的已发布内容数：`{ userId, nickname?, avatar?, bio?, itemCount }`；既没有资料也没有内容 `AUTHOR_NOT_FOUND` |
 | `GET item/ranking?period&by&types&cursor&limit` | 排行（period 默认 day，by 默认 views） |
-| `GET item/search?q&types&cursor&limit` | 搜索（按 IP 限流） |
+| `GET item/search?q&types&cursor&limit` | 搜索（按真实客户端 IP 限流，网页服务经 `ratelimit.trusted_proxies` 转发） |
 | `GET collection/get/{code}` | 推荐位或专题（含分区与条目） |
 | `GET submission/form?type`（匿名可读）、`POST submission/create`（每用户每小时 10 次，超限 429 `CONTENT_SUBMIT_RATE_LIMITED`）、`GET submission/mine` | 投稿（字段见 §11） |
+
+**限流**（产品决定 8，[site-module](site-module.md) §13）：匿名、可缓存的只读接口——详情、slug 解析、通用查询、排行、`term/*`、`collection/get`、`sitemap/*`、`author/*`——**不按 IP 限流**：网页服务的渲染都来自同一个出口，按 IP 限流等于所有访客一起被限，滥用防护放在边缘（CDN / nginx）。搜索、浏览信标与写接口照常限流。
 
 **后台（`/admin/content/*`）**：
 
@@ -493,6 +511,8 @@ interface ContentDraftWriter {
 | `GET submission/page` | `content:submission:query` |
 | `POST submission/approve/{id}`、`POST submission/reject/{id}` | `content:submission:review` |
 | `GET review-log/page` | `content:review-log:query` |
+| `GET source/page`、`source/get/{id}` | `content:source:query` |
+| `POST source/create` / `PUT source/update` / `DELETE source/delete/{id}` | `content:source:create` / `update` / `delete` |
 
 统计页延后。
 
@@ -514,14 +534,16 @@ interface ContentDraftWriter {
 | `content_collections` / `_sections` / `_entries` | 合集 | 已建 |
 | `content_item_stats_daily` | 按日统计，唯一(item_id, day) | 已建 |
 | `content_review_logs` | 审核日志（action, from_status, to_status, actor_kind, actor_id, note） | 已建 |
+| `content_item_tombstones` | 曾经上线、已彻底删除的内容（id = 原内容 ID, type, slug, deleted_at）：详情据此返回 `CONTENT_GONE` | 已建（V004） |
+| `content_sources` | 来源记录（name, host 唯一, canonical_to_source, note） | 已建（V004） |
 
-全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`；`V002__item_original_published_at.sql` 加 `content_items.original_published_at`；`V003__revision_scoped_fields.sql` 给 `content_revisions` 补版本化字段列），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
+全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`；`V002__item_original_published_at.sql` 加 `content_items.original_published_at`；`V003__revision_scoped_fields.sql` 给 `content_revisions` 补版本化字段列；`V004__web_portal_reads.sql` 加 `content_updated_at`（回填 `published_at`）、`source_host`（按 `source_url` 回填）、墓碑表、来源记录表与「来源管理」菜单），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
 
 ## 14. 权限点
 
 命名 `content:<resource>:<action>`，资源段与后台路由段一致（§12）。P1 实际权限点（全部写在 V001 菜单种子里，默认授予 `super_admin`）：
 
-`content:type:query`、`content:term:query` / `create` / `update` / `delete`、`content:item:query` / `create` / `update` / `import` / `submit` / `review` / `publish` / `withdraw` / `archive` / `delete` / `pin`、`content:collection:query` / `create` / `update` / `delete`、`content:submission:query` / `review`、`content:review-log:query`。
+`content:type:query`、`content:term:query` / `create` / `update` / `delete`、`content:item:query` / `create` / `update` / `import` / `submit` / `review` / `publish` / `withdraw` / `archive` / `delete` / `pin`、`content:collection:query` / `create` / `update` / `delete`、`content:submission:query` / `review`、`content:review-log:query`；V004 增加 `content:source:query` / `create` / `update` / `delete`（「来源管理」页面与按钮）。
 
 状态机的每个转换对应其中一个权限点（`ContentStateMachine`）。原设想的 `content:item:edit-others`（改别人的内容）与 `content:stats:view` 未实现，随栏目级权限与统计页再加。
 

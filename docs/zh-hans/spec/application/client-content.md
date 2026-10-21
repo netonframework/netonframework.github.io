@@ -207,6 +207,14 @@ export default defineFrontModule({
 | G7 | `MediaView` 没有宽高与派生规格；`content.*` 媒体是 `DELEGATED`，只发 10 分钟签名地址 | CLS；缓存的 HTML 里签名地址会过期，图片搜索与 OG 图失效 | 见 [infra-media.md](infra-media.md) §7.3「CDN 地址策略」（产品决定 1）与 infra M2 图片派生 |
 | G8 | 首次发布不发 `ObjectAvailable`；线上版本更新没有通用事件 | site 模块只订阅通用事件就能失效缓存、推送收录 | 首次发布也发 `ObjectAvailable`；新增通用 `ObjectUpdated`（线上表示变化：新版本上线、slug 变化），见 site-module §9 |
 
+**服务端实现状态（2026-10-22，module-content `V004__web_portal_reads.sql`，接口见 [content-module.md](content-module.md) §6.2、§12）**：G1、G2（含墓碑）、G3、G4、G5、G6、G8 与 §3.1 的来源记录已实现，真库测试全绿；content 的匿名可缓存读取已去掉 IP 限流（comment 的匿名读取本来就没有）。与上表的出入：
+
+- `CONTENT_GONE` 的信封码是 10203（`RESOURCE_DELETED`），框架映射成 HTTP 404 而不是 410——客户端只看机器码；网页的 410 由已删除台账给出（public-routes §7.2），页面层照常返回 `gone`。
+- 信标去重：同一访问者（登录按账号、匿名按客户端地址）在 `content.view.dedup_seconds` 内只计一次，返回 `{ counted }`；接口另按 IP 限流（每分钟 120 次）。会员可见 / 密码内容匿名上报返回 `LOGIN_REQUIRED`。
+- 会员可见 / 密码内容的详情匿名读取仍返回 `LOGIN_REQUIRED`（本模块据此渲染「登录后查看」占位）。
+- `term/get` 返回物化路径 `path`（面包屑）与设置 `settings`（栏目 `kind = link` 时有 `linkUrl`，供 307）。
+- sitemap 分片按 UTC 月；分片内条目已排除跳转型、非公开、规范链接指向外站（含来源记录指向原文）的内容。
+
 ## 10. 分期
 
 | 期 | 内容 | 依赖 |

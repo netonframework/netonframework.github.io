@@ -305,6 +305,7 @@ interface CommentContentFilter {
 - 发评论：按用户限流（10 次/分钟）；同一用户对同一对象在 `comment.duplicate.window_seconds` 内重复发送相同内容视为重复提交。按 IP 限流、新注册账号冷却期延后。
 - 投票（60 次/分钟）、举报（10 次/分钟）、删除（30 次/分钟）：按用户限流。
 - 全部经 Neton 路由限流和 Redis 计数实现，阈值在配置里。
+- **匿名读取不按 IP 限流**（产品决定 8，[site-module](site-module.md) §13）：`list`、`replies`、`chain`、`get`、`ranking` 是匿名、可缓存的只读接口，网页服务的渲染都来自同一个出口，按 IP 限流等于所有访客一起被限；滥用防护放在边缘（CDN / nginx）。写接口按用户限流（见上）。
 
 ## 9. 扩展端口
 
