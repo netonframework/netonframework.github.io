@@ -579,7 +579,7 @@ when (mount?.mode) {
 
 | 表 | 关键字段 |
 | --- | --- |
-| `filter_nodes` | id, kind（`channel` / `block`）, code（唯一，对外地址）, name, settings（text JSON：`pinned`、`defaultVisible`、`userAddable`、图标、每页条数）, sort, status, start_at?, end_at? —— 只存 filter 自己管理的节点 |
+| `filter_nodes` | id, kind（`channel` / `block`）, code（唯一，对外地址）, name, placement?（楼层所在位置，V002）, settings（text JSON：`pinned`、`defaultVisible`、`userAddable`、图标、每页条数）, sort, status, start_at?, end_at? —— 只存 filter 自己管理的节点 |
 | `filter_mounts` | id, mount_point（`filter.channel` / `content.term` / …）, node_ref（`type:id`）, filter_id, mode, item_limit?（`limit` 是保留字）, card_style（text JSON：每种对象类型的卡片样式，如 `{"content.item":"auto","comment.comment":"quote"}`）, status, start_at?, end_at?, created_by, updated_at；**唯一(node_ref, 生效中)**：一个节点同一时刻只有一个生效挂载 |
 
 - 有效期：可以预先挂一个「发布会当天」的筛选器，到点生效、过期自动回落到节点原列表或上一个长期挂载（按 `start_at` / `end_at` 选生效的那条）。**实现**：生效挂载 = 启用、在有效期内、筛选器已发布且未停用的挂载里 `start_at` 最晚的一条（长期挂载 `start_at` 为空，视为最早）；两条启用挂载有效期重叠且开始时间相同时无法决定，保存时拒绝（`MOUNT_CONFLICT`）。`mountOf` 结果在本节点缓存 10 秒，挂载变更时清空。
@@ -593,10 +593,11 @@ when (mount?.mode) {
 | `GET /app/channel/list` | 频道列表（已按状态、有效期过滤），含每个频道的卡片样式 |
 | `GET /app/channel/{code}?cursor=&limit=` | 频道内容：按 code 找到节点 → 生效挂载 → 筛选器已发布版本 → 卡片流 |
 | `GET /app/block/{code}?limit=` | 楼层内容 |
+| `GET /app/block/placement/{placement}` | 某个位置（如门户首页 `home`）上的全部楼层，按后台排序、各自条数一次取齐 |
 | 节点所属模块的原接口 | 如 `GET /app/content/item/query?category=fabuhui`：按 §10.4 自动应用挂载，接口不变 |
 | `GET /app/filter/{id}?cursor=&limit=` 与模块原生接口的 `filter` 参数 | 不经挂载、直接按筛选器取（§6.7）；需筛选器开启 `publicAccess` |
 
-- 匿名只读接口（`/app/channel/*`、`/app/block/{code}`、`/app/filter/{id}`）不按 IP 限流：结果可缓存，网页服务端渲染的请求都来自同一个出口 IP，按 IP 限流会让所有访客一起被限（爬虫翻频道分页触发 429 还会让页面变成 500）；防刷由边缘（CDN / nginx）负责，搜索与写接口照常限流（public-routes §5、site-module §13）。
+- 匿名只读接口（`/app/channel/*`、`/app/block/{code}`、`/app/block/placement/{placement}`、`/app/filter/{id}`）不按 IP 限流：结果可缓存，网页服务端渲染的请求都来自同一个出口 IP，按 IP 限流会让所有访客一起被限（爬虫翻频道分页触发 429 还会让页面变成 500）；防刷由边缘（CDN / nginx）负责，搜索与写接口照常限流（public-routes §5、site-module §13）。
 - 用户的频道定制（增删、排序）：未登录存在客户端；登录后存账号偏好（account 的偏好设置），服务端只校验频道仍存在且 `userAddable`。
 
 **实现的响应形状**（统一信封 `{code, message, data}`）：
@@ -604,9 +605,11 @@ when (mount?.mode) {
 - `GET /app/channel/list` → `data: [{code, name, settings, sort, cardStyle}]`；没有生效挂载的频道不下发。`settings` 是节点设置原样（`pinned`、`defaultVisible`、`userAddable`、`icon`、`pageSize`……）。
 - `GET /app/channel/{code}?cursor=&limit=` → `data: {node: {code, name, settings, sort, cardStyle}, list: [Card], nextCursor, partial}`；`limit` 默认取 `settings.pageSize`，否则 20，上限 100。频道不存在或不在有效期 404 `CHANNEL_NOT_FOUND`；没有生效挂载时 `list` 为空。
 - `GET /app/block/{code}?limit=` → 同上，`nextCursor` 恒为 null；默认 `settings.pageSize`，否则 6，上限 50；不存在 404 `BLOCK_NOT_FOUND`。
+- `GET /app/block/placement/{placement}` → `data: {placement, list: [与 /app/block/{code} 同形]}`：`placement` 相同、启用、在有效期内的楼层按 `sort`、`id`，各按自己的 `settings.pageSize`（缺省 6，上限 50）取卡片，最多 30 层；没有生效挂载或结果为空的楼层照样返回（客户端决定隐藏）；不认识的位置返回空列表，取值不合法 400 `BLOCK_PLACEMENT_INVALID`。
 - `GET /app/filter/{id}?cursor=&limit=` → `data: {list: [Card], nextCursor, partial}`。
 - `Card` = `{ref: {type, id}, summary: ObjectSummary（exists、visible、title、summary、cover、link{app,web}、ownerUserIds、capabilities）, sortValues: [值], view?: 列表视图（§6.1）}`；值的 JSON 见 §5.2。
 - 客户端按 `ref.type` + `card_style` 渲染；遇到不认识的卡片类型时跳过，不报错（新模块上线不破坏旧客户端）。
+- **楼层位置**（2026-10-22，itwind C3）：楼层节点（`kind = block`）可带 `placement`（`[a-z0-9][a-z0-9._-]{0,63}`，如 `home`、`landing.618`；频道恒为空，写了报 `NODE_PLACEMENT_INVALID`）。门户首页「放哪些楼层、什么顺序、每层几条」由此成为编辑配置：后台「频道与楼层」里改位置、拖动排序、改每层条数，内容在挂载的筛选器里改，网页不改代码。产品的缺省楼层由产品自己的迁移建立（如 itwind-backend V006 的手机 / 电脑 / AI / 汽车 / 游戏五层），filter 不预置任何楼层。后台节点接口 `page` / `get` / `create` / `update` 都带 `placement`（`page` 可按它筛选）。
 - 编辑型推荐（手工挑选、自定义标题封面）仍然是 content 的合集，不在 filter 里重做；频道要展示一个合集时，挂 content 提供的内置筛选器 `content.collection:<code>`。
 
 ## 11. 数据表
@@ -621,7 +624,7 @@ when (mount?.mode) {
 | `filter_index_entries`（P3） | ref, source, dims（text JSON + 生成的数组 / 范围列）, sort_values, visibility_group, updated_at |
 | `filter_audit_logs` | id, subject_type（`filter` / `node` / `mount`）, subject_id, action（created / updated / published / disabled / enabled / broken / repaired / deleted / mounted / remounted / unmounted）, actor_kind, actor_id, detail, created_at |
 
-**实现**：V001 建了 `filter_filters`、`filter_versions`、`filter_references`、`filter_nodes`、`filter_mounts`、`filter_audit_logs` 与后台菜单；`filter_materialized`、`filter_index_entries` 随 F6。
+**实现**：V001 建了 `filter_filters`、`filter_versions`、`filter_references`、`filter_nodes`、`filter_mounts`、`filter_audit_logs` 与后台菜单；V002 给 `filter_nodes` 加 `placement`；`filter_materialized`、`filter_index_entries` 随 F6。
 
 所有 JSON 字段存 `text`（套件统一约定），需要时临时 `::jsonb`。
 

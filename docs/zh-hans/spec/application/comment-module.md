@@ -24,6 +24,7 @@
 | 对象删除清理评论（订阅 `ObjectUnavailable`，`permanent = true`） | 已实现 |
 | 用户装饰 `CommentUserDecorator` 默认实现（经 account 的 `port.AccountProfileReader` 批量取昵称、头像） | 已实现 |
 | 事件 `CommentActivity`（created / replied / voted / hidden / removed / deleted / restored）、评论数走通用 `ObjectCounterChanged` | 已实现 |
+| 网页端（client-comment §9，2026-10-22）：`POST viewer-state`（我的票与我的评论）、第一页 `settings`、`get/{id}` 带所属对象标题与链接、`comment.comment` 的 `link.web` = 对象地址 + `#comment-{id}`、隐藏 / 删除 / 恢复 / 折叠发通用对象事件 | 已实现 |
 | @提及（`mentions` 列已建，未解析）、`comment.comment.mentioned` 事件、「@我的」 | 延后 |
 | 禁言（§7.5） | 延后 |
 | 按对象类型分别配置（P1 是全局配置 + 单对象覆盖审核模式与展示形态；IP 属地与设备小尾巴已能按类型关闭） | 延后 |
@@ -341,6 +342,9 @@ interface CommentUserDecorator {
 | `object.counter_changed`（counter = `comments`） | `contract.core.ObjectCounterChanged` | 同步（事务内） | 对象所在模块回写评论数 |
 | `comment.comment.created`、`comment.comment.replied`、`comment.comment.voted` | `contract.comment.CommentActivity(kind, target, commentId, authorUserId?, replyToUserId?, parentId?, vote?)`，subject 为 `comment.comment:<id>` | 可重试 | 通知、互动统计、搜索 |
 | `comment.comment.hidden`、`comment.comment.removed`、`comment.comment.deleted`、`comment.comment.restored` | 同上 | 可重试 | 通知、搜索、缓存 |
+| `object.unavailable`（subject = `comment.comment:<id>`，`permanent = false`） | `contract.core.ObjectUnavailable` | 可重试 | 评论离开「计入评论数」的状态（隐藏、管理员删除、作者删除、送审）：site 失效 `obj:comment.comment:{id}`（expire），interaction 标记点赞收藏失效；对象被彻底删除清理评论时 `permanent = true` |
+| `object.available`（subject = `comment.comment:<id>`） | `contract.core.ObjectAvailable` | 可重试 | 评论回到计入评论数的状态（恢复、审核通过） |
+| `object.updated`（subject = `comment.comment:<id>`，changes = `visibility`） | `contract.core.ObjectUpdated` | 可重试 | 折叠 ↔ 展开（仍计入评论数，但公开表示变了）：site 刷新 `obj:comment.comment:{id}` |
 | `comment.comment.mentioned` | — | — | 延后（随 @提及） |
 
 不再单独定义 `comment.target.count_changed`。对象所在模块订阅 `ObjectCounterChanged`（counter = `comments`）回写自己的评论数；通知模块订阅 `CommentActivity`。上述事件都在 bootstrap 里登记到 `SerializerDomainEventCodec`。
@@ -355,10 +359,11 @@ interface CommentUserDecorator {
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET list?targetType&targetId&mode=stack\|thread&order=latest\|earliest\|hot&cursor` | 评论列表。第一页额外返回置顶、精选、热门评论和对象的评论数、状态 |
+| `GET list?targetType&targetId&mode=stack\|thread&order=latest\|earliest\|hot&cursor` | 评论列表。第一页额外返回置顶、精选、热门评论、对象的评论数与状态，以及评论框设置 `settings: { imagesMax, contentMaxLength, closed, locked, mode }`（之后的页为 null）。对匿名与登录用户同形（登录用户的 `myVote` 照常给，匿名为 0） |
 | `GET replies?rootId&order&cursor` | 楼中楼：某条顶层评论的全部回复 |
 | `GET chain/{id}` | 盖楼：某条评论的完整引用链（展开折叠层） |
-| `GET get/{id}` | 单条评论（分享、跳转定位用） |
+| `GET get/{id}` | 单条评论（分享、跳转定位用）：与「我的评论」一项同形 `{ comment, available, targetTitle, targetAppLink, targetWebLink, parent }`（`comment` 带盖楼引用链，`parent` 是被回复的那条，顶层为 null）；所属对象看不到时按对象的原因码拒绝 |
+| `POST viewer-state` | 访问者状态（需登录，按用户限流 120 次/分钟）：`{ commentIds: [id] }`（≤ 100，超出 400 `TOO_MANY_COMMENT_IDS`）→ `{ votes: { "<id>": 1 \| -1 }, mine: [id] }`，只回答此人看得到的评论（可见性矩阵给出这一条，且能看所属对象），不认识或看不到的 ID 不出现；网页端水合后批量取（client-comment §9 C1） |
 | `POST create` | 发评论或回复：`{ targetType, targetId, parentId?, content, images?: [fileId], client?: app\|web\|wap, deviceTail?: 机型（≤32 字，字符集见 §3.2，不合规 `INVALID_DEVICE_TAIL`） }`；返回新评论（`ipRegion` 由服务端填） |
 | `POST vote` | 支持 / 反对 / 撤销：commentId, value(1 / -1 / 0) |
 | `POST report` | 举报 |

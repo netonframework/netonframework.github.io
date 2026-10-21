@@ -119,11 +119,11 @@ export default defineFrontModule({
 
 | 编号 | 缺口 | 建议 |
 | --- | --- | --- |
-| C1 | 列表若带「我的投票」等访问者字段，服务端渲染（匿名）拿不到，客户端又不该为此重拉整页 | 列表接口对匿名与登录用户返回同形数据，访问者字段拆到 `POST /app/comment/viewer-state`（body：`commentIds[]` ≤ 100 → `{ votes: { id: 1 \| -1 } , mine: [id] }`）；若列表本来就不含访问者字段，只需新增此接口 |
-| C2 | 评论被隐藏、删除时只发 `CommentActivity`（comment 契约） | 同时发通用 `ObjectUnavailable(subject = comment.comment:{id})`，恢复时 `ObjectAvailable`；site 模块只订阅通用事件（site-module §9） |
-| C3 | `comment.comment` 的 `ObjectSummary.link.web` 是否带 `#comment-{id}` 未定义 | 定义为「对象的 `link.web` + `#comment-{id}`」，site 模块刷新 CDN 时去掉锚点 |
+| C1（**已实现**，module-comment cea7b4b） | 列表若带「我的投票」等访问者字段，服务端渲染（匿名）拿不到，客户端又不该为此重拉整页 | 列表对匿名与登录用户同形（登录用户的 `myVote` 照给，App 用；匿名为 0）；新增 `POST /app/comment/viewer-state`：需登录、按用户限流，body `{ commentIds: [id] }`（≤ 100，超出 400 `TOO_MANY_COMMENT_IDS`；空 → `{ votes: {}, mine: [] }`）→ `{ votes: { "<id>": 1 \| -1 }, mine: [id] }`；只回答此人看得到的评论，不认识或看不到的 ID 不出现 |
+| C2（**已实现**） | 评论被隐藏、删除时只发 `CommentActivity`（comment 契约） | 隐藏、管理员删除、作者删除（以及送审）发 `ObjectUnavailable(subject = comment.comment:{id}, permanent = false)`，恢复 / 审核通过发 `ObjectAvailable`，折叠 ↔ 展开发 `ObjectUpdated(changes = visibility)`；都在状态变化的同一事务里、可重试投递。site 失效 `obj:comment.comment:{id}`（expire）；另外 site 按评论数（`ObjectCounterChanged(comments)`）在 10 秒窗口里刷新 `thread:{type}:{id}`，新评论对所有访客约 10 秒内可见（site-module §4） |
+| C3（**已实现**） | `comment.comment` 的 `ObjectSummary.link.web` 是否带 `#comment-{id}` 未定义 | 「对象的 `link.web` + `#comment-{id}`」（对象地址已带锚点时替换）；隐藏 / 删除的评论照样给出地址（site 据此找到所在页面），别人的待审评论与看不到的对象不给。App 链接沿用对象深链。另：`GET get/{id}` 改为返回 `{ comment, available, targetTitle, targetAppLink, targetWebLink, parent }`，定位页直接据 `targetWebLink` 跳转 |
 | C4 | 评论图只有短期签名地址 | 第一版客户端水合后再取；长期见 infra-media §7.3 CDN 地址策略 |
-| C5 | 第一页附带的对象设置是否含图片上限、是否允许匿名查看 | 第一页返回 `settings: { imagesMax, closed, locked, mode }`，前端据此渲染评论框 |
+| C5（**已实现**） | 第一页附带的对象设置是否含图片上限、是否允许匿名查看 | 第一页返回 `settings: { imagesMax, contentMaxLength, closed, locked, mode }`（之后的页为 null；锁定时 `list` 为空、`locked = true`），前端据此渲染评论框 |
 
 ## 10. 分期
 
