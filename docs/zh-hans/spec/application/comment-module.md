@@ -359,7 +359,7 @@ interface CommentUserDecorator {
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET list?targetType&targetId&mode=stack\|thread&order=latest\|earliest\|hot&cursor` | 评论列表。第一页额外返回置顶、精选、热门评论、对象的评论数与状态，以及评论框设置 `settings: { imagesMax, contentMaxLength, closed, locked, mode }`（之后的页为 null）。对匿名与登录用户同形（登录用户的 `myVote` 照常给，匿名为 0） |
+| `GET list?targetType&targetId&mode=stack\|thread&order=latest\|earliest\|hot&cursor` | 评论列表。第一页额外返回置顶、精选、热门评论、对象的评论数与状态，以及评论框设置 `settings: { imagesMax, contentMaxLength, closed, locked, mode }`（之后的页为 null）。对匿名与登录用户同形（登录用户的 `myVote` 照常给，匿名为 0）。每条评论带 `ipRegion`、`deviceTail` 与 `client`（app / web / wap：网页端在没有小尾巴时据此显示「来自网页版」）；三者只在给出正文时给，`client` 对导入评论为 null |
 | `GET replies?rootId&order&cursor` | 楼中楼：某条顶层评论的全部回复 |
 | `GET chain/{id}` | 盖楼：某条评论的完整引用链（展开折叠层） |
 | `GET get/{id}` | 单条评论（分享、跳转定位用）：与「我的评论」一项同形 `{ comment, available, targetTitle, targetAppLink, targetWebLink, parent }`（`comment` 带盖楼引用链，`parent` 是被回复的那条，顶层为 null）；所属对象看不到时按对象的原因码拒绝 |
