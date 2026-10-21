@@ -19,6 +19,7 @@
 | 热评榜 `ranking`（简化版：节点内存缓存 5 分钟） | 已实现（原计划 P2） |
 | 评论图片（上传业务类型 `comment.image`，经 `POST /app/infra/file/upload` 上传、发评论时 attach，§9.1）、评论导入 `CommentImporter` | 已实现（原计划 P2） |
 | IP 属地（服务端按可信客户端地址经 `contract.core.IpRegionResolver` 解析，§3.2）、设备小尾巴；两者都可全局关闭或按对象类型关闭 | 已实现（2026-10-18） |
+| 设备小尾巴的字符集与长度校验（原生评论不合规即 `INVALID_DEVICE_TAIL`）、导入评论带设备小尾巴（`ImportedComment.deviceTail`，§3.2 / §6） | 已实现（2026-10-21） |
 | 编辑评论 | 不提供（§4.7，有意不做） |
 | 对象删除清理评论（订阅 `ObjectUnavailable`，`permanent = true`） | 已实现 |
 | 用户装饰 `CommentUserDecorator` 默认实现（经 account 的 `port.AccountProfileReader` 批量取昵称、头像） | 已实现 |
@@ -88,7 +89,7 @@
 | 树 | parent_id?（回复的是哪条）, root_id（所在顶层评论）, path（祖先 ID 串 `/1/5/`，从顶层到父级，varchar）, depth, reply_to_user_id? |
 | 楼层 | floor：**每条评论都有楼号**（含回复），唯一(target_type, target_id, floor)。盖楼形态下引用链上每一层都显示自己的楼号；楼中楼形态下只在顶层显示 |
 | 内容 | content（纯文本，最长可配置）, mentions（text JSON：@ 的用户；P1 未使用）, images（text JSON：fileId 数组，上传业务类型 `comment.image`）, emoji 用文本占位符表示，客户端渲染 |
-| 环境 | ip_region（「IP 属地」展示文本，服务端解析，客户端传不进来，见下）, device_tail（客户端上报的机型：去控制字符、限 32 字，后台可关）, client（app / web / wap）。不存原始 IP |
+| 环境 | ip_region（「IP 属地」展示文本，服务端解析，客户端传不进来，见下）, device_tail（设备小尾巴：原生评论是客户端上报的机型，导入评论是来源站点展示的机型；varchar(64)，规则见下，后台可关）, client（app / web / wap）。不存原始 IP |
 | 互动 | support_count, against_count, reply_count（直接回复数）, descendant_count（整条链下的回复总数）, report_count |
 | 排序 | hot_score（double，§5.2）, hot_eligible（导入评论可配置为不参与热门） |
 | 状态 | status：`visible` / `pending`（待审） / `folded`（折叠，§7.4） / `hidden`（管理员隐藏，可恢复） / `removed`（管理员删除） / `deleted`（作者删除）；各状态的可见范围见 §3.4 |
@@ -96,6 +97,10 @@
 | 时间 | created_at, updated_at |
 
 - **IP 属地**：发评论时取框架解析后的可信客户端地址 `HttpRequest.clientAddress`（受 routing 的 `ratelimit.trusted_proxies` 约束，伪造的 `X-Forwarded-For` 改变不了结果），经套件端口 `contract.core.IpRegionResolver`（[content-platform-architecture.md](content-platform-architecture.md) §5.6，infra 默认实现）解析，保存 `IpRegion.display`：中国大陆显示省级，其他国家和地区显示国家 / 地区名，私有地址与库里查不到的显示「未知」。端口缺失、解析器给不出结论（库未配置、地址不合法）或失败时不记录（null），不阻断发评论。导入评论的属地由导入方给出。
+- **设备小尾巴**：评论旁的机型 / 客户端名（「iPhone 16 Pro Max」「Xiaomi 15」「HUAWEI Mate 80 Pro 雪域白」）。**只是展示文本**：原生评论来自客户端上报，导入评论来自来源站点，都不可信，不参与鉴权、风控、限流或统计。服务端统一规范化：去掉控制字符与不可见格式字符（Unicode Cf：零宽、双向覆盖等），各种空白合并为一个空格并去首尾；字符集为字母（含中日韩文字）、数字、空格与 `- _ . + ( ) / & ' · # , :`。
+  - 原生评论（`POST create` 的 `deviceTail`）：规范化后超过 **32** 个字符或含字符集以外的字符 → `400 INVALID_DEVICE_TAIL`，整条评论不发表（客户端应先按同样规则清洗：丢掉其他字符、截到 32）。为空视为没有。
+  - 导入评论（`ImportedComment.deviceTail`）：外部数据不因尾巴拒绝整条评论——丢掉字符集以外的字符，截到 **64** 个字符；什么都不剩视为没有。复查时只补空的，已有的不覆盖。
+  - 对象类型关闭了设备小尾巴（下条）时，原生与导入都不记录。
 - **开关**：`comment.ip_region.enabled` / `comment.device_tail.enabled` 全局开关，`comment.ip_region.disabled_types` / `comment.device_tail.disabled_types`（逗号分隔的对象类型）按类型关闭。关闭后不再记录，**已存的也不再展示**（接口返回 null）。
 - **path 用于盖楼**：查一页评论后，一次批量取出它们所有祖先，在服务端拼好引用链，避免客户端逐条请求。
 - **楼层深度上限**（默认 50）：超过上限的回复不再继续嵌套，而是作为新的一层，只引用直接父评论，防止引用链无限变长。
@@ -233,6 +238,7 @@ interface CommentImporter {
     suspend fun import(target: ObjectRef, items: List<ImportedComment>, options: CommentImportOptions = CommentImportOptions()): CommentImportResult
 }
 // ImportedComment(sourceRef, content, authorName?, authorAvatarUrl?, userId?, publishedAt, likes = 0, ipRegion?,
+//                 deviceTail?,                                                            // 设备小尾巴（§3.2，可空，向后兼容）
 //                 replyToSourceRef?, siteId?, siteUserId?, siteUsername?, siteUserUrl?)   // 后四项：外部站点身份（可空，向后兼容）
 // CommentImportOptions(likesAsSupport = true, countTowardsHot = true, batch?)
 // CommentImportResult(imported, skipped, failed: List<String>)   // 每条 "<sourceRef>:<错误码>"，错误码见 CommentImportCodes
@@ -243,6 +249,7 @@ interface CommentImporter {
 - 导入的评论 `origin=imported`：没有平台账号时用 external_author 展示名称和头像；也可以指定平台账号（如迁移旧站用户）。
 - 楼层按原始发布时间顺序分配；同一批里先导入被回复的评论，盖楼关系照常还原。
 - 原始点赞数可以作为初始支持数（按参数决定），之后的投票正常累加。采集源第二次复查时，若评论正文不变、点赞数变化（`sourceRef` 已存在），对**导入评论**（`origin=imported`、`likesAsSupport=true`）同步 `support_count` 与 `hot_score`（不新建、不动楼号 / 可见数）；平台原生评论的支持数来自真实投票，不被采集覆盖。
+- 设备小尾巴：来源站点展示的发帖机型（如 IT之家评论的 `Ta`）由导入方放进 `deviceTail`，按 §3.2 规范化后记录（不合规字符丢弃、截到 64，不拒绝评论）；复查时只给原来没有的补上。
 - 外部站点身份（[external-identity-module](external-identity-module.md)）：`ImportedComment` 带齐 `siteId + siteUserId` 且 `ExternalSiteIdentityWriter` 已绑定时，导入先 upsert 一条外部身份，写进 `comment_comments.external_identity_id`（弱引用，不加外键；模块没装时为 null）。未认领前仍按「来自 X 的网友 + 昵称」展示。
 - 导入的评论同样过敏感词和审核模式；不发 `CommentActivity` 事件，因此不触发「被回复 / 被 @」通知。
 - 后台可以按 origin 和来源筛选，批量隐藏或删除某次导入。
@@ -351,7 +358,7 @@ interface CommentUserDecorator {
 | `GET replies?rootId&order&cursor` | 楼中楼：某条顶层评论的全部回复 |
 | `GET chain/{id}` | 盖楼：某条评论的完整引用链（展开折叠层） |
 | `GET get/{id}` | 单条评论（分享、跳转定位用） |
-| `POST create` | 发评论或回复：`{ targetType, targetId, parentId?, content, images?: [fileId], client?: app\|web\|wap, deviceTail?: 机型（≤32 字） }`；返回新评论（`ipRegion` 由服务端填） |
+| `POST create` | 发评论或回复：`{ targetType, targetId, parentId?, content, images?: [fileId], client?: app\|web\|wap, deviceTail?: 机型（≤32 字，字符集见 §3.2，不合规 `INVALID_DEVICE_TAIL`） }`；返回新评论（`ipRegion` 由服务端填） |
 | `POST vote` | 支持 / 反对 / 撤销：commentId, value(1 / -1 / 0) |
 | `POST report` | 举报 |
 | `DELETE delete/{id}` | 删除自己的评论 |

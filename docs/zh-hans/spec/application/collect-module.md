@@ -92,6 +92,7 @@ CollectRecordTypeDefinition(
         field("publishedAt", CollectFieldType.DATETIME),
         field("likes", CollectFieldType.INT),
         field("ipRegion", CollectFieldType.TEXT),
+        field("deviceTail", CollectFieldType.TEXT),         // 设备小尾巴：来源站点展示的发帖机型（IT之家评论的 Ta）
         field("replyToOriginId", CollectFieldType.TEXT),   // 盖楼：回复的是哪条原始评论
         field("replyToAuthorName", CollectFieldType.TEXT), // 来源把回复都挂在楼主下、只在正文里点名（「回复 某某 :」）时，被回复的人
     ),
@@ -104,6 +105,8 @@ CollectRecordTypeDefinition(
 内置三种：`article`（标题、摘要、正文 HTML、作者、发布时间、封面、图片、标签、原文链接）、`comment`（如上）、`media`（图片 / 视频地址、尺寸、时长）。产品可以注册 `product`、`price`、`rank_entry` 等。
 
 **外部站点身份字段（2026-10-19，配合 [external-identity-module](external-identity-module.md)）**：`comment` 增加 `siteUserId` / `siteUserUrl`，`article` 增加 `authorId` / `authorUrl`，由各源抽取规则填充（IT之家评论 `Ui` → `siteUserId`、`UserIndexUrl` → `siteUserUrl`；少数派作者 `slug` → `authorId`）。`content.draft` 端口在交付带 `authorId` 的文章时、`comment.import` 端口在导入带 `siteUserId` 的评论时，经 `ExternalSiteIdentityWriter`（`ctx.getOrNull`，`site_id` 取来源 `code`）登记 / 更新一条外部身份；external-identity 未装时跳过、照常展示作者名。
+
+**设备小尾巴字段（2026-10-21）**：`comment` 增加 `deviceTail`（TEXT，≤64），`comment.import` 端口原样交给 `ImportedComment.deviceTail`，由 comment 规范化（comment 规范 §3.2）。IT之家的设备小尾巴只在其 App 评论接口里有（`cmt.ithome.com/api/comment/getnewscomment?newsid=<数字 id>` 的 `Ta`；移动站 `newscommentlistget` 不给），itwind 的采集样板改用它。
 
 ## 5. 采集执行
 
