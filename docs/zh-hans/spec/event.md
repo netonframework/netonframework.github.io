@@ -297,7 +297,8 @@ UPDATE ... SET status = 2 WHERE id = :id AND status = 1 AND claim_token = :token
 |---|---|
 | `PostgresDomainEventStore` | `DomainEventStore` 的 PostgreSQL 实现，表 `infra_domain_events`（V008 / V009 / V010）。构造时校验方言，非 PG 直接失败——`SKIP LOCKED` 与 `UPDATE … RETURNING` 都是 PG 语法。 |
 | `DomainEventDispatcher` | 领取 → 交回监听者 → 标记完成 / 退避重排 |
-| `DomainEventDispatchJob` | `@Job(fixedRate = 10s, mode = ALL_NODES)` 周期调用投递器 |
+| `DomainEventDispatchJob` | `@Job(fixedRate = 10s, mode = ALL_NODES)` 周期调用投递器：重试、滞留回收、其他节点写入的记录 |
+| `PromptEventDispatch` | **本节点即时投递**：`append` 写入后唤醒，按 50 ms / 250 ms / 1 s / 3 s 的节奏各领一轮（首轮通常就能领到刚提交的记录，后几轮覆盖较长的事务）；期间再有写入就从第一档重来，但每次都照样投递一轮，持续写入下不饥饿。端到端延迟从「最长 10 秒」降到约 50 ms（itwind C2：后台发布 → 门户缓存失效）。只唤醒写入它的进程，其他节点照旧靠周期任务 |
 
 投递任务用 `ALL_NODES` 而不是 `SINGLE_NODE`：领取本身已互斥，积压时多实例一起消费能更快追平。
 
@@ -360,7 +361,7 @@ UPDATE ... WHERE id IN (SELECT id FROM ... FOR UPDATE SKIP LOCKED) RETURNING ...
 
 | 用途 | 说明 | 依赖 | 前置 |
 |---|---|---|---|
-| **投递唤醒** | 现在靠 `fixedRate = 10s` 轮询，最坏延迟 10 秒。发布方提交后广播一个「有活了」信号，投递器立即醒。**Redis 挂了退回轮询**，只是慢，不会丢。 | pub/sub | `RedisClient` 需补 pub/sub |
+| **跨节点投递唤醒** | 本节点写入的记录已由 `PromptEventDispatch` 即时投递；剩下的是「A 节点写入、只有 B 节点在线消费」这类跨节点场景，仍靠 `fixedRate = 10s` 轮询。发布方提交后广播一个「有活了」信号，其他节点的投递器立即醒。**Redis 挂了退回轮询**，只是慢，不会丢。 | pub/sub | `RedisClient` 需补 pub/sub |
 | **广播投递** | 见 10.3。竞争消费之外的另一种语义。 | pub/sub 或 Streams | 同上 |
 | **单例维护任务** | 清理已投递记录、扫描终态失败告警。不需要并行，重复执行也无害——**这正是「尽力锁」的适用场景**，用 `@Job(mode = SINGLE_NODE)` 即可。 | `LockManager` | 已具备 |
 
