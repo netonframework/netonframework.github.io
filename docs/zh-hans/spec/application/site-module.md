@@ -1,7 +1,7 @@
 # module-site 站点发布：渲染缓存失效与搜索引擎推送
 
 > 标识：NETON-APP-SITE
-> 日期：2026-10-22 · 状态：**Accepted r2**（设计定稿；本模块实现排在 itwind C2（S1）。网页服务一侧——失效端点 `/api/site/revalidate`、已删除台账的签名同步客户端、proxy 的 410——已在 C1 随底座实现，接口按本规范）
+> 日期：2026-10-22 · 状态：**Accepted r2 · S1 已实现**（itwind C2：`neton-application-module-site` d2d0d49、`neton-application-front-site` 339a593；S2 搜索引擎推送与 CDN 端口排在 C5）。网页服务一侧——失效端点 `/api/site/revalidate`、已删除台账的签名同步客户端、proxy 的 410——已在 C1 随底座实现，接口按本规范）
 > 仓库：`neton-application-module-site`（服务端）、`neton-application-front-site`（后台页面）
 > 对端：`neton-application-client` 底座的公开路由契约（`docs/spec/public-routes.md`）——标签命名（§8.3）、失效端点（§8.4）、已删除 URL 集合（§7.2）由那份契约定义，本模块是调用方。
 > 使用方：[client-content.md](client-content.md)、[client-comment.md](client-comment.md)；样板产品 itwind 的门户。
@@ -34,11 +34,13 @@ Headless 的内容模块不出页面，网页由宿主自己的 SSR 服务渲染
 | `site_object_urls` | object_type, object_id, url（站内路径）, status（`live` / `unavailable` / `gone`）, first_live_at, changed_at | 唯一(object_type, object_id)。对象第一次上线时经 `ObjectResolver.describe` 取 `link.web` 记下；URL 变化（slug、模板）时更新并把旧 URL 记进 `site_url_history` |
 | `site_url_history` | url, object_type, object_id, replaced_at | 旧 URL，供网页服务做 308（与 public-routes §13 的 legacy 互补：这是数据层面的旧地址） |
 | `site_pending_tags` | tag, mode（`refresh` / `expire`）, due_at, event_ids（text JSON） | 唯一(tag)。合并窗口：同一标签在窗口内只投递一次，`expire` 覆盖 `refresh` |
-| `site_pending_urls` | url, action（`purge` / `submit` / `delete`）, engine?, due_at, attempts | CDN 刷新与搜索引擎推送的待办 |
-| `site_submissions` | id, engine, action, urls（text JSON）, status, http_status, response（截断 1KB）, created_at | 推送记录，后台可查、可重推 |
-| `site_engine_quota` | engine, day, used, remain | 百度当日剩余额度 |
+| `site_pending_paths` | path, action（`gone` / `revived`）, due_at, event_ids（text JSON） | 唯一(path)。与标签同一合并窗口；动作由台账的最终状态在同一事务里决定（先删后恢复只投递 `revived`） |
+| `site_deliveries` | id, batch_id, target, payload（text JSON：items / gone / revived）, tag_count, path_count, event_ids, status（`pending` / `delivered` / `dead`）, attempts, next_attempt_at, last_http_status, last_error, created_at, delivered_at | 投递 outbox：每批每个目标一行，按目标独立重试（§5.1） |
+| `site_event_receipts` | event_id, received_at | 按事件 ID 幂等；保留 7 天 |
+| `site_dispatch_lease` | name, holder, expires_at | 投递器的单节点租约（15 秒，过半续租） |
+| `site_pending_urls` / `site_submissions` / `site_engine_quota` | 见 S2 | CDN 刷新与搜索引擎推送的待办、推送记录、百度额度：**随 S2 的迁移建立**（S1 不写它们，提前建表只会留下无人写入、无测试覆盖的结构） |
 
-全部经 migrate 建表；JSON 存 `text`（套件约定）。
+全部经 migrate 建表；JSON 存 `text`（套件约定）。台账只为**有站内页面地址**的对象建行：`link.web` 带 `#` 锚点的嵌入对象（评论）、外站地址、从未见过地址就被删除的对象都不建行（只投递标签）——否则删除一条评论会把文章页记进已删除集合。
 
 ## 4. 事件到标签的映射
 
@@ -63,6 +65,10 @@ Headless 的内容模块不出页面，网页由宿主自己的 SSR 服务渲染
 - 目标：部署配置 `[revalidate] targets`（可多个，多实例且没有共享缓存时用；有共享缓存只配一个）。
 - 请求格式、签名、限额按 public-routes §8.4；单次 ≤ 500 个标签，超出拆批。
 - 超时 3 秒；失败按指数退避重试（1s、5s、30s、2min、10min，之后每 10 分钟），超过 24 小时进死信并告警 `site.revalidate.dead`。任一目标失败只重试该目标。
+- 端点回 400 / 413（请求不合法、超限）不重试，直接死信（`site.revalidate.rejected`）：重试不会成功。401（两边密钥不一致）、503（端点未配密钥）、5xx、超时都按退避重试——它们是部署层面可恢复的。
+- **同一目标严格按 id 顺序投递**（已删除 / 恢复路径的先后决定集合的最终状态）；目标恢复后把连续积压行合并成一次请求（标签 expire 胜出，路径以最后一批为准，`eventId = site.b<首批>-<末批>`），结果与逐批投递相同。
+- 后台重投死信：在该目标队尾写新行，标签原样、路径按台账**当前**状态重新决定——不放回原位置，避免把之后已投递的状态退回去。
+- 目标从配置里移除后，启动时其待投递行进死信（`TARGET_REMOVED`）。
 
 ### 5.2 CDN 端口
 
@@ -88,6 +94,7 @@ fun interface CdnPurger {
 - 供网页服务启动与定时增量同步已删除 URL 集合（public-routes §7.2）。
 - 鉴权：与失效端点同一把共享密钥的 HMAC 签名（头 `X-Neton-Signature: t=…,v1=…`，签名串为 `t + "." + 请求路径与查询串`），时间偏差 300 秒；模块自带签名，不依赖 platform 模块（套件约定 §5.4）。
 - 对象重新上线（`ObjectAvailable`）时从台账移除，并在下一次失效投递里带上 `revived: [url]`。
+- 增量取 `gone_at >= since`，键集游标 `(gone_at, id)`；返回的 `now` 比本次查询开始早 5 秒，在途事务稍晚提交的行下一轮仍会取到（重复加入集合是幂等的）。签名串是原始请求路径与查询串（含 `/platform` 前缀）。没配密钥时接口 503 `SITE_SYNC_DISABLED`，不退化成匿名可读。
 
 ## 7. 搜索引擎推送
 
@@ -117,7 +124,7 @@ fun interface CdnPurger {
 origin = "https://www.example.com"          # 与网页服务的站点配置一致
 
 [revalidate]
-targets = ["http://web-internal:3000/api/site/revalidate"]
+targets = "http://web-internal:3000/api/site/revalidate"   # 逗号分隔（框架 TOML 解析器不支持行内数组，与 [egress] 同一写法）
 # 共享密钥：环境变量 NETON_SITE_REVALIDATE_SECRET（≥ 32 字节），缺失时本模块不投递并在启动时 WARN site.revalidate.disabled
 
 [push.baidu]
@@ -136,6 +143,7 @@ feed_window_ms = 10000
 ```
 
 - 内网目标（`web-internal`）来自部署配置，用普通客户端，不受 `[egress]` 的公网限制（出站规范 §1）。
+- 环境覆盖按模块配置规则：`NETON_SITE__SITE__ORIGIN`、`NETON_SITE__REVALIDATE__TARGETS`、`NETON_SITE__DISPATCH__OBJ_WINDOW_MS`……（本地联调用它把目标指向本机门户，生产值只在部署配置里）。
 - 后台只读展示当前生效配置（密钥打码）。
 
 ## 9. 依赖的上游补齐
@@ -167,9 +175,11 @@ feed_window_ms = 10000
 
 | 接口 | 权限点 |
 | --- | --- |
-| `GET submission/page?engine&status`、`GET url/page?status&keyword` | `site:submission:query` |
-| `POST submission/resubmit/{id}` | `site:submission:retry` |
-| `POST revalidate/run`（手动失效：标签或站内路径，≤ 100 条） | `site:revalidate:run` |
+| `GET delivery/page?status&target`、`GET delivery/get/{id}`（含请求内容） | `site:delivery:query` |
+| `POST delivery/retry/{id}`（死信重投，见 §5.1） | `site:delivery:retry` |
+| `GET url/page?status&keyword`（含旧地址） | `site:url:query` |
+| `GET submission/page?engine&status`、`POST submission/resubmit/{id}` | `site:submission:query` / `site:submission:retry`（S2） |
+| `POST revalidate/run` `{ tags, paths, mode }`（手动失效：标签或站内路径，≤ 100 条；路径按台账找对象；任一条不合法整批 400，字段错误 `tags[i]` / `paths[i]`） | `site:revalidate:run` |
 | `GET config/get`（只读，密钥打码） | `site:config:query` |
 
 权限点全部进后台菜单种子（页面 type=2 用 query，其余按钮 type=3），默认授予 `super_admin`。
@@ -189,7 +199,7 @@ feed_window_ms = 10000
 
 | 期 | 内容 |
 | --- | --- |
-| S1 | 台账、事件订阅（U1、U2、U3 落地后）、失效投递、已删除台账接口、后台查询 |
+| S1 | 台账、事件订阅（U1、U2、U3 落地后）、失效投递、已删除台账接口、后台查询 — **已实现**（真库测试 14 项：映射、合并、expire 胜出、幂等与过期事件、嵌入对象、旧地址、删除 / 恢复与台账接口签名与增量、宕机退避与积压合并、死信与重投、租约、经底座校验代码的真实 HTTP 投递） |
 | S2 | 搜索引擎推送（百度、IndexNow）、CDN 端口 |
 | S3 | 节点事件（U4）、资料事件（U7）；U6 改由 infra-media §7.3 实现（随 itwind C2） |
 
