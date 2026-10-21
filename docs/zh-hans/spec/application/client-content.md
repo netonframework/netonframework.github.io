@@ -1,7 +1,7 @@
 # client-content 内容的门户页面与投稿控制台
 
 > 标识：NETON-APP-CLIENT-CONTENT
-> 日期：2026-10-22 · 状态：Draft r1（待评审，未实现）
+> 日期：2026-10-22 · 状态：**Accepted r2**（设计定稿；实现排在 itwind C2，依赖的服务端缺口 G1/G2/G6 同批补齐）
 > 仓库：`neton-application-client-content`（C 端模块，装配进 `neton-application-client` 的 fork）
 > 依赖：底座公开路由契约 `neton-application-client/docs/spec/public-routes.md`（client-contract 1.1.0）；服务端 [content-module.md](content-module.md) 的 App 接口；失效与推送由 [site-module.md](site-module.md) 负责
 > 套件定位：[content-platform-architecture.md](content-platform-architecture.md) §8 末条——「面向用户的展示因平台而异，套件只提供客户端 SDK 和可选的基础组件」。本模块就是 Web 端的这一份：通用的内容门户页面，产品通过站点配置调 URL、通过外壳决定布局，不改模块。
@@ -11,7 +11,8 @@
 **负责**：内容详情、栏目页、标签页、作者页、热榜、搜索结果、日期归档、单页、专题的公开页面；`content.item` 卡片渲染器；内容的 sitemap 与 RSS；详情页的分享按钮；控制台的「我的投稿」与投稿表单。
 
 **不负责**：
-- 首页、频道页（筛选器节点）的布局：归产品外壳（首页）与筛选器的客户端（见 §9 开放项）。
+- 首页的布局：归产品外壳与 fork 页面（站点配置 `pages`）。
+- 频道页（筛选器节点）：标准模块 `neton-application-client-filter`（产品决定 2，C1 已实现：公开路由 `filter.channel` `/channel/:code`、频道 sitemap、`./data` 取数给外壳与首页）。
 - 评论区、收藏按钮：由 client-comment、client-interaction 经插槽挂到详情页，本模块只声明插槽。
 - 缓存失效与搜索引擎推送：服务端 site 模块。
 
@@ -54,6 +55,12 @@ export default defineFrontModule({
 - 详情页每次渲染都比对：`shareUrl` 与站点同源时，其路径必须等于当前请求路径，不等就 308 到 `shareUrl`（覆盖 slug 变化、模板变化、通过别的实例访问到的情况）。`shareUrl` 指向外站（编辑填了外站 `canonical_url`）时不重定向，只把 canonical 设为它。
 - `shareUrl` 为空（后台没配 `base_url`）时用本站路由生成 canonical，并在服务端日志告警一次 `content.share_url.missing`。
 
+### 3.1 转载内容的 canonical（产品决定 3）
+
+- 缺省：canonical 指向本站文章页，JSON-LD `isBasedOn` 署名原文（来源名 + 原文地址）。理由：本站页面承载了评论、互动与站内推荐，是用户实际到达的页面；署名满足来源方的引用要求。
+- 按来源可配成指向原文：content 的来源记录（采集来源 / 转载来源）新增布尔字段 `canonicalToSource`（后台按来源设置，缺省 false）；为 true 时服务端在详情里下发 `canonicalUrl = sourceUrl`，本模块按 §3 的规则把它当作外站 canonical 原样输出、不做 308。放在**服务端来源记录**而不是站点配置：canonical 是每个来源与本站之间的授权约定，随来源走；App 分享、sitemap（指向原文的条目不进 sitemap）与网页需要同一个答案。
+- 编辑在单篇上填的 `canonical_url` 优先于来源设置。
+
 ## 4. 公开页面
 
 ### 4.1 内容详情 `content.item`（缺省 `/article/:id`，可实例化）
@@ -61,7 +68,7 @@ export default defineFrontModule({
 | 方面 | 约定 |
 | --- | --- |
 | 取数 | `GET /app/content/item/get/{id}?view=false`（**缺口 G1**：服务端渲染不计浏览）；实例的固定参数 `type` 与返回的 `type` 不一致 → `not_found` |
-| 状态 | 成功 200；`CONTENT_NOT_FOUND` → `not_found`；撤回 / 归档 / 回收站 → `unavailable`；彻底删除 → `gone`（**缺口 G2**：要求服务端区分这三种）；会员可见、密码访问的内容 → 200 + `noindex`，主体渲染「登录后查看」占位，登录后客户端用会话重新取（不进缓存）；有 `redirectUrl` 的跳转型内容 → 307 到该地址，且不进 sitemap |
+| 状态 | 成功 200；`CONTENT_NOT_FOUND` → `not_found`（404）；撤回 / 归档 / 回收站 → `unavailable`（404 + noindex）；彻底删除 → `gone`（页面层 404 并记入已删除集合，此后 proxy 给 410；正常路径是 site 模块的已删除台账同步，见产品决定 4）（**缺口 G2**：要求服务端区分这三种）；会员可见、密码访问的内容 → 200 + `noindex`，主体渲染「登录后查看」占位，登录后客户端用会话重新取（不进缓存）；有 `redirectUrl` 的跳转型内容 → 307 到该地址，且不进 sitemap |
 | 渲染 | 标题、副标题、发布时间（`<time datetime>`）、来源与作者、栏目面包屑、封面、正文；正文由本模块的块渲染器在服务端把结构化正文（12 种块 + 行内标记）渲染成语义 HTML（`h2`/`h3`、`figure` + `figcaption`、`blockquote`、`pre><code`、`table`），代码块在服务端高亮，不发客户端 JS |
 | 来源署名 | `origin = reprint`：显示「来源：{sourceName}」，有 `sourceUrl` 时链到原文（`rel="nofollow noopener"`，新窗口）；`origin = compiled`：显示「综合自 {sourceName}」；`original`：不显示来源。作者：有 `authorUserId` 时链到作者页，否则显示 `authorName` 纯文本 |
 | 外链 | 正文里的外部链接一律 `rel="nofollow noopener"`；站内链接（同 `origin`）不加 |
@@ -77,7 +84,7 @@ export default defineFrontModule({
 | title | `seoTitle` ∥ `title` |
 | description | `seoDescription` ∥ `summary` ∥ 正文纯文本前 120 字 |
 | keywords | `seoKeywords` ∥ 标签名 |
-| canonical | `shareUrl`（§3） |
+| canonical | `shareUrl`（§3）；转载内容按来源设置可改为原文（§3.1） |
 | robots | 公开内容 index；`max-image-preview:large` |
 | Open Graph | `type = article`；`images` 取封面（无封面取正文首图）；`article:published_time` = `publishedAt`，`modified_time` = 线上版本更新时间（**缺口 G6**），`section` = 主栏目名，`tag` = 标签 |
 | JSON-LD | `NewsArticle`（类型可由产品按内容类型映射：`article` → `NewsArticle`，`page` → `WebPage`，其余缺省 `Article`）+ `BreadcrumbList` |
@@ -197,7 +204,7 @@ export default defineFrontModule({
 | G4 | 没有面向 sitemap 的全量遍历接口 | `item/query` 带卡片字段、限额小，遍历几十万条成本高 | `sitemap/shards`、`sitemap/items`（§6），只读已发布公开内容 |
 | G5 | 作者只有 `author_user_id` / `author_name` | 作者页 | 落 content 规范里延后的 `ContentAuthorResolver`，加 `GET /app/content/author/{userId}`（只含公开资料） |
 | G6 | 没有「线上版本更新时间」 | `dateModified`、sitemap `lastmod`、`og:modified_time` 不能被计数回写之类的行更新带偏 | 内容行加 `content_updated_at`：线上版本被替换时更新（首次发布 = `published_at`），卡片与详情返回 `contentUpdatedAt` |
-| G7 | `MediaView` 没有宽高与派生规格；`content.*` 媒体是 `DELEGATED`，只发 10 分钟签名地址 | CLS；缓存的 HTML 里签名地址会过期，图片搜索与 OG 图失效 | 见 [site-module.md](site-module.md) §9「公开对象的稳定媒体地址」与 infra M2 图片派生 |
+| G7 | `MediaView` 没有宽高与派生规格；`content.*` 媒体是 `DELEGATED`，只发 10 分钟签名地址 | CLS；缓存的 HTML 里签名地址会过期，图片搜索与 OG 图失效 | 见 [infra-media.md](infra-media.md) §7.3「CDN 地址策略」（产品决定 1）与 infra M2 图片派生 |
 | G8 | 首次发布不发 `ObjectAvailable`；线上版本更新没有通用事件 | site 模块只订阅通用事件就能失效缓存、推送收录 | 首次发布也发 `ObjectAvailable`；新增通用 `ObjectUpdated`（线上表示变化：新版本上线、slug 变化），见 site-module §9 |
 
 ## 10. 分期
@@ -212,7 +219,7 @@ export default defineFrontModule({
 
 | 项 | 默认 |
 | --- | --- |
-| 转载内容的 canonical 指向本站还是原文 | 本站 + `isBasedOn` 署名；产品可按 `origin` 配成指向原文（站点配置 `content.reprintCanonical = "source"`） |
+| 转载内容的 canonical 指向本站还是原文 | **已决（产品决定 3）**：缺省指向本站 + `isBasedOn` 署名；按来源可配成指向原文，见 §3.1 |
 | 正文外链是否经站内跳转提示页（`/go?url=`） | 不经，直接 `nofollow`；需要跳转提示的产品以后加可选路由（noindex） |
-| 频道页（筛选器节点 `/app/channel/{code}`）放哪 | 第一版由产品 fork 手写（用底座的卡片渲染器）；第二个产品也需要时按定制三分法升级为标准模块 `client-filter` |
+| 频道页（筛选器节点 `/app/channel/{code}`）放哪 | **已决（产品决定 2）**：标准模块 `client-filter`（C1 已实现）。理由：频道 / 楼层是 filter 模块的通用能力，任何装了 filter 的门户都要这一页，按定制三分法属于「缺通用扩展点」，不该让每个产品手写 |
 | 相关阅读 | 服务端 `related` 延后；先用「同栏目最新 5 篇」填 `public.object.aside` |

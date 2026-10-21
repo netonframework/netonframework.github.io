@@ -1,7 +1,7 @@
 # client-interaction 收藏按钮、我的收藏与足迹
 
 > 标识：NETON-APP-CLIENT-INTERACTION
-> 日期：2026-10-22 · 状态：Draft r1（待评审，未实现）
+> 日期：2026-10-22 · 状态：**Accepted r2**（设计定稿；实现排在 itwind C4）
 > 仓库：`neton-application-client-interaction`
 > 依赖：底座公开路由契约 `neton-application-client/docs/spec/public-routes.md`；服务端 [interaction-module.md](interaction-module.md) 的 App 接口
 > 与评论区一样只认 `ObjectRef`：收藏按钮挂在任何具备 `favorite` 能力的对象详情页上。
@@ -44,7 +44,7 @@ export default defineFrontModule({
 
 点赞按钮同构（`POST like` / `DELETE like`）。
 
-批量加载器注册在 `ObjectStateBatcher` 里（键 `interaction.state`），评论区等其他模块的状态请求互不干扰。
+批量加载器注册在 `ObjectStateBatcher` 里（键 `interaction.state`；批量器随本模块在 C4 落进底座运行时），评论区等其他模块的状态请求互不干扰。
 
 ## 4. 控制台
 
@@ -70,7 +70,7 @@ export default defineFrontModule({
 | 编号 | 缺口 | 建议 |
 | --- | --- | --- |
 | I1 | Web 端足迹依赖详情读取发出的 `ObjectViewed` 带访问者，而服务端渲染没有访问者 | 由 content 的浏览信标补（client-content G1）；interaction 本身不改 |
-| I2 | `state` 接口经底座代理匿名调用 | 依赖底座代理的匿名转发（public-routes §9.3）；服务端已是 `@AllowAnonymous`，不改 |
+| I2 | `state` 接口经底座代理匿名调用 | 底座代理的匿名转发已在 C1 实现（public-routes §9.3）；服务端已是 `@AllowAnonymous`，不改 |
 | I3 | 对象摘要 `link.web` 为空时控制台无处可跳 | 不改服务端；前端隐藏跳转，只保留取消收藏 |
 
 ## 8. 分期

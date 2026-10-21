@@ -1,7 +1,7 @@
 # module-site 站点发布：渲染缓存失效与搜索引擎推送
 
 > 标识：NETON-APP-SITE
-> 日期：2026-10-22 · 状态：Draft r1（待评审，未实现）
+> 日期：2026-10-22 · 状态：**Accepted r2**（设计定稿；本模块实现排在 itwind C2（S1）。网页服务一侧——失效端点 `/api/site/revalidate`、已删除台账的签名同步客户端、proxy 的 410——已在 C1 随底座实现，接口按本规范）
 > 仓库：`neton-application-module-site`（服务端）、`neton-application-front-site`（后台页面）
 > 对端：`neton-application-client` 底座的公开路由契约（`docs/spec/public-routes.md`）——标签命名（§8.3）、失效端点（§8.4）、已删除 URL 集合（§7.2）由那份契约定义，本模块是调用方。
 > 使用方：[client-content.md](client-content.md)、[client-comment.md](client-comment.md)；样板产品 itwind 的门户。
@@ -149,21 +149,17 @@ feed_window_ms = 10000
 | U3 | comment | 评论隐藏、管理员删除、作者删除时发 `ObjectUnavailable(subject = comment.comment:{id})`（作者删除与管理员删除 `permanent = false`，保留期清理后 `permanent = true`），恢复时 `ObjectAvailable`；`comment.comment` 的 `link.web` = 所属对象的 `link.web` + `#comment-{id}` | 评论区缓存按评论粒度失效（public-routes §8.3） |
 | U4 | content（栏目）、filter（频道 / 楼层 / 挂载） | 节点变化的事件：content 已有 `content.term.changed`；filter 需补 `filter.node.changed` / `filter.mount.changed`。本模块订阅这两个模块的契约事件（例外：节点不是 `ObjectRef` 对象，没有通用事件可用） | 首页频道、栏目导航失效 |
 | U5 | 契约库 | `ObjectSummary` 增加可选的 `publishedAt`、`updatedAt` | 台账与推送的时间字段；sitemap 不依赖它 |
-| U6 | infra 媒体 | **公开对象的稳定媒体地址**（见下） | 缓存的 HTML、OG 图、图片搜索都不能用 10 分钟签名地址 |
+| U6 | infra 媒体 | **可缓存的媒体地址**：已由 infra-media §7.3「CDN 地址策略」取代（见下） | 缓存的 HTML、OG 图、图片搜索都不能用 10 分钟签名地址 |
 | U7 | account | 公开资料变化（昵称、头像）发 `ObjectUpdated(subject = account.user:{id})` | 评论区、作者页里的头像昵称失效（可选，不做就靠 TTL） |
 
-### 9.1 公开对象的稳定媒体地址（U6，提案）
+### 9.1 可缓存的媒体地址（U6，已定）
 
-问题：`content.cover`、`content.image`、`comment.image` 都是 `DELEGATED`，infra 只签发 10 分钟有效的签名地址（infra-media §7.2）。门户的 HTML 被缓存数分钟到数小时，签名会在缓存期内过期；分享卡片的 OG 图、搜索引擎的图片索引更需要长期地址。
+原提案（每次请求按匿名可见性放行的无签名地址 `GET /app/infra/media/public/{fileId}`）已被产品决定 1 取代，定稿在 **infra-media §7.3「CDN 地址策略」**：
 
-提案（需要 infra-media 规范评审）：
-
-- businessType 增加声明 `publicWhenOwnerPublic: Boolean`（content 的图片类、comment 图片为 true；附件、视频原片为 false）。
-- 新增无签名地址 `GET /app/infra/media/public/{fileId}[/{variant}]`：**每次请求**以匿名访问者调用 `MediaOwnerAccess.canView(null, …)`，任一引用对象对匿名可见即返回文件，`Cache-Control: public, max-age=300`；否则 404。
-- 这不是「永久公开地址」：地址本身不携带任何授权，对象一旦不可见，地址在 CDN 时效（≤ 5 分钟）后就失效；与 infra-media §7.2「引用对象变为不可见后不再签发新地址」的意图一致。
-- `MediaService.resolve` 对匿名访问者、且文件满足上面条件时返回这个地址（`expiresAt = null`），否则照旧签名。
-- **先验证现状**：infra-media §2 写的是未签名的 `GET /app/infra/file/get/{fileId}` 已「按可见性读取、按引用判断 `DELEGATED`」。如果匿名请求在引用对象公开时已经放行，那么稳定地址其实已经存在，本提案只剩两件事：该路径的缓存头（现在是否 `private`）与 `resolve` 对匿名访问者返回未签名地址。
-- 图片派生（infra M2）落地后 `{variant}` 生效，门户的 `srcset` 与 JSON-LD 多比例图片依赖它；之前由网页服务的图片加载器（或 CDN 图片处理）做缩放。
+- 文章图片一律用 CDN 地址；是否带令牌取决于部署是否开启 CDN 鉴权。未开启：公开对象上的媒体给稳定地址；开启：按云厂商的鉴权方式（腾讯云 A/B/C/D、阿里云 A/B/C、通用 HMAC 查询令牌）做**按时间桶取整的确定性签名**——同一桶内所有人拿到同一个地址，HTML 与图片照样可缓存。
+- 网页服务的页面缓存时长必须短于签名有效期（revalidate ≤ 有效期 / 2，启动时校验，public-routes §8.1，C1 已实现）；长时间打开的标签页由客户端在图片加载失败时换取新地址。
+- 私密媒体（会员可见、仅本人）永不出现在公开 HTML 里。
+- 本模块与此无直接关系：对象下线后 CDN 上的旧图由签名过期与 CDN 刷新端口（§5.2）兜底。
 
 ## 10. 接口
 
@@ -195,13 +191,14 @@ feed_window_ms = 10000
 | --- | --- |
 | S1 | 台账、事件订阅（U1、U2、U3 落地后）、失效投递、已删除台账接口、后台查询 |
 | S2 | 搜索引擎推送（百度、IndexNow）、CDN 端口 |
-| S3 | 稳定媒体地址（U6，随 infra）、节点事件（U4）、资料事件（U7） |
+| S3 | 节点事件（U4）、资料事件（U7）；U6 改由 infra-media §7.3 实现（随 itwind C2） |
 
 ## 13. 开放项
 
-| 项 | 默认 |
+| 项 | 决议 |
 | --- | --- |
-| 渲染服务调后端匿名只读接口时的限流归属：所有可缓存渲染都来自同一个出口 IP | 匿名只读接口（详情、列表、栏目树）不按 IP 限流，只有搜索与写接口限流；搜索由网页服务转发真实客户端 IP（public-routes §5） |
+| 渲染服务调后端匿名只读接口时的限流归属：所有可缓存渲染都来自同一个出口 IP | **已决（产品决定 8）**：匿名、可缓存的只读接口（详情、列表、栏目树、频道 / 楼层）不按 IP 限流——按 IP 限流等于所有访客一起被限；滥用防护在边缘（CDN / nginx）。搜索与写接口按真实客户端 IP 限流：网页服务的 `dynamic` 路由转发 X-Forwarded-For，后端只在对端属于 `ratelimit.trusted_proxies`（Next 出口）时信它（public-routes §5）。filter 已落地（module-filter 0e6955d，filter-module §10.6）；content、comment 随 C2、C3 |
+| 删除、下线、不存在的状态码 | **已决（产品决定 4）**：彻底删除 → 410（网页服务 proxy + 由 §6 台账同步的已删除集合）；撤回 / 下线 → 404 + noindex；从未存在 → 404 |
 | 是否需要按引擎区分推送的 URL 范围 | 不区分；百度额度不够时只推新内容 |
 | 360、搜狗等其他国内引擎的推送 | 不做；需要时按 §7 的形态加引擎实现 |
 | 投递器调度粒度 | 常驻协程（单节点租约），不依赖分钟级定时任务 |

@@ -1,7 +1,7 @@
 # infra 媒体标准
 
 > 标识：NETON-APP-INFRA-MEDIA
-> 日期：2026-10-15 · 状态：Draft r2（关联契约、临时文件生命周期、按引用授权、并发安全清理；2026-10-15 按 M1 实现校准）
+> 日期：2026-10-15 · 状态：Draft r2（关联契约、临时文件生命周期、按引用授权、并发安全清理；2026-10-15 按 M1 实现校准）；**§7.3 CDN 地址策略 Accepted（2026-10-22，产品决定 1；实现随 itwind C2）**
 > 归属：`neton-application-module-infra`（在现有文件上传能力上扩展）
 > 适用：所有需要图片、视频、音频、附件的模块与产品，例如新闻配图、商品图、评论图片、用户头像、视频源文件。
 
@@ -24,6 +24,7 @@
 | 视频处理、`MediaProcessor` | 延后（M4） |
 | 事件 `infra.media.*` | 延后（M1 不发事件） |
 | 后台 businessType 列表、按引用对象浏览、存储用量统计 | 延后（M1 文件页只加了生命周期与引用数） |
+| CDN 地址策略（§7.3）：可插拔的地址策略、云厂商鉴权签名、时间桶确定性签名、图片处理参数、换新地址接口 | 设计已定（Accepted），实现随 itwind C2 |
 
 ## 1. 原则
 
@@ -264,11 +265,39 @@ ctx.bindIfAbsent(port.MediaOwnerAccess::class, port.MediaOwnerAccess { viewer, t
 ### 7.2 地址
 
 - `PUBLIC`：可以使用长期地址（公开桶或 CDN）。
-- `OWNER`、`DELEGATED`：**只签发短期签名地址**（默认 10 分钟），不生成永久公开地址。引用对象变为不可见后，不再签发新地址，已签发的地址到期失效。
+- `OWNER`、`DELEGATED`：未配置 CDN 地址策略（§7.3）时**只签发短期签名地址**（默认 10 分钟），不生成永久公开地址；配置了 CDN 地址策略时，引用对象对匿名访问者可见的媒体按 §7.3 给 CDN 地址，其余照旧。引用对象变为不可见后，不再签发新地址，已签发的地址到期失效。
 - 签名地址形如 `/app/infra/file/get/{fileId}?exp=<epoch 秒>&sig=<hex>`，`sig = hex(HMAC-SHA256(key, "fileId|exp"))`，常数时间比较；密钥由 JWT 密钥按用途标签 `neton.infra.media-url.v1` 派生（不新增配置，也不与令牌签名共用同一把密钥）。签名只证明「签发时访问者可读」，到期即失效。
 - 后台读取：`GET /admin/infra/media/get/{fileId}`（权限点 `infra:media:query`）可读任意未删除文件（含临时、草稿、会员可见），`private, no-store`、`nosniff`、沙箱 CSP，可执行类型按附件下载；地址由 `resolveForAdmin` 下发（相对路径，凭后台会话 Cookie，`expiresAt` 为 null），不签发能被转发出去的匿名链接。
 - 同一文件既有公开引用也有私密引用时，按访问方式统一走签名地址。不因为某个引用公开，就给文件一个永久公开地址。
 - `resolve` 是批量接口；处理中的视频返回 `status=processing`（随 M4）。
+
+### 7.3 CDN 地址策略（产品决定 1，Accepted）
+
+门户的 HTML 会被网页服务与 CDN 缓存数十秒到数分钟、分享卡片与图片搜索需要更久，10 分钟的 infra 签名地址放不进缓存的页面。决议：**公开内容的图片一律用 CDN 地址**；地址里是否带令牌取决于部署是否开启 CDN 鉴权，由可插拔的「CDN 地址策略」决定。
+
+**范围**：只作用于「引用对象当前对匿名访问者可见」的媒体（按 §7.1 的委托判断，`viewer = null`）。会员可见、仅本人、临时文件等**私密媒体永不出现在公开 HTML 里**，照旧走 §7.2 的短期签名地址（只在登录后由客户端取）。
+
+**策略（部署配置 `config/infra.conf` 的 `[media.cdn]`，不进后台、改了重启生效；密钥走环境变量）**：
+
+| `strategy` | 行为 |
+| --- | --- |
+| `none`（缺省） | 不用 CDN 地址，行为同 §7.2 |
+| `public` | CDN 未开鉴权：稳定地址 `{base_url}/{存储路径}`（存储路径是内容寻址的，同一文件地址永不变化） |
+| `tencent-a` / `tencent-b` / `tencent-c` / `tencent-d` | 腾讯云 CDN 鉴权方式 A / B / C / D（签名串、参数名与时间格式按各方式的官方定义，如 A 型 `sign=timestamp-rand-uid-md5hash`、D 型 `sign` + `t` 查询参数） |
+| `aliyun-a` / `aliyun-b` / `aliyun-c` | 阿里云 CDN 鉴权方式 A / B / C（A 型 `auth_key=timestamp-rand-uid-md5hash`，B 型路径前缀时间 + md5，C 型 md5/时间路径段） |
+| `hmac` | 通用：`{base_url}/{路径}?exp=<桶结束时间>&sig=hex(HMAC-SHA256(key, 路径 + "\n" + exp))`，给自建边缘或其他 CDN 用 |
+
+配置项：`base_url`（CDN 域名）、`key_env`（主密钥所在环境变量名，腾讯 / 阿里的「主鉴权 Key」；缺失时启动失败而不是静默退回无鉴权）、`bucket_seconds`（时间桶，缺省 1800）、`grace_seconds`（缺省 1800）、`image_params`（图片处理参数方言：`tencent`（数据万象 `imageMogr2`）/ `aliyun`（`x-oss-process=image/...` 或 CDN 图片处理参数）/ `none`）。
+
+**时间桶确定性签名**：签名用的时间戳不取「现在」，而是向下取整到 `bucket_seconds` 的整数倍；随机数字段固定为 0、uid 固定为 0。于是同一个桶内，同一文件同一规格对**所有人**生成逐字节相同的地址——缓存的 HTML 不会因为签名不同而变，CDN 上的图片也按同一个 URL 命中。地址的有效期 = 桶长 + 宽限期（缺省 1 小时）；云厂商控制台的「有效时间」必须配成同一值。
+
+**与页面缓存的约束**：网页服务的页面缓存必须比签名活得短——会渲染媒体的缓存档位 `revalidate ≤ 有效期 / 2`。网页服务启动 / 构建时按站点配置的 `media.signedUrlValiditySeconds` 校验（public-routes §8.1，C1 已实现）；C2 再加运行期交叉校验：infra 新增匿名接口 `GET /app/infra/media/policy`（`{ strategy, validitySeconds, bucketSeconds, imageParams }`），网页服务启动时比对，不一致记错误日志并以较短者为准。
+
+**长时间打开的页面**：超过有效期的标签页里图片会 403。客户端兜底：公开页的图片组件在 `onerror` 时调 `GET /app/infra/media/url/{fileId}?variant=`（匿名可调，按 §7.1 判断可见性，按 IP 限流，返回当前桶的新地址，`Cache-Control: private, max-age=60`）换地址重载，每张图只重试一次。
+
+**响应式与加载**：`resolve` 按规格给地址，规格（宽度档：如 180、360、720、1080、1440 与 OG 用的 1200×675）翻译成所配方言的图片处理参数（签名覆盖完整路径与参数）；`MediaView` 带原图宽高（缺口 G7），网页端输出 `srcset` / `sizes` 与固定宽高比占位（CLS）；首屏关键图（详情首图、列表前 3 张）`fetchpriority="high"`、不懒加载，其余 `loading="lazy"`、`decoding="async"`。infra 图片派生（M2）落地前，缩放完全交给 CDN 的图片处理；`image_params = none` 时只给原图。
+
+**理由**：把 CDN 鉴权做成 infra 的地址策略而不是网页服务的图片代理——地址是 infra 的职责（「只存引用、地址由 infra 生成」，§1），App、网页、分享卡片拿到同一份地址；确定性签名让「有鉴权」与「可缓存」兼得；页面缓存短于签名有效期加客户端兜底，覆盖了缓存窗口与长开标签页两种过期路径。
 
 ## 8. 事件（未实现，M1 不发事件）
 
@@ -290,6 +319,7 @@ M1 已有：文件页展示生命周期与引用数；后台媒体上传 / 读�
 | --- | --- |
 | M1（已实现） | businessType 注册表开放、临时文件与 attach / detach 校验、`DELEGATED` 访问与短期签名地址、`resolve`、并发安全清理、服务端转存；另加后台上传 / 读取与 `resolveForAdmin` |
 | M2 | 图片派生版本（按首个产品的需要安排，不阻塞 M1） |
+| CDN | §7.3 CDN 地址策略、`media/policy`、`media/url` 换新地址接口（随 itwind C2，内容详情页与首页图片的前置） |
 | M3 | 分片 / 断点续传、秒传 |
 | M4 | 视频处理（探测、转码、截帧、HLS）、处理器可替换 |
 
