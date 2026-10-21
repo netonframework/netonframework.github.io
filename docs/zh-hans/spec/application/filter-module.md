@@ -596,6 +596,7 @@ when (mount?.mode) {
 | 节点所属模块的原接口 | 如 `GET /app/content/item/query?category=fabuhui`：按 §10.4 自动应用挂载，接口不变 |
 | `GET /app/filter/{id}?cursor=&limit=` 与模块原生接口的 `filter` 参数 | 不经挂载、直接按筛选器取（§6.7）；需筛选器开启 `publicAccess` |
 
+- 匿名只读接口（`/app/channel/*`、`/app/block/{code}`、`/app/filter/{id}`）不按 IP 限流：结果可缓存，网页服务端渲染的请求都来自同一个出口 IP，按 IP 限流会让所有访客一起被限（爬虫翻频道分页触发 429 还会让页面变成 500）；防刷由边缘（CDN / nginx）负责，搜索与写接口照常限流（public-routes §5、site-module §13）。
 - 用户的频道定制（增删、排序）：未登录存在客户端；登录后存账号偏好（account 的偏好设置），服务端只校验频道仍存在且 `userAddable`。
 
 **实现的响应形状**（统一信封 `{code, message, data}`）：
