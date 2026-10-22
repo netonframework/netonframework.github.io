@@ -47,7 +47,7 @@ data class CommercialText(val title: String, val html: String? = null, val text:
 1. **商家链接**（`MerchantLinkRegistry`，§2.5）：正文 `<a href>`、正文纯文本里的网址。按商家分类，抽取商品 ID，区分 `product`（商品页）、`short`（推广短链：u.jd.com、3.cn、s.click.taobao.com、m.tb.cn、p.pinduoduo.com……）、`coupon`（领券页）、`campaign`（会场 / 活动页）。
 2. **购买口令**：淘口令一类的「符号 + 10–14 位大小写混排的字母数字 + 符号」（要求大小写都有，全大写的型号不算）（`￥AbCd1234Xy￥`、`€AbCd1234Xy€`、`(AbCd1234Xy)` 等），以及「复制…打开淘宝 / 京东 / 拼多多」提示语。
 3. **促销话术**：国补后、到手价、券后、领券、立减、直降、限时、秒杀、x 元起、历史低价、补贴价、百亿补贴、好价、下单、拍下、抢购、包邮、满减、叠加、PLUS 价、入手……（内置词表，`promotion.extra_phrases` 追加）。
-4. **经销商促销**（汽车）：到店、4S 店、现车、置换补贴、询底价、落地价、限时优惠 / 让利 / 直降 x 万（不含厂家上市的「限时优惠价 x 万起」）、优惠高达 x 万、金融贴息、0 首付、试驾礼、购车礼、厂补。
+4. **经销商促销**（汽车）：到店（不含「到店铺」）、4S 店、现车、置换补贴、询底价、落地价、限时优惠 / 让利 / 直降 x 万（不含厂家上市的「限时优惠价 x 万起」）、优惠高达 x 万、金融贴息、0 首付、试驾礼、购车礼、厂补。
 5. **标题**：标题里出现**强**购买话术（国补后、到手价、券后、领券、秒杀、好价……，以及经销商的限时优惠 x 万、到店、4S 店、置换补贴、询底价、落地价）；「强话术 + 价格」同时出现（「国补后 3599 元」）是最强的单项信号。「限时」「x 元起」「低至」「下单」「包邮」这类在发布会新闻标题里也常见的词只在正文里计分（懂车帝的上市新闻「海鸥限时 6.29 万起」不因标题被判为推广）。
 6. **价格密度**：`¥ / ￥ / x 元 / x 万元 / x 万` 的出现次数。
 
@@ -213,7 +213,7 @@ object Disclosures { const val ADVERTISING = "advertising"; val ALL = setOf(ADVE
 | 接入方 | 怎么用 |
 | --- | --- |
 | **collect**（转载路线） | 本模块向 `CollectPipelineRegistry` 注册步骤 `promotion-check`（只处理 `article`）：识别 → 计划 → 改写 `contentHtml`、去掉摘要 / 纯文本里的口令 → `hold` 时把保留原因加到记录的 `holds`，有推广链接时写 `disclosure` 字段。步骤只改记录，从不 Block（拦不拦是 content 审核的事）。`content.draft` 端口把 `holds`、`disclosure` 原样交给 `ContentDraftInput`（collect §6、§8） |
-| **newsroom**（AI 合成路线） | 素材入库时 `detect`，结论存在素材上；`promotional` 的素材只和 `promotional` 的素材归并（导购帖不混进新闻选题）。合成提示词禁止链接、口令、促销话术（价格只能作为事实陈述）；交付前再 `detect` 一次合成稿，`plan(用到的素材 + 合成稿)`：`sponsored` / 有转换的链接 → 正文末尾附「购买链接」段（托管链接，锚文本取素材里的商品名，没有时「在{商家}查看」），`disclosure = advertising`；`hold` → 保留原因交给 content。编辑台显示选题的商业级别、证据与每个链接的转换结果 |
+| **newsroom**（AI 合成路线） | 素材入库时 `detect`，结论存在素材上；`promotional` 的素材只和 `promotional` 的素材归并（导购帖不混进新闻选题）。合成提示词禁止链接、口令、促销话术（价格只能作为事实陈述）；交付前再用规则 `detect` 一次合成稿（`classify = false`：它是我们自己的改写，复核只用于来源素材），`plan(用到的素材 + 合成稿)`：`sponsored` / 有转换的链接 → 正文末尾附「购买链接」段（托管链接，锚文本取素材里的商品名，没有时「在{商家}查看」），`disclosure = advertising`；`hold` → 保留原因交给 content。编辑台显示选题的商业级别、证据与每个链接的转换结果 |
 | **content** | 不认识本模块：只认 `ReviewHold`（§5，content §6）、带 `ref` 的链接标记与 `ManagedLinkRegistry`（content §5.2）、`disclosure`（content §5.1） |
 | **客户端** | 详情 / 卡片的 `disclosure` 与链接标记的 `rel` / `disclosure` 渲染广告标识（§7） |
 
