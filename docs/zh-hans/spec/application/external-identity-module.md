@@ -1,8 +1,8 @@
 # module-external-identity 外部站点身份
 
 > 标识：NETON-APP-EXTERNAL-IDENTITY
-> 日期：2026-10-22 · 状态：Draft r2（r2：外部站点目录 §2.1、批量读取、评论接口带出来源站点 §5）
-> 仓库：`neton-application-module-external-identity`（服务端，可选套件模块）
+> 日期：2026-10-22 · 状态：Draft r2（r2：外部站点目录 §2.1、批量读取、评论接口带出来源站点 §5；后台页面 `neton-application-front-external-identity` be5d266，itwind C5）
+> 仓库：`neton-application-module-external-identity`（服务端，可选套件模块）、`neton-application-front-external-identity`（后台页面）
 > 把采集 / 导入进来的「某个外部站点上的某个用户」沉淀成一条**可被认领**的身份记录。本期只存事实 + 认领状态，不含认领流程。
 
 ## 1. 目标与边界
@@ -71,7 +71,7 @@ upsert 以 `ON CONFLICT (site_id, site_user_id) DO UPDATE`：展示字段 `COALE
 
 `/admin/external-identity/site/{page,save,delete/{siteId}}`：外部站点目录，权限点 `external-identity:site:query`（页面）、
 `external-identity:site:update`（按钮：保存、删除），菜单「外部身份 / 外部站点」（V002）。保存按站点标识幂等、展示名整体替换。
-后台前端页面尚未建（与「站点用户」页同一状态：菜单与接口在，页面待 front 模块）。
+后台页面在 `neton-application-front-external-identity`（be5d266）：`external-identity/site/index`（目录列表与关键词查询；登记 / 编辑抽屉——站点标识登记后不可改，各语言展示名逐行编辑、至少一行，主页可选；删除二次确认；客户端预检与后端同一规则，后端字段错误按 `siteId` / `names` / `homeUrl` 落到对应字段）、`external-identity/user/index`（按站点、认领状态、关键词筛选；详情抽屉；站点列按界面语言显示目录里的展示名，未登记的站点显示标识）。全部机器码有中英文词条。
 
 ## 5. 与 collect / comment 的接入
 
