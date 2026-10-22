@@ -625,8 +625,21 @@ when (mount?.mode) {
 | 筛选器发布新版本 / 启用 / 停用 | 它的全部挂载节点（同上） | 同上 |
 
 - 草稿保存不改对外内容，不发；状态没变的启停不发；同一节点在一次写入里只发一次。
-- 有效期（`startAt` / `endAt`）到点生效不是一次写入，没有事件：网页在 `list` 档的时效（30 秒）内跟上。
 - 发布方只认通用事件、不认识 site；没装 site 时事件没有监听者，发布是空操作。
+
+**有效期到点（itwind C5，2026-10-22）**：节点与挂载的 `startAt` / `endAt` 到点时对外内容变了却没有写入（「发布会当天」的预挂挂载生效、限时楼层下线），由调度器 `FilterScheduler`（生命周期 `filter-schedule`）在边界时刻补发与写入同形的事件——门户的楼层、频道按时切换，不靠 `list` 档的 30 秒过期：
+
+| 到点 | 事件的节点 | navigation |
+| --- | --- | --- |
+| 楼层节点 `startAt` / `endAt` | `filter.block:{code}` 与 `filter.placement:{placement}` | false |
+| 频道节点 `startAt` / `endAt` | `filter.channel:{code}` | true |
+| 挂载 `startAt` / `endAt` | 挂载所在的节点（同上表的挂载行；别的模块的节点原样，如 `content.term:7`） | 频道为 true |
+
+- **持久水位**：`filter_schedule_cursor`（V003）一行记「已处理到的时刻」W。每一轮在**一个事务里**锁住水位行（`FOR UPDATE`）、取当前时刻 N、找出**启用**的节点与挂载里 `startAt` 或 `endAt` 落在 (W, N] 的、经 `FilterNodeEvents` 发布（同一节点一轮只发一次；事件随事务进 infra 的事件 outbox，site 的监听者可重试投递）、把水位推到 N。事务没提交（崩溃、断库）就在下一轮重新覆盖——至少一次、无缺口；提交了就不再发。
+- **多实例**：不用租约，行锁把各实例的扫描串起来，后到的看到水位已是 N、什么也不发；每个实例都按边界醒来，没有持有者失联后的接手延迟。
+- **时间精度**：常驻协程睡到下一个边界（启用行里晚于水位的最小 `startAt` / `endAt`），最长 30 秒（别的实例或直接改库设置的有效期最迟这么久之后被看到）；本进程保存带有效期的节点 / 挂载时立即重算。边界到点后毫秒级发出事件，网页端再经 site 的 feed 合并窗口（缺省 10 秒）刷新。不用 neton-jobs 的固定间隔调度：同样的精度只能高频空转。
+- **起止**：第一次运行时水位取当时的时刻，迁移之前早已过去的边界不补发；停机期间经过的边界在恢复后的第一轮补发一次。停用的节点 / 挂载不发（它们的边界不改变对外内容）。
+- **挂载缓存**：`mountOf` 的进程内缓存（10 秒）同时截止到该节点下一个有效期边界——到点那一刻起所有实例都按新的生效挂载取内容，不等缓存过期；发布了到点事件的实例另外清空缓存。
 
 ## 11. 数据表
 
@@ -638,9 +651,10 @@ when (mount?.mode) {
 | `filter_nodes`、`filter_mounts` | 见 §10.5 |
 | `filter_materialized` | filter_id, version, position, ref, sort_values, refreshed_at |
 | `filter_index_entries`（P3） | ref, source, dims（text JSON + 生成的数组 / 范围列）, sort_values, visibility_group, updated_at |
+| `filter_schedule_cursor` | name（主键，`node-schedule`）, processed_until（已发布到此刻为止越过有效期边界的节点事件）, updated_at（§10.7） |
 | `filter_audit_logs` | id, subject_type（`filter` / `node` / `mount`）, subject_id, action（created / updated / published / disabled / enabled / broken / repaired / deleted / mounted / remounted / unmounted）, actor_kind, actor_id, detail, created_at |
 
-**实现**：V001 建了 `filter_filters`、`filter_versions`、`filter_references`、`filter_nodes`、`filter_mounts`、`filter_audit_logs` 与后台菜单；V002 给 `filter_nodes` 加 `placement`；`filter_materialized`、`filter_index_entries` 随 F6。
+**实现**：V001 建了 `filter_filters`、`filter_versions`、`filter_references`、`filter_nodes`、`filter_mounts`、`filter_audit_logs` 与后台菜单；V002 给 `filter_nodes` 加 `placement`；V003 建 `filter_schedule_cursor` 与节点、挂载 `start_at` / `end_at` 的部分索引；`filter_materialized`、`filter_index_entries` 随 F6。
 
 所有 JSON 字段存 `text`（套件统一约定），需要时临时 `::jsonb`。
 
