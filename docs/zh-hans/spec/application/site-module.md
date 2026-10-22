@@ -1,7 +1,7 @@
 # module-site 站点发布：渲染缓存失效与搜索引擎推送
 
 > 标识：NETON-APP-SITE
-> 日期：2026-10-22 · 状态：**Accepted r2 · S1 已实现**（itwind C2：`neton-application-module-site` d2d0d49、`neton-application-front-site` 339a593；C3 补 S1.1：网页服务就绪、退避上限、expire 回声、评论区刷新 b5cf131；C4 补 S3 的节点事件 U4 与计数筛选 8aed625；S2 搜索引擎推送与 CDN 端口排在 C5）。网页服务一侧——失效端点 `/api/site/revalidate`、已删除台账的签名同步客户端、proxy 的 410——已在 C1 随底座实现，接口按本规范）
+> 日期：2026-10-22 · 状态：**Accepted r3 · S1 + S2 已实现**（itwind C5 补 S2：搜索引擎推送、CDN 刷新端口与腾讯云 / 阿里云实现、推送记录与额度，module-site 2fd3247、front-site 3601f1e；itwind C2：`neton-application-module-site` d2d0d49、`neton-application-front-site` 339a593；C3 补 S1.1：网页服务就绪、退避上限、expire 回声、评论区刷新 b5cf131；C4 补 S3 的节点事件 U4 与计数筛选 8aed625）。网页服务一侧——失效端点 `/api/site/revalidate`、已删除台账的签名同步客户端、proxy 的 410——已在 C1 随底座实现，接口按本规范）
 > 仓库：`neton-application-module-site`（服务端）、`neton-application-front-site`（后台页面）
 > 对端：`neton-application-client` 底座的公开路由契约（`docs/spec/public-routes.md`）——标签命名（§8.3）、失效端点（§8.4）、已删除 URL 集合（§7.2）由那份契约定义，本模块是调用方。
 > 使用方：[client-content.md](client-content.md)、[client-comment.md](client-comment.md)；样板产品 itwind 的门户。
@@ -38,7 +38,9 @@ Headless 的内容模块不出页面，网页由宿主自己的 SSR 服务渲染
 | `site_deliveries` | id, batch_id, target, payload（text JSON：items / gone / revived）, tag_count, path_count, event_ids, status（`pending` / `delivered` / `dead`）, attempts, next_attempt_at, last_http_status, last_error, created_at, delivered_at | 投递 outbox：每批每个目标一行，按目标独立重试（§5.1） |
 | `site_event_receipts` | event_id, received_at | 按事件 ID 幂等；保留 7 天 |
 | `site_dispatch_lease` | name, holder, expires_at | 投递器的单节点租约（15 秒，过半续租） |
-| `site_pending_urls` / `site_submissions` / `site_engine_quota` | 见 S2 | CDN 刷新与搜索引擎推送的待办、推送记录、百度额度：**随 S2 的迁移建立**（S1 不写它们，提前建表只会留下无人写入、无测试覆盖的结构） |
+| `site_pending_urls`（S2，V003） | url（站内路径）, channel（`cdn:<provider>` / `baidu` / `indexnow:<端点主机>`）, action（`purge` / `prefetch` / `submit` / `delete`）, reason, priority, gate_batch, due_at, status（`pending` / `done` / `dead` / `skipped`）, attempts, next_attempt_at, submission_id, last_error | 每个通道一行的待办；唯一(url, channel, action) WHERE pending（合并）；`gate_batch` = 必须先投递完成的失效批（§5.3），0 = 不等；处理完的行保留 7 天做 24 小时去重 |
+| `site_submissions`（S2） | channel, action, url_count, urls（text JSON）, outcome（`accepted` / `quota` / `rejected` / `failed`）, http_status, code, response, remain, task_id, rejected（text JSON：地址 → 原因） | 每次对外请求一行（后台推送记录、重推的来源），保留 30 天 |
+| `site_engine_quota`（S2） | channel, day（北京时间日期）, remain, exhausted_until | 当日额度：百度回应的剩余条数；额度用完时停到下一个北京时间 0 点 |
 
 全部经 migrate 建表；JSON 存 `text`（套件约定）。台账只为**有站内页面地址**的对象建行：`link.web` 带 `#` 锚点的嵌入对象（评论）、外站地址、从未见过地址就被删除的对象都不建行（只投递标签）——否则删除一条评论会把文章页记进已删除集合。
 
@@ -76,19 +78,29 @@ Headless 的内容模块不出页面，网页由宿主自己的 SSR 服务渲染
 ### 5.2 CDN 端口
 
 ```kotlin
-// contract.site（本模块的 contract 子工程）
-fun interface CdnPurger {
-    /** 刷新一批站内路径（已去锚点、去查询参数）。返回失败的路径，调用方重试。 */
-    suspend fun purge(paths: List<String>): List<String>
+// contract.site（本模块的 contract 子工程 :module-site-contract）
+interface CdnPurger {
+    val provider: String              // 通道名后缀
+    val maxUrlsPerRequest: Int
+    val supportsPrefetch: Boolean
+    suspend fun purge(urls: List<String>): CdnOutcome      // 绝对地址（origin + 站内路径，已去锚点与查询串）
+    suspend fun prefetch(urls: List<String>): CdnOutcome
 }
+sealed interface CdnOutcome { Accepted(taskId) · QuotaExhausted(code) · Rejected(code) · Failed(code) }
 ```
 
-- 缺省不绑定（不刷新 CDN，靠 CDN 的短 TTL）。产品在自己的 bootstrap 里绑定云厂商实现（腾讯云 CDN、阿里云 CDN、Cloudflare……），密钥走产品的部署配置。
-- 每批 ≤ 100 条路径，按云厂商限额节流；失败重试同 §5.1。
+- 端口返回四类结果而不是「失败的路径」（S2 定稿）：额度用完与请求本身错了不能被当成可重试，否则会被无限重试。
+- **内置实现**（部署配置 `[cdn] provider`，不需要产品写代码）：腾讯云 CDN `PurgeUrlsCache` / `PushUrlsCache`（API 3.0，版本 2018-06-06，TC3-HMAC-SHA256；业务错误也回 200，看 `Response.Error.Code`：`LimitExceeded.*DayLimit` = 额度、`InvalidParameter*` / 域名类 = 拒绝、鉴权 / 限频 / 内部错误 = 重试）；阿里云 CDN `RefreshObjectCaches` / `PushObjectCache`（RPC，版本 2018-05-10，V3 签名 ACS3-HMAC-SHA256，参数在查询串；`QuotaExceeded.Refresh` / `.Preload` = 额度、路径 / 参数类 = 拒绝、签名 / 限频 = 重试）。两种签名都按官方文档实现，单测逐字节复现文档示例；本地假服务另用 node 的 crypto 独立校验。
+- 产品接内置以外的 CDN（Cloudflare、自建缓存……）：`[cdn] provider = "custom"`，在自己的 bootstrap 里 `ctx.bind(CdnPurger::class, …)`（产品模块排在 site 之后初始化也可以：投递器启动时才取，没绑定启动失败）。
+- 不配置 `[cdn]` = 不刷新 CDN，靠 CDN 的短 `s-maxage`（public-routes §8.2a）。
+- 每批 ≤ 100 条地址（云厂商单次上限 1000 / 预热 500），通道间隔 `[cdn] interval_ms`（缺省 2 秒）；`prefetch = true` 时首次上线 / 重新上线 / 换地址的页面刷新后再预热一次（预热额度远小于刷新：腾讯云缺省每日 1000 条）。
+- 刷新什么：对象页地址（上线、更新、撤回、删除都刷）；地址变了新旧都刷；嵌入对象（评论）被隐藏 / 删除时刷所属页面（`link.web` 去掉锚点）。列表页、首页不逐个刷新——每日额度（腾讯云 / 阿里云缺省 1 万条）经不起每 10 秒一次的 feed 刷新，靠 `list` 档 30 秒的 `s-maxage`。
 
 ### 5.3 顺序
 
 同一批变化：**先**失效端点成功，**再**刷新 CDN，**最后**推送搜索引擎。CDN 先刷会让回源拿到 Next 里的旧缓存再缓存一轮；搜索引擎先推会让爬虫抓到旧页面。
+
+实现（S2）：台账在同一事务里为每个通道写待办行（与失效标签同一合并窗口的 `due_at`）；装批之后把到期的行挂到当前最新的失效批上（`gate_batch`；只挂比任何还在等装批的标签 / 路径都早到期的行，保证它所在的窗口已装进批）；挂的批在所有目标上都不再 pending（已投递或死信）才放行——同一目标严格按 id 投递，最新的批投完意味着之前的都投完了。搜索引擎的行另等同一地址的 CDN 刷新完成（成功或进死信）。没开失效投递时不等批。
 
 ## 6. 网页服务调用的开放接口
 
@@ -111,8 +123,8 @@ fun interface CdnPurger {
 
 | 引擎 | 方式 | 说明 |
 | --- | --- | --- |
-| 百度 | 普通收录 API：`POST http://data.zz.baidu.com/urls?site={origin}&token={token}`，body 每行一个 URL | 返回 `{ success, remain }`，`remain` 写进当日额度；额度用完当日停推，次日继续；新内容优先、重新上线其次 |
-| IndexNow（Bing、Yandex、Seznam、Naver 等） | `POST https://api.indexnow.org/indexnow`，`{ host, key, keyLocation, urlList }`，单次 ≤ 10 000 | 新增、更新、删除的 URL 都推（删除的 URL 返回 404 / 410，引擎据此移除）；`keyLocation` 是网页服务底座输出的 `/indexnow-key.txt` |
+| 百度 | 普通收录 API：`POST {endpoint}?site={origin}&token={token}`（生产 endpoint `http://data.zz.baidu.com/urls`，只写在部署配置里），`text/plain`，每行一个 URL，单次 ≤ 2000 | 返回 `{ success, remain, not_same_site, not_valid }`：`remain` 写进当日额度、下一批按它截断，为 0 时停到北京时间 0 点；逐条拒绝的地址进死信（`BAIDU_NOT_VALID` / `BAIDU_NOT_SAME_SITE`）。出错 `{ error, message }`：`over quota` = 额度用完（通道停到 0 点，地址留在队列）；`site error` / `site init fail` / `token is not valid` 是部署问题，退避重试；`empty content` / `only 2000 urls are allowed once` 不重试。新内容优先（priority 0），重新上线与换地址其次（1）；地址没变的更新**不**推百度（额度留给新地址） |
+| IndexNow（Bing、Yandex、Seznam、Naver 等） | `POST {endpoint}`（生产 `https://api.indexnow.org/indexnow`），`{ host, key, keyLocation, urlList }`，单次 ≤ 10 000；可配多个端点，每个端点一个独立通道 `indexnow:<主机>` | 新增、更新、删除的 URL 都推（删除的 URL 返回 410，引擎据此移除）；`keyLocation` 是网页服务底座输出的 `/indexnow-key.txt`（必须在 origin 下）。200 / 202 = 收下；400 不重试；403（密钥文件取不到 / 不一致）、422、429 退避重试 |
 | Google | 不推送 | Google 的 Indexing API 只用于招聘与直播类页面，资讯站不适用；依靠 sitemap（含 news sitemap）与 Search Console |
 
 ### 7.1 删除
@@ -122,9 +134,11 @@ fun interface CdnPurger {
 
 ### 7.2 去重与节流
 
-- 同一 URL 同一动作 24 小时内只推一次（`site_pending_urls` 唯一(url, action, engine)）。
-- 推送在投递器里批量进行：每 30 秒一批；失败按 §5.1 退避。
-- 只推 `status = live` 且与站点 `origin` 同源的 URL；`link.web` 为空的对象不推。
+- 同一 URL 同一动作对同一搜索引擎 24 小时内只推一次（S2：已完成的行保留 7 天，入队时查 24 小时内有没有完成过）；CDN 刷新不去重。待处理的同一 (url, 通道, 动作) 合并成一行（优先级取高、重新等装批）。
+- 推送在投递器里批量进行：每个搜索引擎通道每 `[push] interval_ms`（缺省 30 秒）最多一次请求，一批只含一种动作；失败退避 30 秒、2 分钟、10 分钟、30 分钟、之后每小时，超过 24 小时进死信（`site.push.dead`）。退避比失效投递长：对方限频与额度是按天计的。
+- 只推 `status = live` 且与站点 `origin` 同源的 URL（发出前再核对台账：撤回 / 删除后还没推出去的 submit 作废为 `skipped`；delete 只推仍是 gone 的地址）；`link.web` 为空的对象不推。
+- 后台重推（`POST submission/resubmit/{id}`）：把一条记录里的地址重新排进同一通道，队首、不等失效批、绕过 24 小时去重；发出前照常核对台账。
+- 启动时：配置里去掉的通道，待处理行进死信（`CHANNEL_REMOVED`）。
 
 ## 8. 配置
 
@@ -138,15 +152,27 @@ origin = "https://www.example.com"          # 与网页服务的站点配置一�
 targets = "http://web-internal:3000/api/site/revalidate"   # 逗号分隔（框架 TOML 解析器不支持行内数组，与 [egress] 同一写法）
 # 共享密钥：环境变量 NETON_SITE_REVALIDATE_SECRET（≥ 32 字节），缺失时本模块不投递并在启动时 WARN site.revalidate.disabled
 
+[push]
+interval_ms = 30000
+
 [push.baidu]
 enabled = false
+endpoint = "http://data.zz.baidu.com/urls"
 # token：环境变量 NETON_SITE_BAIDU_TOKEN
 
 [push.indexnow]
 enabled = false
-endpoint = "https://api.indexnow.org/indexnow"
+endpoints = "https://api.indexnow.org/indexnow"          # 逗号分隔
 key_location = "https://www.example.com/indexnow-key.txt"   # 网页服务底座输出（public-routes §11.4）
 # key：环境变量 NETON_SITE_INDEXNOW_KEY（与网页服务同一个）
+
+[cdn]
+provider = "none"                                         # none | tencent | aliyun | custom
+# endpoint = "https://cdn.tencentcloudapi.com/"           # 阿里云 https://cdn.aliyuncs.com/
+# area = "mainland"                                       # 腾讯 mainland / overseas / global，阿里 domestic / overseas
+prefetch = false
+interval_ms = 2000
+# 密钥：环境变量 NETON_SITE_CDN_SECRET_ID / NETON_SITE_CDN_SECRET_KEY
 
 [dispatch]
 obj_window_ms = 1000
@@ -154,6 +180,7 @@ feed_window_ms = 10000
 ```
 
 - 内网目标（`web-internal`）来自部署配置，用普通客户端，不受 `[egress]` 的公网限制（出站规范 §1）。
+- **出站地址没有代码里的缺省**（S2）：开了通道就必须写 `endpoint`，否则启动失败；生产地址只出现在部署配置里，测试与本地联调指向本地假服务（`test-stub/push-fakes.mts`）。通道开着却缺密钥：启动 WARN `site.push.disabled`（带缺的环境变量名），该通道关闭，其余照常。
 - 环境覆盖按模块配置规则：`NETON_SITE__SITE__ORIGIN`、`NETON_SITE__REVALIDATE__TARGETS`、`NETON_SITE__DISPATCH__OBJ_WINDOW_MS`……（本地联调用它把目标指向本机门户，生产值只在部署配置里）。
 - 后台只读展示当前生效配置（密钥打码）。
 
@@ -189,9 +216,9 @@ feed_window_ms = 10000
 | `GET delivery/page?status&target`、`GET delivery/get/{id}`（含请求内容） | `site:delivery:query` |
 | `POST delivery/retry/{id}`（死信重投，见 §5.1） | `site:delivery:retry` |
 | `GET url/page?status&keyword`（含旧地址） | `site:url:query` |
-| `GET submission/page?engine&status`、`POST submission/resubmit/{id}` | `site:submission:query` / `site:submission:retry`（S2） |
+| `GET submission/page?channel&outcome`、`POST submission/resubmit/{id}` | `site:submission:query` / `site:submission:retry`（S2，V003 菜单「推送记录」） |
 | `POST revalidate/run` `{ tags, paths, mode }`（手动失效：标签或站内路径，≤ 100 条；路径按台账找对象；任一条不合法整批 400，字段错误 `tags[i]` / `paths[i]`） | `site:revalidate:run` |
-| `GET config/get`（只读，密钥打码） | `site:config:query` |
+| `GET config/get`（只读，密钥打码；S2 起带各推送通道的待处理 / 死信数、当日剩余额度与停推时刻、因缺密钥关闭的通道） | `site:config:query` |
 
 权限点全部进后台菜单种子（页面 type=2 用 query，其余按钮 type=3），默认授予 `super_admin`。
 
@@ -205,6 +232,7 @@ feed_window_ms = 10000
 - 评论被管理员隐藏：包含它的评论区缓存失效，对象页 CDN 刷新。
 - 失效端点宕机 10 分钟后恢复：积压的标签按合并后的结果投递完，无重复副作用。
 - 全部用真库、真实模块装配的测试覆盖（失效端点用测试桩）。
+- S2 验收（itwind C5 端到端，本地假服务，2026-10-22）：发布约 2 秒后假的腾讯云 CDN 收到刷新与预热、百度与 IndexNow 收到新地址，CDN 刷新早于两者、失效批投递早于 CDN 刷新；撤回只刷 CDN；删除后 410、`/sitemaps/gone.txt` 与 `gone.xml` 列出该地址、CDN 刷新、IndexNow 收到该地址；评论被隐藏后文章页 CDN 刷新；百度回 `over quota` 后通道停到下一个北京时间 0 点、地址留在队列、IndexNow 照常。
 
 ## 12. 分期
 
@@ -212,7 +240,7 @@ feed_window_ms = 10000
 | --- | --- |
 | S1 | 台账、事件订阅（U1、U2、U3 落地后）、失效投递、已删除台账接口、后台查询 — **已实现**（真库测试 14 项：映射、合并、expire 胜出、幂等与过期事件、嵌入对象、旧地址、删除 / 恢复与台账接口签名与增量、宕机退避与积压合并、死信与重投、租约、经底座校验代码的真实 HTTP 投递） |
 | S1.1（itwind C3，2026-10-22） | 网页服务就绪接口 `target/ready`、退避上限 60 秒、expire 回声、评论数 → `thread:` 刷新；U3 由 comment 落地（隐藏 / 删除 / 恢复 / 折叠发通用事件，评论 `link.web` 带锚点）— **已实现**（真库测试 17 项，新增：回声只投一次、评论区刷新合并、网页服务重启后 ready 立即追平积压且顺序正确、退避封顶） |
-| S2 | 搜索引擎推送（百度、IndexNow）、CDN 端口 |
+| S2（itwind C5） | 搜索引擎推送（百度、IndexNow）、CDN 端口与腾讯云 / 阿里云实现、推送记录与额度、后台推送记录页 — **已实现**（单测：两份官方签名示例逐字节复现、三家回应分类、配置校验；真库测试 6 项：失效 → CDN → 搜索引擎的顺序（失效端点宕机时 CDN 不动）、各种变化到通道的映射与 24 小时去重、百度额度截批与停到北京时间 0 点后继续、逐条拒绝 / 请求错误 / 退避与 24 小时死信 / 后台重推 / 通道退役、不开失效投递时不等批、经真实 HTTP 的本地假服务独立校验签名与格式；itwind c5 端到端 11 项） |
 | S3.1（itwind C4，2026-10-22） | 节点事件（U4，`SiteNodeListener`，listenerId `site.node-on-changed`）；评论数监听者在发布端筛掉别的计数（框架 `DomainEventListener.accepts`，neton 91efbc2）：收藏 / 点赞不再为本模块写待投递事件行 — **已实现**（真库测试 19 项，新增：节点与导航在合并窗口内合并投递、经真实总线 + infra 待投递表只有评论数留下一行） |
 | S3 | 资料事件（U7）；U6 改由 infra-media §7.3 实现（随 itwind C2） |
 
