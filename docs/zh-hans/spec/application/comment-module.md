@@ -251,7 +251,7 @@ interface CommentImporter {
 - 楼层按原始发布时间顺序分配；同一批里先导入被回复的评论，盖楼关系照常还原。
 - 原始点赞数可以作为初始支持数（按参数决定），之后的投票正常累加。采集源第二次复查时，若评论正文不变、点赞数变化（`sourceRef` 已存在），对**导入评论**（`origin=imported`、`likesAsSupport=true`）同步 `support_count` 与 `hot_score`（不新建、不动楼号 / 可见数）；平台原生评论的支持数来自真实投票，不被采集覆盖。
 - 设备小尾巴：来源站点展示的发帖机型（如 IT之家评论的 `Ta`）由导入方放进 `deviceTail`，按 §3.2 规范化后记录（不合规字符丢弃、截到 64，不拒绝评论）；复查时只给原来没有的补上。
-- 外部站点身份（[external-identity-module](external-identity-module.md)）：`ImportedComment` 带齐 `siteId + siteUserId` 且 `ExternalSiteIdentityWriter` 已绑定时，导入先 upsert 一条外部身份，写进 `comment_comments.external_identity_id`（弱引用，不加外键；模块没装时为 null）。未认领前仍按「来自 X 的网友 + 昵称」展示。
+- 外部站点身份（[external-identity-module](external-identity-module.md)）：`ImportedComment` 带齐 `siteId + siteUserId` 且 `ExternalSiteIdentityWriter` 已绑定时，导入先 upsert 一条外部身份，写进 `comment_comments.external_identity_id`（弱引用，不加外键；模块没装时为 null）。展示（itwind C4）：评论接口的作者带 `author.site = { id, names, userUrl }`——`names` 是外部站点目录（external-identity §2.1）里该站点的各语言名称（没登记为空）、`userUrl` 是作者在该站点的主页（只给 http(s)）；一页评论的身份与站点各批量读一次（`ExternalSiteIdentityReader.getMany`、`ExternalSiteDirectory.sites`），模块没装或读取失败时没有 `site`、照常只显示昵称。客户端显示「昵称 · 来自 {站点名}」，昵称以 `rel="nofollow ugc"` 外链到 `userUrl`（client-comment）。
 - 导入的评论同样过敏感词和审核模式；不发 `CommentActivity` 事件，因此不触发「被回复 / 被 @」通知。
 - 后台可以按 origin 和来源筛选，批量隐藏或删除某次导入。
 - 导入也会更新对象的评论数，并参与热门评论计算（`countTowardsHot = false` 时不参与）。

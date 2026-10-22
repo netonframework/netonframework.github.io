@@ -1,7 +1,7 @@
 # module-interaction 通用互动模块
 
 > 标识：NETON-APP-INTERACTION
-> 日期：2026-10-15 · 状态：Draft（2026-10-15 按 P1 实现校准）
+> 日期：2026-10-22 · 状态：Draft（2026-10-15 按 P1 实现校准；2026-10-22 itwind C4：列表封面地址、「我的」概览、真库契约测试）
 > 仓库：`neton-application-module-interaction`（服务端）、`neton-application-front-interaction`（后台页面）
 > 用户对任意对象的轻量互动：收藏、点赞、关注、浏览足迹。对象用套件统一的 ObjectRef 指代（[套件架构](content-platform-architecture.md) §5）。
 
@@ -14,6 +14,9 @@
 | 足迹：订阅通用 `ObjectViewed` 写入；保留期 / 每人上限由 `interaction-history-trim` 任务（每小时）清理 | 已实现 |
 | 计数表 + 通用 `ObjectCounterChanged`（同事务、绝对值） | 已实现 |
 | 批量状态查询 `POST state`（匿名只返回计数） | 已实现 |
+| 「我的收藏 / 足迹」条目的封面地址 `coverUrl`（一页一次批量展开，按访问者可读性；宽度档 w360） | 已实现（2026-10-22） |
+| 「我的」概览 `GET mine/summary`（收藏、足迹按对象类型计数） | 已实现（2026-10-22） |
+| 真库契约测试 `postgresContractTest`（收藏幂等与计数、state 匿名 / 登录、游标分页与失效占位、封面、概览、足迹写入与清理） | 已实现（2026-10-22） |
 | 对象失效：订阅 `ObjectUnavailable`，`permanent = true` 时清理互动记录；暂时下线只在列表显示失效 | 已实现 |
 | 事件 `InteractionRecorded`（`interaction.favorite/like.added/removed`） | 已实现 |
 | 后台：互动记录查询、对象计数查询、日趋势统计 | 已实现 |
@@ -86,12 +89,13 @@
 | 接口 | 说明 |
 | --- | --- |
 | `POST favorite`（body：objectType, objectId）、`DELETE favorite?objectType&objectId` | 收藏 / 取消 |
-| `GET favorite/page?objectType&cursor&limit` | 我的收藏（附对象摘要） |
+| `GET favorite/page?objectType&cursor&limit` | 我的收藏（附对象摘要；`coverUrl` 是封面的列表缩略图地址，媒体服务没装或不可读时为空） |
 | `GET/POST/PUT/DELETE favorite/folder…` | 收藏夹管理（P2，未实现） |
 | `POST like`（body）、`DELETE like?objectType&objectId` | 点赞 / 取消 |
 | `POST follow`、`DELETE follow`、`PUT follow/notify` | 关注 / 取消 / 通知开关（P2，未实现） |
 | `GET follow/page?objectType&cursor` | 我的关注（P2，未实现） |
 | `GET history/page?objectType&cursor&limit`、`DELETE history`（不带参数清空；带 objectType + objectId 删一条） | 足迹 |
+| `GET mine/summary` | 「我的」概览：`{ favorites: [{ objectType, count }], histories: [...] }`，条数多的类型在前（网页控制台首页与列表的类型标签页） |
 | `POST state`（`@AllowAnonymous`，body：objects[]） | 批量查询：一组对象的计数和当前用户的收藏 / 点赞状态；匿名只返回计数 |
 
 **后台（`/admin/interaction/*`）**：

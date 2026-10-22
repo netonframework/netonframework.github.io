@@ -612,6 +612,22 @@ when (mount?.mode) {
 - **楼层位置**（2026-10-22，itwind C3）：楼层节点（`kind = block`）可带 `placement`（`[a-z0-9][a-z0-9._-]{0,63}`，如 `home`、`landing.618`；频道恒为空，写了报 `NODE_PLACEMENT_INVALID`）。门户首页「放哪些楼层、什么顺序、每层几条」由此成为编辑配置：后台「频道与楼层」里改位置、拖动排序、改每层条数，内容在挂载的筛选器里改，网页不改代码。产品的缺省楼层由产品自己的迁移建立（如 itwind-backend V006 的手机 / 电脑 / AI / 汽车 / 游戏五层），filter 不预置任何楼层。后台节点接口 `page` / `get` / `create` / `update` 都带 `placement`（`page` 可按它筛选）。
 - 编辑型推荐（手工挑选、自定义标题封面）仍然是 content 的合集，不在 filter 里重做；频道要展示一个合集时，挂 content 提供的内置筛选器 `content.collection:<code>`。
 
+### 10.7 节点变化事件（网页缓存失效，itwind C4）
+
+节点、挂载与筛选器的对外内容一变，就在写入的**同一事务里**发布套件通用事件 `contract.core.NodeChanged`（site-module §9 U4），
+由 site 模块刷新网页端的 `node:{type}:{id}` 标签（与 `navigation` 时的 `site:nav`）。节点引用的键与网页端一致：
+
+| 写入 | 事件的节点 | navigation |
+| --- | --- | --- |
+| 频道节点增 / 改 / 删 | `filter.channel:{code}`（code 改了时旧的与新的各一次） | true（频道列表就是导航） |
+| 楼层节点增 / 改 / 删 | `filter.block:{code}` 与它所在的 `filter.placement:{placement}`（code、位置改了时旧的与新的都发） | false |
+| 挂载新增 / 换挂 / 卸载 | 挂载记录的节点：filter 自己的节点按 id 查出 code（与位置），别的模块的节点原样（如 `content.term:7`）；换了节点时两个都发 | 频道为 true |
+| 筛选器发布新版本 / 启用 / 停用 | 它的全部挂载节点（同上） | 同上 |
+
+- 草稿保存不改对外内容，不发；状态没变的启停不发；同一节点在一次写入里只发一次。
+- 有效期（`startAt` / `endAt`）到点生效不是一次写入，没有事件：网页在 `list` 档的时效（30 秒）内跟上。
+- 发布方只认通用事件、不认识 site；没装 site 时事件没有监听者，发布是空操作。
+
 ## 11. 数据表
 
 | 表 | 关键字段 |

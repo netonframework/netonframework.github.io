@@ -1,7 +1,7 @@
 # module-site 站点发布：渲染缓存失效与搜索引擎推送
 
 > 标识：NETON-APP-SITE
-> 日期：2026-10-22 · 状态：**Accepted r2 · S1 已实现**（itwind C2：`neton-application-module-site` d2d0d49、`neton-application-front-site` 339a593；C3 补 S1.1：网页服务就绪、退避上限、expire 回声、评论区刷新 b5cf131；S2 搜索引擎推送与 CDN 端口排在 C5）。网页服务一侧——失效端点 `/api/site/revalidate`、已删除台账的签名同步客户端、proxy 的 410——已在 C1 随底座实现，接口按本规范）
+> 日期：2026-10-22 · 状态：**Accepted r2 · S1 已实现**（itwind C2：`neton-application-module-site` d2d0d49、`neton-application-front-site` 339a593；C3 补 S1.1：网页服务就绪、退避上限、expire 回声、评论区刷新 b5cf131；C4 补 S3 的节点事件 U4 与计数筛选 8aed625；S2 搜索引擎推送与 CDN 端口排在 C5）。网页服务一侧——失效端点 `/api/site/revalidate`、已删除台账的签名同步客户端、proxy 的 410——已在 C1 随底座实现，接口按本规范）
 > 仓库：`neton-application-module-site`（服务端）、`neton-application-front-site`（后台页面）
 > 对端：`neton-application-client` 底座的公开路由契约（`docs/spec/public-routes.md`）——标签命名（§8.3）、失效端点（§8.4）、已删除 URL 集合（§7.2）由那份契约定义，本模块是调用方。
 > 使用方：[client-content.md](client-content.md)、[client-comment.md](client-comment.md)；样板产品 itwind 的门户。
@@ -53,10 +53,10 @@ Headless 的内容模块不出页面，网页由宿主自己的 SSR 服务渲染
 | `ObjectUnavailable(permanent = false)` | `obj:{type}:{id}`（**expire**）、`feed:{type}`（refresh，合并 10 秒） | `unavailable` | 刷新 URL | 无（可能回来） |
 | `ObjectUnavailable(permanent = true)` | 同上，`obj` expire | `gone`；投递 `gone: [url]` | 刷新 URL | `delete`（IndexNow 推送该 URL；百度见 §7.1） |
 | `ObjectCounterChanged(counter = comments)`（2026-10-22） | `thread:{type}:{id}`（refresh，合并 10 秒） | — | — | — |
-| `content.term` / 筛选器节点变化（§9 U4） | `node:{nodeType}:{id}`（refresh）、`site:nav`（refresh，合并 10 秒） | — | 刷新节点页 | — |
+| 通用 `NodeChanged`（§9 U4：栏目、频道、楼层、楼层位置） | `node:{nodeType}:{id}`（refresh）；`navigation = true` 时另加 `site:nav`（refresh）；都在 feed 合并窗口（缺省 10 秒）里 | — | 刷新节点页、首页楼层、导航 | — |
 
 - `type` 的取舍：只处理 `ObjectRegistry` 里 `describe` 能给出 `link.web` 的类型，以及显式登记为「无独立页面但影响别的页面」的类型（如 `comment.comment`：没有自己的页面，`link.web` 是所属对象页 + 锚点，CDN 刷新时去掉锚点）。
-- `ObjectCounterChanged` 只订阅评论数（`counter = comments`）：评论数变了说明评论区第一页变了（新评论可见、删除、隐藏、审核通过），刷新 `thread:{type}:{id}`，在 feed 窗口里合并——热门文章一分钟几十条评论，评论区也只每 10 秒重渲染一次；评论被隐藏 / 删除另有评论自身的 `ObjectUnavailable`（`obj:comment.comment:{id}` expire，立即生效）。其他计数（收藏、点赞、浏览）不订阅：允许在缓存时效内滞后（public-routes §8.1）。计数事件由评论模块在**自己的事务里**发布；本模块的监听者声明 `RETRYABLE`（事件随评论事务落库、提交后异步投递），site 出错不会让发评论失败、也不占评论事务的耗时（缺省的 SYNC 会把 site 变成评论写入路径上的一环）。代价：每次计数变化多写一行事件 outbox，其他计数的事件投递到这里直接丢弃。
+- `ObjectCounterChanged` 只订阅评论数（`counter = comments`）：评论数变了说明评论区第一页变了（新评论可见、删除、隐藏、审核通过），刷新 `thread:{type}:{id}`，在 feed 窗口里合并——热门文章一分钟几十条评论，评论区也只每 10 秒重渲染一次；评论被隐藏 / 删除另有评论自身的 `ObjectUnavailable`（`obj:comment.comment:{id}` expire，立即生效）。其他计数（收藏、点赞、浏览）不订阅：允许在缓存时效内滞后（public-routes §8.1）。计数事件由评论模块在**自己的事务里**发布；本模块的监听者声明 `RETRYABLE`（事件随评论事务落库、提交后异步投递），site 出错不会让发评论失败、也不占评论事务的耗时（缺省的 SYNC 会把 site 变成评论写入路径上的一环）。其他计数在**发布端**就筛掉（监听者的 `accepts` 只收评论数，C4）：收藏、点赞不为本模块写事件 outbox 行；评论数每次变化一行，合并发生在本模块的待投递标签上（同一 `thread:` 标签在窗口里只留一行）。
 - 合并窗口：`obj:` 标签 1 秒（把同一事务里的多个事件合并），`feed:` / `site:nav` 10 秒；可配置。
 
 ## 5. 投递
@@ -166,7 +166,7 @@ feed_window_ms = 10000
 | U1 | content（及所有对象拥有模块） | 首次发布也发 `ObjectAvailable`（现在只在重新发布时发） | 本模块只订阅通用事件就能处理「上线」 |
 | U2 | 契约库 `contract.core` + content | 新增通用事件 `ObjectUpdated`（`object.updated`）：对象的**公开表示**变化时发布（新版本上线、slug 变化、可见性设置变化），不含计数变化 | 不订阅 `content.item.published(revisionUpdate)` 这类模块专属事件 |
 | U3（已实现，comment cea7b4b） | comment | 评论隐藏、管理员删除、作者删除时发 `ObjectUnavailable(subject = comment.comment:{id})`（作者删除与管理员删除 `permanent = false`，保留期清理后 `permanent = true`），恢复时 `ObjectAvailable`；`comment.comment` 的 `link.web` = 所属对象的 `link.web` + `#comment-{id}` | 评论区缓存按评论粒度失效（public-routes §8.3） |
-| U4 | content（栏目）、filter（频道 / 楼层 / 挂载） | 节点变化的事件：content 已有 `content.term.changed`；filter 需补 `filter.node.changed` / `filter.mount.changed`。本模块订阅这两个模块的契约事件（例外：节点不是 `ObjectRef` 对象，没有通用事件可用） | 首页频道、栏目导航失效 |
+| U4（已实现，itwind C4） | 契约库、content（栏目）、filter（频道 / 楼层 / 挂载） | 通用事件 `contract.core.NodeChanged(subject = 节点引用, navigation)`（契约 6aafdc4）：节点不是注册表对象，但沿用 `ObjectRef` 的形状，键与网页端的 `node:{type}:{id}` 一致（频道 / 楼层用 code，放置位置用位置名，栏目用 id）。filter（107d428）在节点增改删（code、位置改了时旧的与新的都发）、挂载 / 换挂 / 卸载、筛选器发布新版本 / 启停时发；content（7ebc0aa）在词条增改删时发（树形分类法 `navigation = true`）。本模块只订阅这一个通用事件，不认识 filter / content | 首页楼层、频道页、栏目导航在合并窗口内失效（实测：后台改首页楼层名，约 11 秒后门户首页出现新名，不再等 `list` 档 30 秒） |
 | U5 | 契约库 | `ObjectSummary` 增加可选的 `publishedAt`、`updatedAt` | 台账与推送的时间字段；sitemap 不依赖它 |
 | U6 | infra 媒体 | **可缓存的媒体地址**：已由 infra-media §7.3「CDN 地址策略」取代（见下） | 缓存的 HTML、OG 图、图片搜索都不能用 10 分钟签名地址 |
 | U7 | account | 公开资料变化（昵称、头像）发 `ObjectUpdated(subject = account.user:{id})` | 评论区、作者页里的头像昵称失效（可选，不做就靠 TTL） |
@@ -213,7 +213,8 @@ feed_window_ms = 10000
 | S1 | 台账、事件订阅（U1、U2、U3 落地后）、失效投递、已删除台账接口、后台查询 — **已实现**（真库测试 14 项：映射、合并、expire 胜出、幂等与过期事件、嵌入对象、旧地址、删除 / 恢复与台账接口签名与增量、宕机退避与积压合并、死信与重投、租约、经底座校验代码的真实 HTTP 投递） |
 | S1.1（itwind C3，2026-10-22） | 网页服务就绪接口 `target/ready`、退避上限 60 秒、expire 回声、评论数 → `thread:` 刷新；U3 由 comment 落地（隐藏 / 删除 / 恢复 / 折叠发通用事件，评论 `link.web` 带锚点）— **已实现**（真库测试 17 项，新增：回声只投一次、评论区刷新合并、网页服务重启后 ready 立即追平积压且顺序正确、退避封顶） |
 | S2 | 搜索引擎推送（百度、IndexNow）、CDN 端口 |
-| S3 | 节点事件（U4）、资料事件（U7）；U6 改由 infra-media §7.3 实现（随 itwind C2） |
+| S3.1（itwind C4，2026-10-22） | 节点事件（U4，`SiteNodeListener`，listenerId `site.node-on-changed`）；评论数监听者在发布端筛掉别的计数（框架 `DomainEventListener.accepts`，neton 91efbc2）：收藏 / 点赞不再为本模块写待投递事件行 — **已实现**（真库测试 19 项，新增：节点与导航在合并窗口内合并投递、经真实总线 + infra 待投递表只有评论数留下一行） |
+| S3 | 资料事件（U7）；U6 改由 infra-media §7.3 实现（随 itwind C2） |
 
 ## 13. 开放项
 

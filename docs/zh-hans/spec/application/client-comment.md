@@ -77,6 +77,7 @@ export default defineFrontModule({
 
 - Web 端发评论传 `client: "web"`，**不传 `deviceTail`**：浏览器 UA 推出来的机型不可靠，也不应把 UA 当身份展示。
 - 展示：评论有 `deviceTail` 时显示它；没有时按 `client` 显示「来自网页版」「来自手机网页」一类词条（`client = web` / `wap`）；`client = app` 且无尾巴时不显示。IP 属地、小尾巴被服务端关闭时接口返回 null，不显示。
+- 导入评论的来源站点（itwind C4）：作者有 `author.site` 且站点目录给了名称时，昵称后显示「来自 {站点名}」（`public.author.site`，名称按读者语言：完全匹配 → 同一主语言 → 任意一个；没有名称时只显示昵称，不显示站点代码）；`site.userUrl` 是 http(s) 时昵称外链到它，`rel="nofollow ugc noopener"`、新窗口（comment-module §6）。静态评论区与交互岛同一份标记，进缓存的 HTML、可收录。
 - **已决（产品决定 5）**：网页端一律 `client = "web"`，不传 `deviceTail`，不区分 `wap`。理由：响应式单域名，窄屏与宽屏是同一个网页端；按视口宽度区分只是猜测，且会让同一个人在不同窗口宽度下得到两种标签。
 
 ## 4. SEO
