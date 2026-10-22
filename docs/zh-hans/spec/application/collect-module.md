@@ -120,6 +120,7 @@ CollectRecordTypeDefinition(
 | `feed` | RSS / Atom（延后，未实现） |
 | `external` | 不在进程内抓：任务由外部采集器领取（§5.3）；合作方主动推送也走上报接口 |
 
+- `http-api` 的列表项条件 `api.filter`（与投递规则 filter 同一格式，作用于列表字段）：不满足的项不取详情、不抓子记录、不入库，计为跳过——推荐流里混着视频、卡片时用（2026-10-22）。
 - 抽取规则：CSS 选择器（`sel@attr` / `sel@html`）、JSONPath、正则，可以组合；提供「通用正文抽取」兜底（只补缺失的 title / 正文 / 发布时间）。XPath 延后。
 - 请求：频率与超时按源限制；失败指数退避（兼顾 Retry-After）；响应体上限 `collect.http.max_body_kb`。代理池延后。
 - 调度由 neton-jobs 驱动：`collect-scheduler`（10 秒，单节点）按 `next_run_at` 建运行并按时间片推进（`collect.run.slice_seconds`、`collect.run.max_per_tick`）；同一任务同一时间只运行一个实例（`collect_runs` 部分唯一索引）。
