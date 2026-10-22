@@ -144,7 +144,7 @@ export default defineFrontModule({
 
 ## 12. 实现记录（itwind C3，2026-10-22）
 
-仓库 `neton-application-client-comment`（4213a29、724b30a）。与上文不同或补充的决定：
+仓库 `neton-application-client-comment`。与上文不同或补充的决定：
 
 | 项 | 实现 |
 | --- | --- |
