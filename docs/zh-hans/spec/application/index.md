@@ -16,6 +16,10 @@
 - [TOTP MFA 与三态登录](./mfa.md)
 - [MFA 数据库并发与浏览器验收](./mfa-acceptance.md)
 
+## 内容平台套件模块
+
+- [推广：商业推广识别、联盟转链与广告标识（module-promotion）](./promotion-module.md)
+
 ## C 端门户（Draft，未实现）
 
 - [站点发布：渲染缓存失效与搜索引擎推送（module-site）](./site-module.md)

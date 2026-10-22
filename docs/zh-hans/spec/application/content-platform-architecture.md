@@ -25,6 +25,7 @@
 | filter | 筛选器：模块注册数据源与维度，存下来的查询跨模块复用；频道、楼层、合集规则、推送订阅都引用它 | [filter-module.md](filter-module.md) |
 | search | 跨模块统一搜索（相关性；与 filter 共享维度索引，见 filter §12.3） | 待写 |
 | push | 推送：设备、主题、下发、多通道 | [push-module.md](push-module.md) |
+| promotion | 商业推广识别（导购、带货、经销商促销）、联盟转链（京东联盟、淘宝联盟、多多进宝）、托管推广链接与「广告」标识；与交易领域的 commerce 无关 | [promotion-module.md](promotion-module.md) |
 | 媒体（infra） | 文件与视频的上传、存储、处理、访问控制 | §6 |
 
 ### 2.2 领域模块（独立建设，不并入 content）
@@ -182,6 +183,13 @@ data class ObjectRef(val type: String, val id: String)    // ObjectRef("content.
 
 - **numeric 列让原生数据库驱动崩溃（已修复）**：sqlx4k 1.15 及以前，带参数查询结果里的 PostgreSQL `numeric` 列（`SUM`、`AVG` 等聚合的默认返回类型）会让原生驱动崩溃整个进程。修复由我们提交上游（sqlx4k #184），随 1.16.0 发布，框架已升级（2026-10-17）。现在 `numeric` 按文本精确返回；聚合要当整数用时照常写 `::bigint`，那是取值类型的选择，不再是规避。
 - **出站 HTTP/2 带 Host 头**：hyper4k 客户端在 HTTP/2 请求里仍带 `Host` 与连接类头部，严格的 h2 服务端（如开了 h2 的 nginx）直接返回 400。已在 hyper4k `d436919` 修复（h2 下去掉这些头，HTTP/1.1 不变），但尚未发布版本。影响所有出站请求：collect 抓取、infra `importFromUrl`、push 的 FCM 调用等；发版前遇到这类 400 先按此排查。
+
+### 5.6a 审核保留原因与托管链接
+
+两个跨模块基础类型（`contract.core`，[promotion-module](promotion-module.md) §5）：
+
+- `ReviewHold(code, evidence: List<ReviewEvidence(kind, match, excerpt?, field?)>)`：写入方要求「这一版必须有人看过才能上线」，带机器码与可高亮的证据。接收方只认这份类型，不认识写入方的业务——content 收到后提交一律待审（content §6「保留」），collect 的流水线步骤可以把它挂在记录上交给下游（collect §6）。
+- `ManagedLink(href, rel, disclosure?)` / `ManagedLinkRegistry`：正文里的链接引用一条由拥有模块管理的链接记录（`ObjectRef`），展示时取当前地址；拥有方 `register(type, resolver)`，使用方 `resolve(refs)`，未注册或不可用的不在结果里（使用方显示纯文字）。§6.4 的外部链接规则同样适用：协议白名单、`rel`。`disclosure`（`Disclosures.ADVERTISING`）不为空时链接旁必须显示「广告」。
 
 ### 5.6 IP 属地
 

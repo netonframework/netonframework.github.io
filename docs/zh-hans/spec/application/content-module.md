@@ -30,6 +30,7 @@
 | 相关内容 `content_item_relations` | 延后 |
 | `FieldTypeRegistry` / `BlockTypeRegistry` 扩展 | 延后 |
 | 开放接口 `/platform/content/…` | 延后（P3） |
+| 审核保留原因（§6「保留」）、托管链接（§5.2）、商业标识 `disclosure`（§5.1）；`V005__holds_disclosure.sql`；真库测试 `ContentHoldsDbTest` | 已实现（2026-10-22，配合 [promotion-module](promotion-module.md)） |
 | 筛选器数据源 `content.item`、挂载点 `content.term`、`item/query` 的 `filter` 参数（[filter-module](filter-module.md) §4.4、§6.7、§10.4） | 已实现（2026-10-17；一致性套件真库全绿） |
 | 内置筛选器 `content.collection:<code>`、合集分区挂载点 `content.collection_section` | 延后 |
 
@@ -207,6 +208,7 @@ UPDATE content_terms SET path = '/' || id || '/' WHERE taxonomy = 'category' AND
 | 排序 | weight（越大越靠前）, pinned_until?（全局置顶到期时间）；栏目内置顶见 5.3 |
 | 计数 | view_count, comment_count, favorite_count（冗余计数：评论数、收藏数由通用事件 `ObjectCounterChanged`（counter = `comments` / `favorites`）同步回写，listenerId `content.counter-writeback`；详细统计见 §9） |
 | SEO | seo_title, seo_keywords, seo_description, canonical_url |
+| 标识 | disclosure?（商业标识，`contract.core.Disclosures`：`advertising` = 依《互联网广告管理办法》第九条显著标明「广告」；版本化字段） |
 | 生产 | producer?, producer_ref?（外部写入方标识，§10.3；(producer, producer_ref) 部分唯一）, submitter_user_id?（投稿人，§11）, current_revision_id, published_revision_id, attached_media（已 attach 的 fileId，用于差量 attach / detach）, version（单调递增，即事件的 subjectVersion）, created_by, updated_by |
 
 **发布时间**：`published_at` 是对读者的发布时间，列表排序（`sort=published`）、`publishedAfter` / `publishedBefore`、筛选器字段 `publishedAt`（维度 `time.published`）及其时间窗、卡片与详情的 `publishedAt`、`content.item.published` 事件都只看它，不另做 `coalesce`。`original_published_at` 是外部写入方（采集、迁移工具，§10.3）给出的来源时间；`first_published_at` 是本站首次上线的时刻。
@@ -236,7 +238,9 @@ UPDATE content_terms SET path = '/' || id || '/' WHERE taxonomy = 'category' AND
 | `embed` | provider、url、数据（扩展用；客户端不认识时降级为链接卡片） |
 | `item_card` | 引用站内另一条内容 |
 
-- 块用一个扁平结构 `ContentBlock(type, text, marks, level, media, medias, caption, alt, display, cite, ordered, items, language, header, rows, provider, url, data, itemId)` 承载；行内标记 `ContentMark(type, start, end, href?, itemId?)`，区间按 UTF-16 下标半开。
+- **托管链接**：`link` 标记可以带 `ref`（`contract.core.ObjectRef` 的 `type:id`，如 `promotion.link:12`），表示这个链接的地址由拥有链接记录的模块管理（联盟推广链接会到期重换、下线）。写入方在 HTML 里用 `<a href="…" data-managed-link="promotion.link:12">`（`ManagedLinks.HTML_ATTRIBUTE`），HTML 导入记下引用、`href` 只是写入时的快照。**详情**经契约库 `ManagedLinkRegistry`（拥有方 `register(type, resolver)`，本模块 `bindIfAbsent`）批量解析：解析到的输出当前 `href` 与 `rel`（如 `["nofollow","sponsored"]`）、`disclosure`，不输出 `ref`；解析不到（失效、拥有模块没装）的去掉链接标记、只留文字。`rel` / `disclosure` 只在输出里出现，保存时丢弃。后台编辑视图给的是存储形态（引用 + 快照），编辑器保存时原样带回。
+- **商业标识**（`disclosure`）：保存时给了就校验（`DISCLOSURE_INVALID`）；没给而正文里有带标识的托管链接时取该标识（编辑或写入方漏设也不会漏标）。卡片与详情都带 `disclosure`；详情另按「保存的值 ∨ 已解析的托管链接带的标识」给出。客户端在标题处显著标明「广告」，正文里每个带 `disclosure` 的链接旁再标一次（[promotion-module](promotion-module.md) §7）。
+- 块用一个扁平结构 `ContentBlock(type, text, marks, level, media, medias, caption, alt, display, cite, ordered, items, language, header, rows, provider, url, data, itemId)` 承载；行内标记 `ContentMark(type, start, end, href?, itemId?, ref?, rel?, disclosure?)`，区间按 UTF-16 下标半开。
 - 块类型可扩展（`BlockTypeRegistry`），新块必须声明降级方式（延后）。
 - 导入 HTML（编辑器粘贴、外部写入方、后台 `item/import-html`）时按白名单转换为块，转不了的标签丢弃并记录。
 - 提供 `blocks → HTML` 和 `blocks → 纯文本` 两个转换器，分别给 Web SSR 和搜索、摘要生成使用。
@@ -307,6 +311,7 @@ draft ──提交──► pending ──通过──► published ──撤回
 - **自动保存**（延后）：编辑器每隔一段时间写一个自动保存版本，同一编辑者只保留最新一份，不进版本列表。
 - **编辑锁**（延后）：打开编辑时加锁（带心跳），别人打开时提示「xx 正在编辑」，可强制接管。
 - **审核**：类型或栏目要求审核时走 pending；通过、驳回（附原因）、下线都写 `content_review_logs`。审核策略可替换：`ContentPublishPolicy` 决定某次提交是否免审（`REVIEW` / `PUBLISH`）；查找顺序是 `ContentPublishPolicies` 里按 producer 登记的规则 → 上下文里绑定的整体策略 → 内置规则（类型或主栏目要求审核时待审，否则直接发布）。终端用户投稿一律待审，不经过策略。
+- **保留**（审核保留原因）：外部写入方可以给某一版附上 `contract.core.ReviewHold`（机器码 + 证据，如 promotion 的 `CONTENT_COMMERCIAL_SUSPECTED`），存在版本上（`content_revisions.holds`）。**有保留原因的版本提交时一律待审**，写入方登记的发布策略、整体策略都不能放行，后台「发布」按钮也拒绝（`REVIEW_REQUIRED`）；编辑看过后照常通过或驳回，保留原因留作审计。写入方每次写入替换上一版的保留原因（空 = 不保留）；后台编辑、回滚产生的新版本沿用当前未上线版本的保留原因（编辑改过的稿件仍要审核通过）。后台列表带 `holdCodes`，编辑视图带 `holds`（含证据，供高亮），队列 `queue=held` 列出有保留原因、尚未上线的版本。
 - **定时**：定时发布、定时下线由 neton-jobs 任务 `content-schedule`（每分钟，单节点）扫描执行；定时下线进入 `withdrawn`。
 - **删除**：进回收站（`trash`），可恢复到进入前的状态；彻底删除（purge）P1 由后台手动执行，保留期后自动清理延后。
 - **归档**：只能从 `withdrawn` 归档。
@@ -386,7 +391,7 @@ draft ──提交──► pending ──通过──► published ──撤回
 - **挂载**（filter-module §10.4）：只按一个词条取列表（`category` / `categoryId`，或恰好一个标签；没有其他条件参数）且该词条有生效挂载时，按挂载方式（REPLACE / PREPEND / APPEND）返回；挂载只改变显示，归属、后台按分类查询、带其他条件的查询都按归属计算。
 - 返回字段可选：列表默认不含正文和 fields，需要时声明（`include=…`，逗号分隔；P1 只支持 `fields`），控制响应体大小。
 - 卡片字段：`id, type, slug, title, subtitle, titleStyle, summary, cover, listStyle, category, authorName, sourceName, sourceUrl, visibility, redirectUrl, shareUrl, publishedAt, updatedAt, viewCount, commentCount, favoriteCount, pinned, fields?`；详情另有正文、媒体、词条、`origin`、SEO、`canonicalUrl`、`shareUrl`、`capabilities`、`related` 等。
-- 后台查询（`item/page`）额外支持类型、状态、栏目（含子栏目）、关键词（标题或 ID）、队列（`review` 待审与有待审版本的内容 / `submission` 投稿）；按编辑者、审核人筛选延后。
+- 后台查询（`item/page`）额外支持类型、状态、栏目（含子栏目）、关键词（标题或 ID）、队列（`review` 待审与有待审版本的内容 / `submission` 投稿 / `held` 有审核保留原因、尚未上线的版本）；按编辑者、审核人筛选延后。
 
 ## 9. 统计、排行与搜索
 
@@ -450,7 +455,8 @@ interface ContentDraftWriter {
 }
 // ContentDraftInput(producer, producerRef, actor, type = "article", categoryCode?, title, subtitle?, summary?,
 //   contentHtml? 或 blocksJson?, cover: List<MediaRef>, externalImageUrls, authorName?, sourceName?, sourceLink: ExternalLink?,
-//   origin = "reprint", originalPublishedAt?（来源发布时间，记为 original_published_at，首次发布时作为 published_at，见 §5.1）, tags, submit = true)
+//   origin = "reprint", originalPublishedAt?（来源发布时间，记为 original_published_at，首次发布时作为 published_at，见 §5.1）, tags, submit = true,
+//   holds: List<ReviewHold>（这一版的审核保留原因，§6「保留」）, disclosure?（商业标识，§5.1）)
 // ContentDraftResult(itemId, revisionId, created, status)
 ```
 
@@ -537,7 +543,7 @@ interface ContentDraftWriter {
 | `content_item_tombstones` | 曾经上线、已彻底删除的内容（id = 原内容 ID, type, slug, deleted_at）：详情据此返回 `CONTENT_GONE` | 已建（V004） |
 | `content_sources` | 来源记录（name, host 唯一, canonical_to_source, note） | 已建（V004） |
 
-全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`；`V002__item_original_published_at.sql` 加 `content_items.original_published_at`；`V003__revision_scoped_fields.sql` 给 `content_revisions` 补版本化字段列；`V004__web_portal_reads.sql` 加 `content_updated_at`（回填 `published_at`）、`source_host`（按 `source_url` 回填）、墓碑表、来源记录表与「来源管理」菜单），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
+全部经 migrate 建表（`V001__baseline.sql`，含 `CREATE EXTENSION pg_trgm`；`V002__item_original_published_at.sql` 加 `content_items.original_published_at`；`V003__revision_scoped_fields.sql` 给 `content_revisions` 补版本化字段列；`V004__web_portal_reads.sql` 加 `content_updated_at`（回填 `published_at`）、`source_host`（按 `source_url` 回填）、墓碑表、来源记录表与「来源管理」菜单；`V005__holds_disclosure.sql` 加 `disclosure`（内容行与版本）与版本上的 `holds`），不在运行期做 DDL。JSON 字段（cover、body、fields、settings、attached_media 等）一律存 `text` 列，不用 jsonb：框架的行映射只支持基本类型（套件统一约定）。
 
 ## 14. 权限点
 

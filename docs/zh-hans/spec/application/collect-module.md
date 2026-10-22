@@ -21,6 +21,7 @@
 | 上游删除：合作方推送删除 + `collect-upstream-recheck` 复查原文 404/410（缺省关闭），按 `upstream_delete_policy` 处理 | 已实现 |
 | 事件 `CollectRecordProcessed`（`collect.record.processed`） | 已实现 |
 | 规则在线调试（`/admin/collect/debug/test`） | 已实现（原计划 P2） |
+| 审核保留原因：步骤给记录加 `holds`、`content.draft` 交给 content；`article` 的 `disclosure` 字段；产品步骤 `promotion-check`（[promotion-module](promotion-module.md) §6）；`V003__record_holds.sql` | 已实现（2026-10-22） |
 | XPath 抽取、`feed`（RSS/Atom）、`readability` / `strip-boilerplate` / `dedupe-content` 步骤、代理池 | 延后 |
 | `content.media` 端口 | 延后 |
 | 按源成功率之外的采集质量报表 | 延后 |
@@ -66,7 +67,7 @@ collect 是**内容接入流程**，不直接写任何模块的表：
 | `collect_tasks` | id, source_id, name, collector(`http-list`/`http-api`/`external`), record_type, entry（text JSON）, rules（text JSON：抽取规则）, rules_version, schedule_kind(`manual`/`interval`/`cron`/`once`), schedule_value, pipeline（text JSON：步骤列表）, enabled, last_run_at, next_run_at, last_status, last_error, consecutive_failures |
 | `collect_runs` | id, task_id, source_id, status(`queued`/`running`/`succeeded`/`failed`/`cancelled`), trigger_kind, worker, rules_version, checkpoint（text JSON：断点）, lease_until, heartbeat_at, started_at, finished_at, fetched, created, updated, skipped, failed, error；同一任务同时只有一个 queued / running（部分唯一索引） |
 | `collect_run_logs` | id, run_id, level, message, url, created_at（每次运行有条数上限，按保留期清理） |
-| `collect_records` | id, source_id, task_id, run_id, rules_version, collector, record_type, origin_id, origin_url, parent_origin_id?, extracted（text JSON：抽取结果）, data（text JSON：清洗后字段）, media（text JSON：原始地址 → fileId）, flags（text JSON 数组）, fingerprint, upstream_state(`present`/`changed`/`removed`), status(`new`/`processed`/`blocked`/`delivered`/`ignored`/`error`), status_reason, version, first_seen_at, last_seen_at, changed_at, checked_at；唯一(source_id, record_type, origin_id) |
+| `collect_records` | id, source_id, task_id, run_id, rules_version, collector, record_type, origin_id, origin_url, parent_origin_id?, extracted（text JSON：抽取结果）, data（text JSON：清洗后字段）, media（text JSON：原始地址 → fileId）, flags（text JSON 数组）, holds（text JSON：审核保留原因，§6）, fingerprint, upstream_state(`present`/`changed`/`removed`), status(`new`/`processed`/`blocked`/`delivered`/`ignored`/`error`), status_reason, version, first_seen_at, last_seen_at, changed_at, checked_at；唯一(source_id, record_type, origin_id) |
 | `collect_record_raws` | record_id（主键）, content_type, content, truncated, fetched_at（原始响应存档） |
 | `collect_deliveries` | id, record_id, rule_id, sink（投递端口 code）, status(`pending`/`waiting`（等父记录）/`delivered`/`failed`/`skipped`/`withdraw`/`withdrawn`), target_ref?（下游返回的目标，如 content 条目 ID）, attempts, next_attempt_at, reason, stale, delivered_version, delivered_at；唯一(record_id, sink) |
 | `collect_rules` | id, name, record_type, source_id（0 = 任意）, task_id（0 = 任意）, sink, filter（text JSON）, params（text JSON）, on_change(`redeliver`/`notify`/`ignore`), sort, enabled |
@@ -102,7 +103,7 @@ CollectRecordTypeDefinition(
 
 字段类型 `CollectFieldType`：`TEXT`、`HTML`、`URL`、`URL_LIST`、`TEXT_LIST`、`INT`、`DATETIME`、`BOOLEAN`、`JSON`。注册表 `CollectRecordTypeRegistry`（契约子工程里定义；collect 在 bootstrap 里 `bindIfAbsent`，产品模块用同一份实例 `register`；装配期可变，`seal` 后只读）。
 
-内置三种：`article`（标题、摘要、正文 HTML、作者、发布时间、封面、图片、标签、原文链接）、`comment`（如上）、`media`（图片 / 视频地址、尺寸、时长）。产品可以注册 `product`、`price`、`rank_entry` 等。
+内置三种：`article`（标题、摘要、正文 HTML、作者、发布时间、封面、图片、标签、原文链接；`disclosure` 商业标识由流水线写入，`content.draft` 原样交给 content）、`comment`（如上）、`media`（图片 / 视频地址、尺寸、时长）。产品可以注册 `product`、`price`、`rank_entry` 等。
 
 **外部站点身份字段（2026-10-19，配合 [external-identity-module](external-identity-module.md)）**：`comment` 增加 `siteUserId` / `siteUserUrl`，`article` 增加 `authorId` / `authorUrl`，由各源抽取规则填充（IT之家评论 `Ui` → `siteUserId`、`UserIndexUrl` → `siteUserUrl`；少数派作者 `slug` → `authorId`）。`content.draft` 端口在交付带 `authorId` 的文章时、`comment.import` 端口在导入带 `siteUserId` 的评论时，经 `ExternalSiteIdentityWriter`（`ctx.getOrNull`，`site_id` 取来源 `code`）登记 / 更新一条外部身份；external-identity 未装时跳过、照常展示作者名。
 
@@ -176,7 +177,7 @@ interface CollectPipelineStep {
 class CollectPipelineRegistry { fun register(step: CollectPipelineStep); fun get(code: String); fun codes() }
 ```
 
-`CollectPipelineRecord` 带 recordId、recordType、sourceCode、originId、originUrl、可原地修改的 fields 与 media、usageScope、flags、任务级 options。产品在 bootstrap 里取同一份 `CollectPipelineRegistry`（`bindIfAbsent`）注册自己的步骤。`Block` 使记录为 `blocked`、`Fail` 使记录为 `error`，保留错误信息，可以在后台重放。
+`CollectPipelineRecord` 带 recordId、recordType、sourceCode、originId、originUrl、可原地修改的 fields 与 media、usageScope、flags、任务级 options，以及 **holds**（`contract.core.ReviewHold`）：步骤认为记录**可以投递、但下游必须人工看过才能上线**时追加（拦截不投递仍用 `Block`）。holds 存进记录（`collect_records.holds`，后台记录详情可见），随投递视图 `CollectRecordView.holds` 交给下游；`content.draft` 原样交给 `ContentDraftInput.holds`（content §6「保留」）。产品在 bootstrap 里取同一份 `CollectPipelineRegistry`（`bindIfAbsent`）注册自己的步骤。例：[promotion](promotion-module.md) 注册 `promotion-check`（转载路线用，排在 `html-sanitize` 之后）：识别导购 / 促销，把商家链接换成托管推广链接或只留文字、删掉购买口令，写 `disclosure`，需要人工看时加 `CONTENT_COMMERCIAL_SUSPECTED` 保留原因。`Block` 使记录为 `blocked`、`Fail` 使记录为 `error`，保留错误信息，可以在后台重放。
 
 ## 7. 投递
 
