@@ -1,12 +1,13 @@
-# Kotlin/Native 全栈，从 I/O 到应用
+# 技术架构与网络生态
 
-Neton 不只是应用框架，也提供可独立使用的网络与协议库。你可以使用完整框架开发服务，也可以只取一个协议库构建自己的系统。密码与 TLS 引擎基于 OpenSSL，并非重新实现密码算法。
+Neton Framework 专注服务端应用开发，Neton Application 在其上提供可复用业务模块。产品边界见 [Framework 与 Application](/zh-hans/guide/application)。本节介绍底层网络技术架构和可独立使用的协议库，而非业务应用编程模型。密码与 TLS 引擎基于 OpenSSL，并非重新实现密码算法。
 
 ## 从哪里开始
 
 | 你的目标 | 入口 |
 |---|---|
 | 开发业务 API、认证与数据服务 | [Neton 框架快速开始](/zh-hans/guide/quick-start) |
+| 复用业务模块、组装产品 | [Neton Application](/zh-hans/guide/application) |
 | 实现自定义 TCP/UDP 协议 | [io](./io.md) |
 | 独立 HTTP 客户端或服务端 | [HTTP/1.1 与 HTTP/2](./http.md) |
 | 安全字节流、HTTPS 或 WSS | [TLS](./tls.md)、[OpenSSL](./openssl.md) |

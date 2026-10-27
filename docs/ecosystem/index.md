@@ -1,12 +1,13 @@
-# From I/O to applications in Kotlin/Native
+# Technical architecture and networking ecosystem
 
-Neton provides both an application framework and independently usable networking libraries. Build a complete service with the framework or use a single protocol library in your own system. Cryptography and the TLS engine come from OpenSSL, not replacement cryptographic algorithms.
+Neton Framework focuses on backend application development; Neton Application adds reusable business modules on top. See [Framework and Application](/guide/application) for product boundaries. This section documents the underlying networking architecture and independently usable libraries, rather than the business application programming model. Cryptography and the TLS engine come from OpenSSL, not replacement cryptographic algorithms.
 
 ## Choose an entry point
 
 | Your goal | Start here |
 |---|---|
 | Business APIs, authentication and data services | [Framework quick start](/guide/quick-start) |
+| Reusable business modules and product assembly | [Neton Application](/guide/application) |
 | Custom TCP/UDP protocols | [io](./io.md) |
 | Standalone HTTP clients or servers | [HTTP/1.1 and HTTP/2](./http.md) |
 | Secure streams, HTTPS or WSS | [TLS](./tls.md), [OpenSSL](./openssl.md) |

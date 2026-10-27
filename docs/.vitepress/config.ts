@@ -47,6 +47,7 @@ const enGuideSidebar = [
     text: "Getting started",
     items: [
       { text: "Introduction", link: "/guide/" },
+      { text: "Framework vs Application", link: "/guide/application" },
       { text: "Quick start", link: "/guide/quick-start" },
       { text: "What Neton gives you", link: "/guide/capabilities" },
       { text: "Project structure", link: "/guide/project-structure" },
@@ -89,6 +90,7 @@ const zhGuideSidebar = [
     text: "入门",
     items: [
       { text: "简介", link: "/zh-hans/guide/" },
+      { text: "Framework 与 Application", link: "/zh-hans/guide/application" },
       { text: "快速开始", link: "/zh-hans/guide/quick-start" },
       { text: "能力总览", link: "/zh-hans/guide/capabilities" },
       { text: "项目结构", link: "/zh-hans/guide/project-structure" },
@@ -201,17 +203,17 @@ export default defineConfig({
     root: {
       label: "English",
       lang: "en-US",
-      title: "Neton - Kotlin/Native framework and networking stack",
+      title: "Neton - Kotlin/Native Backend Application Framework",
       description:
-        "A Kotlin/Native application framework and independent I/O, HTTP, WebSocket, QUIC, HTTP/3, TLS and messaging libraries.",
+        "Build backend services and business applications with Kotlin/Native. Neton Framework provides the foundations; Neton Application adds reusable business modules. Native deployment, no JVM required.",
       themeConfig: {
         // 导航栏只放短名；完整定位句留给 <title> 与搜索结果。
         siteTitle: "Neton",
         nav: [
           { text: "Home", link: "/" },
           { text: "Framework", link: "/guide/" },
-          { text: "Protocol stack", link: "/ecosystem/" },
-          { text: "RPC / Messaging", link: "/ecosystem/msgtrans" },
+          { text: "Application", link: "/guide/application" },
+          { text: "Architecture & Ecosystem", link: "/ecosystem/" },
           { text: "1.0 Public Beta", link: "/releases/1.0.0" },
         ],
         sidebar: {
@@ -219,7 +221,7 @@ export default defineConfig({
           "/ecosystem/": ecosystemSidebar("", false),
         },
         footer: {
-          message: "Neton Framework & Networking Documentation",
+          message: "Neton Framework & Application Documentation",
           copyright: "Copyright 2025-present",
         },
         outline: { level: [2, 3], label: "On this page" },
@@ -230,16 +232,16 @@ export default defineConfig({
       label: "简体中文",
       lang: "zh-Hans",
       link: "/zh-hans/",
-      title: "Neton - Kotlin/Native 应用框架与网络协议栈",
+      title: "Neton - Kotlin/Native 服务端应用框架",
       description:
-        "Neton 提供 Kotlin/Native 应用框架，以及独立的 I/O、HTTP、WebSocket、QUIC、HTTP/3、TLS 和消息传输库。",
+        "使用 Kotlin/Native 构建后端服务和业务系统。Neton Framework 提供通用框架能力，Neton Application 提供可复用业务模块。原生部署，无需 JVM。",
       themeConfig: {
         siteTitle: "Neton",
         nav: [
           { text: "首页", link: "/zh-hans/" },
           { text: "应用框架", link: "/zh-hans/guide/" },
-          { text: "网络协议栈", link: "/zh-hans/ecosystem/" },
-          { text: "RPC / 消息", link: "/zh-hans/ecosystem/msgtrans" },
+          { text: "业务应用", link: "/zh-hans/guide/application" },
+          { text: "技术架构与生态", link: "/zh-hans/ecosystem/" },
           { text: "1.0 正式公测", link: "/zh-hans/releases/1.0.0" },
         ],
         sidebar: {
@@ -247,7 +249,7 @@ export default defineConfig({
           "/zh-hans/ecosystem/": ecosystemSidebar("/zh-hans", true),
         },
         footer: {
-          message: "Neton 框架与网络协议栈文档",
+          message: "Neton Framework 与 Application 文档",
           copyright: "Copyright 2025-present",
         },
         outline: { level: [2, 3], label: "目录" },

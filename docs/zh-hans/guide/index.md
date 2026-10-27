@@ -7,7 +7,9 @@
 
 欢迎阅读 Neton Framework 用户指南。
 
-Neton 是一个现代化的 Kotlin/Native Web 框架，基于 Kotlin Multiplatform 构建，编译为原生二进制文件，具备零反射、毫秒级启动、极低内存占用等特性。本指南将帮助你从零开始掌握 Neton 的核心功能，并构建高性能的 Web 应用。
+Neton Framework 是面向 API、后端服务与业务系统的 Kotlin/Native 服务端应用框架，统一提供路由、依赖注入、配置、数据访问与安全能力，通过编译期装配实现原生部署，无需 JVM。
+
+你可以直接使用 Framework 开发服务，也可以基于 **Neton Application** 复用业务模块与模块化管理前端。[了解两个层次的区别](./application.md)。底层协议库另见[技术架构与生态](/zh-hans/ecosystem/)。
 
 ## 目录导航
 

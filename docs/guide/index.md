@@ -8,9 +8,9 @@ Where the documentation and the code disagree, **the compilable examples under
 
 Welcome to the Neton Framework guide.
 
-Neton is a modern Kotlin/Native web framework built on Kotlin Multiplatform. It compiles to a
-native binary and uses no reflection, which gives it millisecond startup and a small memory
-footprint. This guide takes you from an empty directory to a working, high-performance service.
+Neton Framework is a Kotlin/Native backend application framework for APIs, services and business systems. It brings routing, dependency injection, configuration, data access and security together, with compile-time assembly and native deployment without a JVM.
+
+Use Framework directly to develop a service, or build on **Neton Application** to reuse business modules and a modular administration frontend. [Understand the two layers](./application.md). Underlying protocol libraries are documented separately in the [technical architecture and ecosystem](/ecosystem/).
 
 ## Contents
 

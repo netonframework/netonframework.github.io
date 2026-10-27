@@ -1,6 +1,8 @@
-# Neton 框架与网络协议栈文档
+# Neton Framework 与 Application 文档
 
-neton.tech 的用户指南与能力入口。覆盖 Neton 框架、独立网络协议库和 msgtrans，基于 VitePress 构建。
+neton.tech 的用户指南与能力入口，基于 VitePress 构建。Neton Framework 是 Kotlin/Native 服务端应用框架；Neton Application 是基于框架的模块化业务应用底座。底层网络协议库与 msgtrans 放在技术架构和生态章节，不作为首页的主要产品定位。
+
+Documentation for neton.tech, built with VitePress. Neton Framework is a Kotlin/Native backend application framework; Neton Application is its modular business application foundation. Networking libraries and msgtrans belong in the technical architecture and ecosystem sections, not the primary product positioning.
 
 ## AI 开发 Skills
 
