@@ -26,14 +26,18 @@ and starts a private Redis and PrivChat service on non-default ports. It must no
 databases or an already-running production service.
 
 ```bash
-# Run from the PrivChat application repository. Set credentials through your local
-# PostgreSQL authentication setup; do not commit them or print them in evidence.
+# Run from the PrivChat application repository. Supply full PostgreSQL URIs through
+# the environment; do not commit credentials or print them in evidence.
 ./gradlew --warning-mode=fail -Pnetonstream.local=false :application:linkReleaseExecutableMacosArm64
 bash scripts/test-release-checks.sh
-PG_ADMIN_URI='postgresql://localhost/postgres' \
-PG_BASE_URI='postgresql://localhost' \
+PG_ADMIN_URI="${RELEASE_PG_ADMIN_URI:?set the maintenance database URI}" \
+PG_BASE_URI="${RELEASE_PG_BASE_URI:?set the URI prefix without a database name}" \
   bash scripts/release-gate-smoke.sh
 ```
+
+The current application URI parser requires explicit user, password, host and port:
+`postgresql://USER:PASSWORD@HOST:PORT/DATABASE`. A passwordless URI accepted by `psql`
+is not currently accepted by the application parser. The base URI omits `/DATABASE`.
 
 Override `NETON_RELEASE_BINARY` and `PRIVCHAT_SERVER_BIN` when binaries are outside the default
 locations. Record the binary's build inputs and hash; an old binary is not evidence for changed code.
