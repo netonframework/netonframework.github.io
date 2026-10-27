@@ -57,6 +57,10 @@ cleanup is not proof of application resource release. Query errors or malformed 
 - A green framework CI is necessary, not sufficient: attach aggregate application build, migration,
   both process-cycle results, database connection checks, target, dependency revisions and binary hash
   to the same release candidate. A sample application does not replace the PrivChat aggregate gate.
+- Use immutable, clean source inputs and isolated build outputs for release-candidate evidence.
+  A developer checkout being edited or built by another session is diagnostic evidence only.
+  A retry with reduced parallelism must record the original failure and cannot prove parallel-build
+  stability; investigate missing or concurrently rewritten native library artifacts explicitly.
 - Retain failures as failures. Missing credentials, unavailable runners, skipped tests or an unbuilt
   service dependency mean the corresponding gate is unverified, never implicitly passed.
 
