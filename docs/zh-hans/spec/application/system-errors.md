@@ -13,7 +13,7 @@ system（管理员登录 / MFA / 用户、角色、部门、岗位、菜单 / �
   不写 message 时是框架内建码（`REQUIRED` / `TOO_SHORT` …）。前端运行时只按字段 `code` 翻译（[错误码规范](../error-codes.md)）。
 - 后台前端 `neton-application-front-system` 在 `src/locales/{zh-CN,en-US}.ts` 里以 `error.<CODE>` 翻译，页面经
   `useDescribeError("system")`、资源页经 `errorNamespace: "system"` 显示；登录页同样用 `system` 命名空间。
-  vben 后台（`neton-application-admin` / `privchat-application-admin`）在 `langs/<语言>/error-system.json` 里翻译，
+  vben 后台（`neton-application-admin` 及兼容发行版）在 `langs/<语言>/error-system.json` 里翻译，
   `api/request.ts` 的错误提示按 `error-*` 语言包查机器码。
 - 新增码顺序：`SystemErrorCodes` → 本表 → 新 front 两种语言 → vben 两种语言。模块 `macosArm64Test` 里的
   `ErrorMessageGuardTest`（共享夹具 `contract.testing.ErrorMessageGuard`）扫描 `src/commonMain`，异常构造、

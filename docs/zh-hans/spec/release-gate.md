@@ -4,12 +4,19 @@
 
 Neton 1.0 is not release-ready until every mandatory gate below is green on the release commit.
 
+## Ownership boundary
+
+This document defines reusable Framework release requirements. Neton Application owns the
+acceptance of its generic modules and distribution. Product-specific modules, deployment
+instructions, source inventories and acceptance results belong to the product's own repository.
+No private product or proprietary service is a mandatory dependency of a Neton release gate.
+
 ## Mandatory gates
 
 1. macOS framework foundation tests pass.
 2. Linux `linuxX64` Core tests pass on a Linux runner.
 3. Windows `mingwX64` Core tests pass on a Windows runner.
-4. PrivChat aggregate application compilation passes.
+4. A documented, publicly reproducible reference integration application compiles against the candidate.
 5. A release binary passes migration `status` and `verify` against an isolated database.
 6. The release binary completes two READY, HTTP health check and SIGTERM cycles.
 7. After shutdown, the HTTP port is closed and application database connections return to zero.
@@ -17,36 +24,32 @@ Neton 1.0 is not release-ready until every mandatory gate below is green on the 
 9. KSP AWT shutdown noise remains documented and non-blocking; any task failure, missing generated
    source, no-clean instability or CI flake promotes it to a release blocker.
 
-## Application smoke
+## Reference integration smoke contract
 
-PrivChat provides `scripts/release-gate-smoke.sh`. It requires locally available PostgreSQL,
-`redis-server`, `psql`, `lsof`, the PrivChat server binary/configuration, and a freshly built
-Application release binary. The script creates isolated databases, applies and verifies migrations,
-and starts a private Redis and PrivChat service on non-default ports. It must not use production
-databases or an already-running production service.
+The candidate manifest must identify the public fixture repository/path, immutable revisions,
+build command, native target and smoke command. The fixture must exercise module assembly,
+explicit database migrations, HTTP readiness and lifecycle-owned resources using generic
+framework/application capabilities. A minimal HTTP-only sample does not cover these requirements.
+If such a fixture or its evidence is missing, the integration gate remains unverified; downstream
+product results are supplementary compatibility evidence, not a replacement.
 
-```bash
-# Run from the PrivChat application repository. Supply full PostgreSQL URIs through
-# the environment; do not commit credentials or print them in evidence.
-./gradlew --warning-mode=fail -Pnetonstream.local=false :application:linkReleaseExecutableMacosArm64
-bash scripts/test-release-checks.sh
-PG_ADMIN_URI="${RELEASE_PG_ADMIN_URI:?set the maintenance database URI}" \
-PG_BASE_URI="${RELEASE_PG_BASE_URI:?set the URI prefix without a database name}" \
-  bash scripts/release-gate-smoke.sh
-```
+The fixture must:
 
-The current application URI parser requires explicit user, password, host and port:
-`postgresql://USER:PASSWORD@HOST:PORT/DATABASE`. A passwordless URI accepted by `psql`
-is not currently accepted by the application parser. The base URI omits `/DATABASE`.
+- Build a release binary from the recorded inputs and record its hash.
+- Provision disposable local databases and any required services on isolated ports. Never use
+  production data, production services or implicit developer credentials.
+- Apply migrations and verify clean status: no pending, changed or failed migrations.
+- Run two process cycles. Each must reach READY, remain healthy for at least 60 seconds, answer an
+  HTTP health request and exit with code zero within 30 seconds of SIGTERM.
+- Require the HTTP port to be closed and database connections to be zero **before teardown**.
+  For PostgreSQL, inspect `pg_stat_activity` through a maintenance database; forced database deletion
+  is not proof of resource release. Query failures and malformed results fail closed.
+- Test the gate's negative paths: nonzero exit, shutdown timeout, leaked connections and failed
+  connection inspection must not produce a passing result.
+- Clean up only its own processes and temporary resources. Keep secrets out of retained evidence.
 
-Override `NETON_RELEASE_BINARY` and `PRIVCHAT_SERVER_BIN` when binaries are outside the default
-locations. Record the binary's build inputs and hash; an old binary is not evidence for changed code.
-
-The script verifies migration state, runs two release-process cycles, waits after READY, calls the
-health endpoint, sends SIGTERM and requires a zero exit code within 30 seconds with the listening
-port released. For each cycle it queries `pg_stat_activity` through the maintenance database and
-requires zero connections to the isolated application database **before teardown**. Forced database
-cleanup is not proof of application resource release. Query errors or malformed counts fail closed.
+Concrete product commands, environment variable names and product service prerequisites are
+documented with that product, not in this framework contract.
 
 ## CI enforcement and evidence
 
@@ -60,7 +63,7 @@ cleanup is not proof of application resource release. Query errors or malformed 
   Kotlin compiler warnings and the documented KSP AWT noise are separate from Gradle deprecations.
 - A green framework CI is necessary, not sufficient: attach aggregate application build, migration,
   both process-cycle results, database connection checks, target, dependency revisions and binary hash
-  to the same release candidate. A sample application does not replace the PrivChat aggregate gate.
+  to the same release candidate using the reference integration fixture above.
 - Use immutable, clean source inputs and isolated build outputs for release-candidate evidence.
   A developer checkout being edited or built by another session is diagnostic evidence only.
   A retry with reduced parallelism must record the original failure and cannot prove parallel-build

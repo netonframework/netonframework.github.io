@@ -57,9 +57,9 @@
 | `neton-application-module-payment` / `-platform` / `-cs` | 支付、开放平台、客服 |
 | `neton-application-front`（及 `-front-*` 模块） | 管理端前端壳与各模块页面 |
 
-目录约定：所有仓库位于同一工作区，`Neton/` 与 `privchat/` 同级；`settings.gradle.kts` 与框架的
-`includeBuild` 都按这个布局写相对路径。干净环境的检出清单与锁定版本见
-`neton-application/scripts/ci/dependencies.lock`。
+目录约定由发行版的 `settings.gradle.kts`、依赖检出脚本和锁定清单共同定义，不要求使用
+某个产品的目录布局。通用发行版的干净环境检出清单与锁定版本见
+`neton-application/scripts/ci/dependencies.lock`。产品专属模块与部署说明维护在产品仓库中。
 
 ### 2.2 发行版结构
 

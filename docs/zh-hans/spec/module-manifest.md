@@ -23,7 +23,7 @@ embed 进 binary）、不注解化 engine/scheduler/worker。
 ## 注解
 
 ```kotlin
-@Module(dependsOn = ["privchat"])   // id 省略 (P1.1)
+@Module(dependsOn = ["account"])   // id 省略 (P1.1)
 object GameModule
 ```
 
@@ -51,7 +51,7 @@ snake_case，如 game 模块 GameRoomLogic → `game.room_logic`）。
 ```kotlin
 object GameModuleManifest : ModuleInitializer {
     override val moduleId = "game"
-    override val dependsOn = listOf("privchat")
+    override val dependsOn = listOf("account")
     override val stats = mapOf("routes" to 117, "logics" to 17)
     override fun migrations(): List<MigrationSource> =
         init.generated.GameMigrationResources.sources   // 按约定 FQN 探测
@@ -92,7 +92,7 @@ configs → logics(@Logic) → RuntimeBootstrap(手写) → routes → jobs → 
 ## 模块侧最终形态
 
 ```kotlin
-@Module(dependsOn = ["privchat"])
+@Module(dependsOn = ["account"])
 object GameModule
 
 // 手写 runtime（engine/scheduler/watchdog/smoke 等，原 initializer body）

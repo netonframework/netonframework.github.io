@@ -9,31 +9,29 @@ Scope note: STANDARDIZATION-RC validates module-level compile, tests, docs/API c
 Repos touched:
 - `Neton/neton` (framework: database, docs)
 - `Neton/neton-application` (upstream: providers, naming, docs)
-- `privchat/privchat-application` (**fork** of neton-application — synced STD-0 + STD-3)
 
-Fork rule: fix upstream `neton-application` first, then apply the same change to `privchat-application` as a **separate commit in that repo**. Never mix the two repos in one commit.
+Fork rule: fix upstream reusable behavior first. Downstream products own their sync commits and
+acceptance records in their own repositories; they are not mandatory framework release dependencies.
 
 ### Commit trail
 - STD-0 upstream `neton-application`: `fix(system): placeholder providers must not fake success (STD-0)`
-- STD-0 fork `privchat-application`: `fix(system): placeholder providers must not fake success (STD-0 fork sync)`
 - STD-2 `neton`: `b8b858a fix(database): remove unimplemented typed projection API (STD-2)`
 - STD-1 `neton`: `f6da05c fix(database): fail fast on invalid database config (STD-1)`
 - STD-3 upstream `neton-application`: `refactor(infra): remove redundant App prefix from file classes (STD-3)`
-- STD-3 fork `privchat-application`: `refactor(infra): ... (STD-3 fork sync)`
 - STD-4A `neton`: `00d0665 refactor(database): remove deprecated TableDefRegistry.find() (STD-4A)`
 - STD-4B `neton`: `0086377 docs: mark obsolete http-client design docs + turn neton-http TODO into Roadmap (STD-4B)`
 - STD-4C `neton-application`: module-template-spec Prefer/Avoid labels + this spec update
 
 ### APP-COMPOSITE conclusion
-- `:application` aggregate compile is a documented build entry (`.github/workflows/backend-ci.yml:73` in both repos; README; `scripts/release-gate-smoke.sh` consumes `application.kexe`).
+- `:application` aggregate compile is the distribution build entry. Concrete CI and smoke commands belong to the distribution being validated.
 - External module repositories remain independently buildable through their own `settings.gradle.kts`.
 - Aggregate applications compose sibling repositories as source subprojects and substitute stable module coordinates with those projects.
-- Both `neton-application` and `privchat-application` aggregate macOS ARM64 compilation pass without local publication or cyclic `includeBuild` wiring.
+- The upstream aggregate macOS ARM64 compilation passed without local publication or cyclic `includeBuild` wiring. Product results are maintained separately.
 
 ### Final state (frozen)
 1. **NETON-1.0-STANDARDIZATION-RC: CLOSED.** STD-0..STD-4 done; module-level compile + tests + docs.
 2. **STD-3 rename fallout fixed.** The `AppFileLogic → FileUploadLogic` rename broke a cross-repo consumer (`neton-application-module-member`, which STD-3's grep missed). Fixed: `MemberProfileLogic.kt` committed as `9daf44b` in that repo; `MemberRuntimeBootstrap.kt:20` one-line change left in the member author's working tree (their WIP) to commit with their branch.
-3. **`privchat-application` aggregate compile: PASS** (verified locally, product path green).
+3. Product-specific aggregate results are outside this upstream checklist.
 4. **APP-COMPOSITE: PASS.** Base and product aggregate builds use the same source-subproject rule.
 5. **MODULE-SOURCE-CANONICALIZE-P0: CLOSED.** Cyclic composite wiring and parent-directory-name dependency were removed.
 6. **Cross-repo rename lesson captured** in `ENGINEERING_RULES.md` §3.5.1: renaming a public symbol must grep **all** canonical included builds, not only the current app fork tree.
@@ -57,7 +55,7 @@ Fix:
 - [ ] `GoogleSocialProvider` / `TelegramSocialProvider`: `getUserInfo` throws it (no empty-openId return). `getAuthRedirectUrl` for unimplemented flow throws it too (no empty/misleading URL).
 - [ ] Mock policy: placeholders no longer silently succeed. A working dev/test provider must be an explicitly-named injected double, not the default. (No mock framework built in this cut.)
 - [ ] Minimal contract tests: each provider method throws `ProviderNotImplementedException` (no `true`, no empty `openId`).
-- [ ] Fork sync → same changes in `privchat-application`.
+- [ ] Record downstream sync requirements; product owners verify and record their own application results.
 
 Verify: `:module-system:compileKotlin* + allTests`, provider contract tests pass, aggregate compile.
 
@@ -102,7 +100,7 @@ Problem: `module-infra/.../logic/AppFileLogic.kt` + `controller/app/infra/file/A
 
 Fix:
 - [ ] `AppFileController` → `FileController`, `AppFileLogic` → `FileLogic`. Route paths unchanged. Update imports, registry, test names (`AppFileLogicStorageKeyTest` → `FileLogicStorageKeyTest`).
-- [ ] Fork sync → same rename in `privchat-application`.
+- [ ] Notify affected downstream consumers of the rename; product-specific sync belongs to those repositories.
 
 Verify: generated routes unchanged, aggregate compile, file API smoke.
 
@@ -123,6 +121,6 @@ Verify: docs render, no dangling references.
 
 - Core/HTTP/Database/Logging tests pass
 - KSP compile pass
-- PrivChat aggregate compile pass
-- release-gate-smoke pass
-- `git status` never mixes unrelated changes (esp. do not touch `privchat-application/scripts/granular-admin-perm-e2e.sh` — its earlier uncommitted change is already gone; working tree clean)
+- Upstream aggregate compilation and the public reference integration fixture pass
+- Generic release smoke satisfies [the release gate](../release-gate.md)
+- `git status` never mixes unrelated changes; preserve other sessions' work

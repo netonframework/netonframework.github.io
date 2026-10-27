@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | 用户提交、抓取到的内容 | **受控**（`GuardedHttpClientProvider`） | 采集入口与翻页链接、正文里的图片、转存地址、重定向 `Location` |
 | 后台**运行期**数据（数据库行、后台可改的配置） | **受控** | 网关渠道 `baseUrl` / `proxyUrl` / 服务账号 `token_uri`；短信渠道 `apiUrl`；邮件 `endpoint` 与 SMTP 主机；支付渠道网关地址（支付宝 `serverUrl`、四方 `apiUrl`） |
-| 部署配置（`.conf`、环境变量、代码常量） | 应用的普通 `HttpClient` / `HttpClientProvider` | AI provider `baseUrl`（ai.conf）、对象存储 endpoint（storage.conf）、FCM（push.conf）、人机验证 `NETON_CAPTCHA_VERIFY_URL`、网关价目表 `NEWGATE_PRICE_SYNC_URL`、privchat service API |
+| 部署配置（`.conf`、环境变量、代码常量） | 应用的普通 `HttpClient` / `HttpClientProvider` | AI provider `baseUrl`（ai.conf）、对象存储 endpoint（storage.conf）、FCM（push.conf）、人机验证 `NETON_CAPTCHA_VERIFY_URL`、网关价目表 `NEWGATE_PRICE_SYNC_URL`、外部业务服务 API |
 
 一句话：**URL 来自用户 / 内容 / 后台运行期数据 → 受控；URL 来自部署配置 → 普通。**
 判定看的是「谁能改这个地址」：管理员在后台能改的，和用户填的一样不可信——后台账号被盗、越权、或者只是填错，
@@ -85,7 +85,7 @@ SMTP 被拒 = `SmtpTargetRejectedException(reason)`。
 | system 短信 / 邮件 | 渠道 `apiUrl`、邮件 `endpoint`、SMTP 主机 | 受控 HTTP 客户端 + SMTP `smtpPolicy` | `MESSAGE_ENDPOINT_FORBIDDEN` |
 | system 人机验证 | `NETON_CAPTCHA_VERIFY_URL`（环境变量） | 普通 | — |
 | payment | 支付宝 `serverUrl`、四方 `apiUrl`（渠道配置） | 受控（payment 自建，宿主不能 bind 注册表；宿主只经 `PayCallbackHooks` 给回调地址） | `PAY_ENDPOINT_FORBIDDEN`（503，与网络失败 / 平台报错区分；原因与地址只进服务端日志 `pay.platform.endpoint_forbidden`）；对账任务记下后跳过该单 |
-| push FCM、AI、storage、cs→privchat | 部署配置 | 普通 | — |
+| push FCM、AI、storage、客服模块→外部服务 | 部署配置 | 普通 | — |
 
 ## 6. 不在本文
 

@@ -30,7 +30,7 @@
 | 路由组 | 身份域 | 接受的令牌 |
 |---|---|---|
 | `admin` | `admin`（module-system） | 仅本应用 HS256，`realm=admin`、`type=access` |
-| `app`、`manage` | `account`（module-account） | 本应用 HS256 `realm=account`、`type=access`；或外部统一令牌（如 PrivChat RS256） |
+| `app`、`manage` | `account`（module-account） | 本应用 HS256 `realm=account`、`type=access`；或受信任的外部统一令牌（如 RS256） |
 | 其他组（`open` 等） | 无 | 不接受上述任何令牌；需要认证的组自行装配专用认证器（如 gateway 的 sk- 令牌） |
 
 规则：

@@ -508,7 +508,7 @@ codec = "json"
   1. `loadModuleConfig` 加载某模块时，先拦下最常见的形状——CLI 根不是本命名空间、却等于本模块文件里的段，且不是任何已知根（框架组件命名空间 `database/redis/cache/storage/jobs/routing/ai` 此时一律视为已知）。这一步覆盖不走 `Neton.run` 的路径：`migrate` 子命令与启动前 precheck 只加载 database.conf 就连库。
   2. `Neton.run` 在全部组件 init/configure/prepare 与用户块执行完、`markValidating` 之前调用一次 `ConfigLoader.validateOverrides(...)`，按上表严格校验全部 CLI 与 ENV 覆盖。
 
-> 背景：模块覆盖改为命名空间作用域（neton 75fe66d，2026-08-04）之后，`--default.uri=...` 既落不到 application.conf（被当作新增根吞掉）也落不到任何模块，privchat-application 的 4 个冒烟/E2E 脚本因此连着默认本地开发库跑了两个月。
+> 背景：模块覆盖改为命名空间作用域（neton 75fe66d，2026-08-04）之后，`--default.uri=...` 既落不到 application.conf（被当作新增根吞掉）也落不到任何模块。未校验覆盖项时，测试脚本可能误连默认开发库，因此必须在连接前拒绝未知命名空间；具体产品事故记录归产品仓库。
 
 **Unknown key 与类型错误（冻结）**
 

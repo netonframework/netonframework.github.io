@@ -158,7 +158,8 @@ NETON-LIFECYCLE-P0 closes only when:
 6. Module jobs are visible when JobsComponent prepares and starts.
 7. RuntimeBootstrap background resources have registered lifecycle owners.
 8. HTTP starts last, reports READY accurately and stops first.
-9. Framework lifecycle tests and the real PrivChat application compile on Kotlin 2.4.0.
+9. Framework lifecycle tests and the publicly reproducible reference integration application compile
+   on the candidate's declared Kotlin version (see [release gate](./release-gate.md)).
 10. Native release validation runs on the target's native host: macOS for `macosArm64`, Linux for
     `linuxX64`, and Windows for `mingwX64`. Cross-compilation from macOS is not accepted as evidence
     for Linux or Windows lifecycle behavior.

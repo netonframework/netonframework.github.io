@@ -106,8 +106,8 @@ Neton 的网络能力**默认全部**建立在自研的 Kotlin/Native io / http 
 
 约束：
 
-- 框架模块、应用模块（`neton-application-module-*` 等）、官方宿主（neton-application、kedao、
-  privchat-application、NewGate、itwind、Yese、vip-application……）与 `examples/` **不得**依赖
+- 框架模块、应用模块（`neton-application-module-*` 等）、通用发行版与下游产品宿主、
+  `examples/` **不得**依赖
   `neton-http-hyper4k` / `neton-http-ktor`，也不得在源码里写 `http(::Hyper4kHttpAdapter)`、
   `http(::KtorHttpAdapter)`、`createWith(::createHyper4kHttpClient)` 这类显式选择。
 - 可选引擎只用于**引擎对比**（benchmark、HttpArena 这类同场比较）与引擎自身的测试；
@@ -614,11 +614,10 @@ hyper4k server 无 TLS，HTTP/2 仅 h2c。两个选择必须明写一个，本�
 
 | 模块 | 状态 |
 |---|---|
-| `neton-application-module-privchat`、`privchat-service-client` | ✅ 借用应用绑定的 `HttpClient`，端到端已验证 |
 | `neton-application-module-system`（短信）、`-payment`（支付平台） | ✅ 同上；测试改用 `ScriptedHttpClient` |
 | `neton-application-module-gateway`（AI 中继） | ✅ hyper4k client 加了代理（ABI 4.1）后迁移：网关按渠道建客户端的能力来自应用绑定的 `HttpClientProvider`（见 §4.4），模块不带引擎 |
 | ~~gateway 原待决策项~~ | ⏸ **（已解决，保留记录）**：`RelayEngine.clientFor(channel)` 按渠道建客户端并设置 `proxyUrl`，而 hyper4k client 无代理能力（§5.3）。改成默认引擎会让配置了代理的渠道在 create 时失败——这是能力模型要的行为，但也是真实的功能缺口。两条路：给 hyper4k client 加 HTTP 代理（ABI v4.1：`http://` 走 absolute-form、`https://` 走 CONNECT），或 gateway 显式保留 Ktor。在此之前 gateway 仍依赖 `neton-http-ktor`；因为是 `implementation` 依赖，不会把两个引擎同时暴露到应用的编译类路径，只是二进制里多一份引擎 |
-| 三个应用（privchat / neton / kedao） | ✅ 在 `Main` 里创建、绑定、随生命周期关闭同一个出站客户端 |
+| 通用应用宿主 | 在 `Main` 里创建、绑定、随生命周期关闭同一个出站客户端；产品宿主的验证记录归产品仓库 |
 
 **已知残留（不在本文范围，登记为后续项）**：`neton-routing → neton-redis → rethis →
 ktor-network / ktor-io / ktor-utils / ktor-http / ktor-network-tls`。这是 Redis 客户端库
@@ -671,13 +670,9 @@ Maven Central**——`neton-http-hyper4k` 已依赖它（Kotlin 客户端在其�
    自身的用例数。
 6. 缺引擎时的编译错误包含依赖坐标（§4.3 已验证）。
 
-**实战验证（2026-09-03）**：`privchat-service-client`——privchat 服务端唯一的业务
-HTTP 客户端（近 60 个 service API 端点）——从自带 Ktor 引擎改为借用应用绑定的
-`HttpClient`；`module-privchat` 同时去掉了对 `neton-http-ktor` 的依赖（它此前靠
-Ktor 模块拿 `HttpClient.create`，与应用的 hyper4k 模块并存会二义）。
-`privchat-application` 重新链接后，jwks / introspect / createRoom / issueRoomTicket /
-broadcastRoom 全部经 hyper4k 出站，端到端通过。这是比一致性套件更硬的一层证据：
-真实 envelope、真实错误映射、真实并发。
+业务 SDK 应借用应用绑定的 `HttpClient`，不能为了取得公共客户端 API 而依赖具体引擎模块。
+产品端到端验证应覆盖真实响应 envelope、错误映射和并发调用，结果保存于产品仓库；
+不以某个私有产品的 service API 清单作为框架一致性套件的标准。
 
 ---
 

@@ -1,52 +1,36 @@
-# module-system / module-infra 抽离后的下游同步指引
+# 通用模块抽离后的下游同步指引
 
-> 状态：立即生效
-> 背景：`module-system` 与 `module-infra` 已从 `neton-application` 内嵌目录抽离为独立
-> canonical 仓 `neton-application-module-system` / `neton-application-module-infra`，
-> 与 `module-member/payment/platform` 同形态。application 退化为纯装配工程。
+> 适用范围：从内嵌模块迁移到 canonical 独立模块仓的发行版。
+> 各产品的具体迁移清单、历史差异和验收结果维护在产品仓库中。
 
-## 为什么
+## 归属原则
 
-内嵌导致 fork（privchat / yese）各自 fork 了一份 system/infra，在自己仓库里修 bug
-（如 privchat 的 `V003__add_missing_system_user_profile_columns`、权限规范化、
-precheck 释放连接），修复被锁死在 fork 里，上游与其它发行版看不到，同一 bug 被重复踩、
-重复修。抽离后，核心模块的任何改动只能提交到模块自己的 canonical 仓，所有发行版天然共享。
+通用模块由自己的 canonical 仓库维护，发行版只负责装配。
+通用修复回流到模块仓；产品差异通过产品模块和标准扩展点实现。
+不能因为某个产品仍保留内嵌副本，就将其目录布局或私有迁移定义为上游标准。
 
-## 下游 fork（privchat-application 等）迁移步骤
+## 迁移步骤
 
-privchat 当前把 `module-system` / `module-infra` 作为**内嵌目录**（`include(":module-system")`
-不带 projectDir）。迁移到与上游一致的装配形态：
+1. 锁定发行版、旧内嵌模块及目标 canonical 模块版本，比较源码、公开接口和迁移文件。
+   将通用差异与产品差异分别归入正确仓库，保留未提交工作，不直接删除未审查的目录。
+2. 在发行版的 `settings.gradle.kts` 中登记源码子项目。下面路径仅为示例，实际以发行版检出清单为准：
 
-1. **删除内嵌目录**：`git rm -r module-system module-infra sql`
-   （迁移 SQL 由 `neton-application-module-infra/sql/` 持有，不再随 application 走）。
-
-2. **settings.gradle.kts** 把两个 `include(":module-xxx")` 改成源码子项目引用：
    ```kotlin
    include(":module-system")
-   project(":module-system").projectDir = file("../../Neton/neton-application-module-system")
+   project(":module-system").projectDir = file("../neton-application-module-system")
    include(":module-infra")
-   project(":module-infra").projectDir = file("../../Neton/neton-application-module-infra")
+   project(":module-infra").projectDir = file("../neton-application-module-infra")
    ```
-   （privchat 已用 `../../Neton/` 前缀引 canonical，其它模块行不变。）
 
-3. **application/build.gradle.kts** 无需改动：仍是 `implementation(project(":module-system"))`，
-   projectPath 不变。
+3. 保持已有 projectPath，核对应用依赖、KSP 模块注册、依赖替换和干净环境检出清单。
+   不依赖本地 Maven 发布或应用与模块间循环 `includeBuild`。
+4. 审查迁移归属：保留已应用迁移的标识、版本和 checksum。仅移动源码目录不应重写历史；
+   如目标版本确有差异，必须给出显式迁移方案，不能笼统承诺“数据库无感”。
+5. 在一次性数据库和已有 schema 的隔离副本上执行迁移 status/verify，再编译、链接发行版并验收启动、
+   认证及被迁移模块的关键路径。具体产品用例和操作命令放在产品仓库。
+6. 只有差异已妥善保存、迁移和行为验收通过后，才删除旧内嵌副本；不要连同产品自有 SQL 一并删除。
 
-4. **privchat 的产品差异要先回流**：抽离前 privchat 的 system/infra 携带了一批修复，
-   其中**通用**部分已由上游 commit 合并（sex→gender、V004-V006、jobs 装配、
-   FileUploadLogic 匿名读、JwtAuthenticator 去别名、MenuLogic 时间戳等）。迁移前请
-   `diff` 确认 privchat 内嵌副本相对新 canonical 仓**没有剩余的产品私有改动**；若有，
-   先提交到 canonical 模块仓（通用）或抽成 privchat 自有模块（产品专属），**不要**留在
-   即将删除的内嵌目录里。
+## 前端模块
 
-5. **数据库无感**：迁移 history 里 system/infra 的 moduleId 仍是 `infra`（V001…V006 版本号
-   不变），checksum 不变，存量库 `migrate status` 无差异，无需重跑。
-
-6. 验证：`./gradlew :application:compileKotlinMacosArm64 :application:linkDebugExecutableMacosArm64`
-   → `application.kexe migrate status`（确认 infra V001-V006 identical）→ 启动登录冒烟。
-
-## 前端同理（可选，后续）
-
-`front-module-system` 仍内嵌在 `neton-application-front/packages/`，而 `front-member`
-已是独立仓。同样的漂移风险存在，建议后续把 `front-module-system`（及 infra 对应）
-抽为独立仓，`neton-application-front` 只做壳装配。
+同样遵循“通用模块独立维护、发行版负责装配”的边界。
+以当前模块 manifest、包依赖和 registry 为准，不根据历史目录描述复制一份通用模块到产品内。

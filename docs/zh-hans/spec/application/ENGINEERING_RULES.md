@@ -11,6 +11,7 @@
 - `neton-application*` 是 Neton 的主验证场景，优先通过真实项目发现问题、沉淀规范、再反哺框架。
 - 任何高频业务约束，一旦在两个及以上模块重复出现，就必须上升为脚手架规范。
 - 任何会影响前后端协作、生成代码、数据库一致性的规则，都必须写入本文档，禁止仅靠口头约定。
+- 本仓只保存框架与通用 Application 能力的规范。产品专属模块、部署清单、业务流程和验收记录归产品仓库；不得把某个产品的模块或服务设为 Neton 发布的必选依赖。
 
 ---
 
@@ -125,12 +126,12 @@
 
 一次 `AppFileLogic → FileUploadLogic` 的改名只扫了 `neton-application/` 子树，漏掉了通过 `includeBuild` 引入的 canonical `neton-application-module-member`，导致 member 编译断裂（`Unresolved reference 'AppFileLogic'`）——member 的 `MemberProfileLogic` 消费了 module-infra 的这个类。
 
-改 public symbol 前，至少 grep 这些仓：
+改 public symbol 前，按实际依赖清单检查：
+
 - `neton-application`（当前仓）
-- `privchat-application`（fork）
 - `neton-application-module-member` / `-payment` / `-platform`（canonical 通用模块）
-- `neton-application-module-privchat`（可选 IM 模块）
-- `privchat-application-module-game` / `-assistant`（产品模块）
+- 其余消费该符号的通用模块与适配器
+- 当前任务覆盖的下游发行版及其模块；具体产品清单维护在各产品仓库，不在本文固定枚举
 
 命中的仓各自独立提交跟进（fork 同步规则不变）。
 

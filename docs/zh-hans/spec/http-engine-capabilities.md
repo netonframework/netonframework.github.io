@@ -196,14 +196,13 @@ Neton 的典型部署里，HTTP 引擎在内网、TLS 由前置网关终止。�
 **h2c（明文 HTTP/2，prior knowledge）**，不做 ALPN——ALPN 需要引擎自己持有证书，
 那是另一件事（TLS 终止归属），不应与 h2 支持绑定。
 
-> 对照：`privchat-server → privchat-application` 这条内部链路正是明文内网调用，
-> 发起方 `reqwest` 侧用的就是 `http2_prior_knowledge()`。
+> 内部服务之间的明文调用可以使用客户端的 HTTP/2 prior-knowledge 模式；
+> 具体产品的链路、客户端配置和部署验收归产品仓库维护。
 
 ### 4.3 与二进制封帧无关
 
 一个必须写明的边界：**HTTP/2 与请求体编码是两件独立的事**。
-[PrivChat 的 ServerEvent 二进制封帧](https://github.com/privchat)
-明确规定 h2 `MUST NOT` 成为其前置条件——去掉 JSON/base64 的收益与 HTTP 版本无关。
+业务事件采用二进制封帧并不要求 HTTP/2；去掉 JSON/base64 的收益与 HTTP 版本无关。
 
 同理，本规范也**不**允许任何组件把「必须 h2」写进自己的 required capabilities，
 除非它真的用到了 h2 独有语义（多路复用下的并发流、trailers）。
