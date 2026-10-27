@@ -54,7 +54,12 @@ documented with that product, not in this framework contract.
 ## CI enforcement and evidence
 
 - The framework Backend CI runs macOS foundation/conformance suites, native Linux/Windows tests,
-  and real Redis contracts. Dedicated `ci/**` branches can validate fixes without merging them first.
+  and real Redis/PostgreSQL contracts. Dedicated `ci/**` branches can validate fixes without merging them first.
+- The PostgreSQL job must provision its own disposable database, set `NETON_DB_TEST_REQUIRED=true`
+  and fail when connection configuration is absent or unsafe. Its native database suite covers
+  migration replay/checksum drift, commit, nested rollback, cancellation and concurrent independent
+  transactions; optional local runs without a database do not satisfy this gate. Retain test reports
+  against the candidate commit. These tests do not substitute for application shutdown evidence.
 - Native published-dependency jobs assert `netonstream.local=false` before settings evaluation.
   PowerShell must pass dotted Gradle properties as literal argument strings.
 - Source-integration jobs use `tools/ci/protocol-sources.lock`. Update a pin when a framework change
