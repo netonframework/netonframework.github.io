@@ -60,6 +60,12 @@ documented with that product, not in this framework contract.
   migration replay/checksum drift, commit, nested rollback, cancellation and concurrent independent
   transactions; optional local runs without a database do not satisfy this gate. Retain test reports
   against the candidate commit. These tests do not substitute for application shutdown evidence.
+- Native integration tasks must explicitly forward their service configuration into the test
+  process and disable cached/up-to-date results when the service gate is required. A successful
+  JUnit case alone is insufficient: optional tests may return before contacting the service.
+  Verify required test identities, reject missing/skipped/failed reports, and require execution
+  markers emitted only after the real-service assertions complete. Apply this to PostgreSQL and
+  Redis (`NETON_TEST_REDIS_REQUIRED=true`), not just to one database provider.
 - Native published-dependency jobs assert `netonstream.local=false` before settings evaluation.
   PowerShell must pass dotted Gradle properties as literal argument strings.
 - Source-integration jobs use `tools/ci/protocol-sources.lock`. Update a pin when a framework change
