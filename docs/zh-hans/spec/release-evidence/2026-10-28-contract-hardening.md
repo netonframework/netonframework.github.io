@@ -2,7 +2,7 @@
 
 状态：本地回归通过，远端完整 CI 待核验；未发布新 beta 或正式版。
 
-- Framework：`3fe480148ef7849d7cff71934f9da8655f54bb51`。
+- Framework：`cacda428c162fe9aa11d3854a021f8f5103fb6b6`；实现提交 `3fe4801`，后续仅同步 Redis 使用示例。
 - Public app：`41266f3b8f97fc3b8b9563942ce4c5b1af340376`，已更新框架 lock；应用公开依赖仍是 beta26，新修复只在候选验收中消费。
 - 范围：neton、neton-docs、neton-app。不使用任何专属业务产品作为门禁。
 
@@ -23,7 +23,7 @@
 - 独立 loopback Redis 7.2.7，端口 16389，无持久化；NETON_TEST_REDIS_REQUIRED=true 的真实对象往返、损坏回填、TTL 与 pipeline 测试通过。
 - AI 凭据回归及 WebSocket Native 回归通过。
 - core/redis/database/storage ABI 真实编译全部声明目标后更新；差异仅为默认 DomainEventCodec.seal、具体实现 seal 和 Redis setTyped。无目标推断、无隐藏公开符号。
-- 增加旧式无状态 codec 和 typed Redis 的源码消费者样本；七组正负消费者的最终结果以本轮完成记录为准。
+- 增加旧式无状态 codec 和 typed Redis 的源码消费者样本；本轮七组正负消费者全部通过。
 
 ## 冻结复评纪律
 

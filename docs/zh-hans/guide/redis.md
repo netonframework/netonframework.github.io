@@ -84,6 +84,11 @@ KV 示例： neton:kv:session:abc
 
 ## 三、Redis 基础操作
 
+beta26 之后的框架主分支提供 `setTyped<T>`，与 `get<T>` 使用相同 serializer，
+`remember<T>` 也用它实现对象往返。修复尚不包含在已发布 beta26 中。
+原始 `set(Any)` 保留字符串转换，不用于对象 JSON 往返；升级到包含修复的版本前，
+应显式编码 JSON。损坏值视为 miss；remember 不承诺 null 缓存或 singleflight。
+
 `RedisClient` 提供类型安全的极简 API：
 
 ```kotlin
@@ -96,7 +101,7 @@ val user = redis.get<User>("user:1")         // 泛型反序列化
 
 // remember：先读缓存，miss 则加载并写入
 val user = redis.remember<User>("user:1", ttl = 5.minutes) {
-    UserTable.get(1)
+    requireNotNull(UserTable.get(1))
 }
 
 // Hash

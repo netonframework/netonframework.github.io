@@ -88,6 +88,13 @@ You never write the prefix yourself, in code or in annotations — only the trai
 
 ## 3. Basic operations
 
+On framework main after beta26, `setTyped<T>` writes with the same serializer as
+`get<T>`, and `remember<T>` uses it for object round-trips. This fix is not in the
+published beta26. Raw `set(Any)` retains string conversion; do not use it to store
+objects for JSON decoding. Until upgrading to a release containing the fix,
+encode object JSON explicitly. Invalid cached values are misses; null caching and
+singleflight are not promised by `remember`.
+
 ```kotlin
 val redis = ctx.getRedis()
 
@@ -98,7 +105,7 @@ val user = redis.get<User>("user:1")          // deserialized
 
 // remember: read through, loading and storing on a miss
 val user = redis.remember<User>("user:1", ttl = 5.minutes) {
-    UserTable.get(1)
+    requireNotNull(UserTable.get(1))
 }
 
 // hashes
