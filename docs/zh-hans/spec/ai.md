@@ -2,7 +2,7 @@
 
 > **定位**：规定 neton-ai 作为 **Neton 官方可选 AI 集成**应提供什么：主流大模型 API 协议的无损报文模型、跨协议转换、流式与用量、上游接入，以及建立在其上的高层 SDK。
 > **代码归属（2026-10-29）**：[netonframework/neton-ai](https://github.com/netonframework/neton-ai)，规范继续归 neton-docs。模块和包名仍为 `neton-ai` / `neton.ai`，独立版本、ABI、测试和发布流程，不再是 Framework 子工程或 BOM 约束项。
-> **版本迁移**：独立候选 `0.1.0-alpha.1` 尚未发布，基线依赖 Framework `1.0.0-beta26`，Kotlin 2.4.20。旧版同名 AI 制品不删除；新版本号低于旧 beta26，消费方必须显式移除旧约束并检查解析结果，不能依赖自动升级或最高版本选择。
+> **版本迁移**：独立候选 `0.1.0-alpha.1` 尚未发布，Kotlin 2.4.20。独立 Linux 验收发现 Framework beta26 的 HTTP/Security 混用 OpenSSL 4/3，不得宣称其全平台兼容。AI CI 改为消费自身 `tools/framework-candidate.json` 固定的、统一 OpenSSL 4 后的框架签名候选制品，并校验提交与摘要；三平台全部通过后才形成兼容证据。切换为已发布框架版本并重新验收之前，禁止 AI 发布 staging。旧版同名 AI 制品不删除；新版本号低于旧 beta26，消费方必须显式移除旧约束并检查解析结果，不能依赖自动升级或最高版本选择。
 > 中转站的渠道、计价、结算、配额等**业务**不在本文，写在 gateway 项目的
 > [`docs/neton-ai-protocol-adoption.md`](../../../../neton-application-module-gateway/docs/neton-ai-protocol-adoption.md)。
 >

@@ -442,7 +442,7 @@ Local 后端同理：`recursive=false` 时只列出一级子项，`recursive=tru
 
 ### 5.3 AWS Signature V4 签名（纯 Kotlin 实现）
 
-**依赖**：cryptography-kotlin（HMAC-SHA256）+ SHA-256 哈希。
+**依赖**：自有 `com.netonstream:openssl` 的 OpenSSL 4 封装（HMAC-SHA256 与 SHA-256），与 HTTP/TLS、Security 共用运行时，不引入 OpenSSL 3 provider。
 
 **时间格式（冻结）**：
 
@@ -911,7 +911,7 @@ class FileController {
 | | [ ] pathStyle=true（MinIO）可用 |
 | | [ ] pathStyle=false（AWS/OSS）可用 |
 | **签名** | [ ] AWS Signature V4 签名与 AWS 一致 |
-| | [ ] HMAC-SHA256 使用 cryptography-kotlin |
+| | [ ] HMAC-SHA256 使用自有 OpenSSL 4 封装并通过签名向量测试 |
 | | [ ] amzDate 格式为 `YYYYMMDD'T'HHMMSS'Z'`，dateStamp 为 `YYYYMMDD`，UTC |
 | | [ ] CanonicalHeaders key 小写 + 字典序排列 |
 | | [ ] CanonicalURI percent-encode 保留 `/` |
