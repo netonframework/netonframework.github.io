@@ -39,6 +39,7 @@ For a focused fix, use only the relevant contract and tests rather than rebuildi
 - Execute Table/Query/raw parameterized SQL through `DbContext` and the current session. Transactions commit once, roll back and rethrow on failure/cancellation; nested v1 transactions join the outer transaction. Do not parallelize operations sharing one transaction or let lazy work escape it.
 - Keep entities persistence-free. Use explicit insert/update/destroy operations. Production schema changes use versioned explicit migrations; startup is not a schema-upgrade hook. Small examples using automatic table creation are not production migration templates.
 - Use framework logging with structured fields and request context. Never log credentials or raw authentication payloads. Reuse cache, Redis, storage, jobs and events contracts when the task needs them; do not introduce competing execution paths.
+- For post-beta26 source, cryptography uses the project's OpenSSL 4 wrapper, shared with HTTP/TLS. Reuse public Security helpers; do not introduce an OpenSSL 3 provider, handwritten crypto, or duplicate-symbol linker workarounds. Backend changes need known vectors, persisted-data compatibility, failure tests and actual native linking alongside HTTP.
 
 Application-specific `Long id`, 0/1 flags and CRUD URL conventions are not universal framework restrictions. Apply them only when working in that ecosystem.
 
