@@ -1,6 +1,6 @@
 # 1.0 契约修复与冻结复评
 
-状态：本地回归通过，远端完整 CI 待核验；未发布新 beta 或正式版。
+状态：本地回归与远端完整 CI 均通过；未发布新 beta 或正式版。API 冻结复评仍有新增 F07 阻塞，不能把工程门禁绿色当作最终冻结批准。
 
 - Framework：`cacda428c162fe9aa11d3854a021f8f5103fb6b6`；实现提交 `3fe4801`，后续仅同步 Redis 使用示例。
 - Public app：`41266f3b8f97fc3b8b9563942ce4c5b1af340376`，已更新框架 lock；应用公开依赖仍是 beta26，新修复只在候选验收中消费。
@@ -24,6 +24,14 @@
 - AI 凭据回归及 WebSocket Native 回归通过。
 - core/redis/database/storage ABI 真实编译全部声明目标后更新；差异仅为默认 DomainEventCodec.seal、具体实现 seal 和 Redis setTyped。无目标推断、无隐藏公开符号。
 - 增加旧式无状态 codec 和 typed Redis 的源码消费者样本；本轮七组正负消费者全部通过。
+
+## 远端验收
+
+- Framework `cacda42`：[Backend CI 40702031443](https://github.com/netonframework/neton/actions/runs/40702031443) 完成，`success`。API/ABI、源消费者、全量框架、真实 PostgreSQL/Redis、三平台参考应用、KSP 增量与 ARM64 原生执行、签名候选和三平台公开应用候选全部通过。主分支 secret-scan 与 Pages 也通过。
+- Public app `41266f3`：[40700915150](https://github.com/netonframework/neton-app/actions/runs/40700915150) 完成，三平台公开 beta26 消费均通过；自动提升级 PR 在 push 事件按设计跳过。新框架修复的消费由上面的同批候选矩阵证明。
+- Docs `71041bd`：[部署 40702862865](https://github.com/netonframework/netonframework.github.io/actions/runs/40702862865) 与 secret-scan 均通过；最终证据提交还需其自身部署成功。
+
+冻结复评见 [最终 API 评审](./2026-10-28-final-api-review.md)。F07 的临时失败探针已移除，Storage 已恢复运行全套测试并通过；没有留下忽略、禁用或预期通过的错误行为测试。
 
 ## 冻结复评纪律
 

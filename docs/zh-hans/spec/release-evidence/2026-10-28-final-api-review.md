@@ -3,6 +3,8 @@
 评审基线：Framework `cacda428c162fe9aa11d3854a021f8f5103fb6b6`，Public app `41266f3b8f97fc3b8b9563942ce4c5b1af340376`。
 结论：本轮六项修复有回归覆盖；尚不能无条件签署全部 API 冻结。发布门禁结果另见本轮契约修复记录，不以 CI 绿色代替语义评审。
 
+框架最新主分支 [CI 40702031443](https://github.com/netonframework/neton/actions/runs/40702031443) 已全部通过，含 macOS/Linux/Windows 参考应用与候选消费；本评审的 F07 是在绿灯之外通过定向契约检查确认的问题。
+
 ## 已关闭
 
 存储错误回退/重复配置、Jobs 排空停机、Redis 类型化对象往返、codec 冲突注册/封印、凭据默认展示、规范与实现状态漂移，详见 [契约修复记录](./2026-10-28-contract-hardening.md)。
