@@ -51,6 +51,43 @@ The fixture must:
 Concrete product commands, environment variable names and product service prerequisites are
 documented with that product, not in this framework contract.
 
+## Public reference implementation
+
+The Framework repository `netonframework/neton` supplies `examples/release-gate` and
+`tools/ci/reference_gate.py`. The `reference` module uses `@Module`, generated KSP manifest and
+constructor-injected controller, embedded versioned SQL, `MigrationEngine`, `DbContext`, and
+framework-owned HTTP/database lifecycle. Normal startup never migrates schema. Its health
+endpoint must return the standard Neton success envelope (`code: 0`) with READY and the expected
+database probe value; HTTP 200 alone is not sufficient.
+
+On a clean committed native checkout, with PostgreSQL 16 tooling installed:
+
+```sh
+bash tools/ci/checkout-protocols.sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/ci -p 'test_reference_gate.py'
+python3 tools/ci/reference_gate.py --target macosArm64 \
+  --pg-bin /absolute/path/to/postgresql/bin --output /new/absolute/evidence-directory
+```
+
+This harness requires fresh fixture build outputs and builds release twice, with no clean
+between passes. It owns a temporary loopback PostgreSQL cluster and uses a maintenance database
+for connection inspection. It checks `up`, repeated `up`, `status`, `verify`, then both lifecycle
+cycles. At least one application connection must be observed while serving, followed by zero
+after shutdown, before any PostgreSQL teardown. Environment and credentials from existing
+developer databases must not be inherited.
+
+`evidence.json` records the immutable framework/dependency revisions, target and host,
+PostgreSQL version, build/smoke commands, binary SHA-256, migration results and both cycle
+observations. `passed` describes this fixture only, not an assertion of every 1.0 requirement.
+Failed runs retain `passed: false` and their logs; reruns do not erase the original failures.
+
+Backend CI runs `Reference release (macosArm64)` and retains its evidence under the candidate
+commit. `Neton release gates` requires it together with macOS framework tests, Linux/Windows
+native Core tests, PostgreSQL and Redis contracts on that same commit. Failed or skipped
+prerequisites fail the aggregate. The fixture baseline is macOS ARM64: it does not claim full
+Linux/Windows application-runtime acceptance, nor replace Maven Central consumer verification.
+No publishing or product deployment is performed by this gate.
+
 ## CI enforcement and evidence
 
 - The framework Backend CI runs macOS foundation/conformance suites, native Linux/Windows tests,
