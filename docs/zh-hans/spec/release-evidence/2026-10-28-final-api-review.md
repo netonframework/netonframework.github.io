@@ -12,6 +12,20 @@
 编译/预期拒绝用例通过；15 个模块 ABI 清单及实验/内部 API 分类检查通过。
 远端验收须以该提交对应 Backend CI 为准，原基线的绿灯不能替代本次运行。
 
+**远端验收完成**：Framework `4784a4cfa7ce65256a328bfecca7071fb3cef312` 的
+[Backend CI 40712385778](https://github.com/netonframework/neton/actions/runs/40712385778)
+全部通过，包括 API/ABI、基础模块、真实 PostgreSQL/Redis、多平台 KSP、三平台
+release 参考应用、签名候选制品和三平台固定版本公开应用消费，以及最终发布门禁汇总。
+公开应用仍固定 `41266f3b8f97fc3b8b9563942ce4c5b1af340376`，其自身
+[CI 40700915150](https://github.com/netonframework/neton-app/actions/runs/40700915150)
+通过；不通过无关空提交制造新验收。规范实现提交 `b5934da` 的
+[文档部署 40713634968](https://github.com/netonframework/netonframework.github.io/actions/runs/40713634968)
+及 secret-scan 通过。
+
+**结论**：F07 关闭；本轮配置构建与合并契约复评未发现新的阻塞项。迁移成本已明确，
+不能将本次更新 ABI 基线解释为旧二进制兼容，也不等于所有模块已完成无条件冻结批准。
+没有发布新 beta、正式包或版本标签。
+
 - 最终 `SourceConfig` 保持既有字段；新增 `SourceOverrides`，避免给 data class
   塞入 copy/equals 无法保留的隐藏存在性状态。
 - `StorageConfig` 的覆盖列表属于主构造器，copy 保留覆盖意图，保持明确的浅复制语义。
