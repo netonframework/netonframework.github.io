@@ -1,5 +1,31 @@
 # 1.0 API 冻结复评：契约修复之后
 
+> 下文基线及 F07 复现保留为历史记录。后续修复采用 `SourceOverrides` 明确表示
+> 字段存在性：null 继承，false、空字符串、默认路径均显式覆盖。完整 `sources`
+> 列表不再猜测覆盖意图，而是整体替换。见 storage-spec §6.2–6.4 的迁移约定。
+> 这属于冻结前明确的 API/ABI 调整，不声称与 beta26 二进制兼容，也未发布版本。
+
+## F07 修复后的细节复评
+
+实现提交：Framework `4784a4c`。本地验证：Storage 49 项 macosArm64 Native 测试
+（含 17 项配置测试）全部通过；编译生成 ABI 并 checkKotlinAbi 通过；7 组消费者
+编译/预期拒绝用例通过；15 个模块 ABI 清单及实验/内部 API 分类检查通过。
+远端验收须以该提交对应 Backend CI 为准，原基线的绿灯不能替代本次运行。
+
+- 最终 `SourceConfig` 保持既有字段；新增 `SourceOverrides`，避免给 data class
+  塞入 copy/equals 无法保留的隐藏存在性状态。
+- `StorageConfig` 的覆盖列表属于主构造器，copy 保留覆盖意图，保持明确的浅复制语义。
+- DSL block 返回时取副本，保留 receiver 后的修改不会悄悄改动已登记配置。
+- 两份配置列表中的重复名称共同拒绝；文件内部重复仍单独拒绝。已有非法文件不能被合法 DSL 掩盖。
+- `SourceOverrides`、copy 和嵌套默认展示均脱敏；类型错误的诊断不包含原始字段值。
+- 配置解析不再将错误字段类型静默转成字符串或 false；删除过时的专用环境变量别名描述。
+- 明确迁移成本：typed receiver 从 SourceConfig 改为 SourceOverrides，读取字段处理 null；
+  sources 不包含 DSL 登记的覆盖对象；直接构造 SourceConfig 需要部分继承时改用 DSL。
+
+本次复评范围为上述配置构建、合并、复制、诊断及消费者兼容路径；未声称重新穷举所有
+框架实现或负载场景。F07 的修复仍须结合对应提交的 CI 门禁，不以更新 ABI 基线本身
+作为兼容性或稳定性证明。
+
 评审基线：Framework `cacda428c162fe9aa11d3854a021f8f5103fb6b6`，Public app `41266f3b8f97fc3b8b9563942ce4c5b1af340376`。
 结论：本轮六项修复有回归覆盖；尚不能无条件签署全部 API 冻结。发布门禁结果另见本轮契约修复记录，不以 CI 绿色代替语义评审。
 

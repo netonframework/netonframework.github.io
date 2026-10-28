@@ -598,12 +598,13 @@ object StorageComponent : NetonComponent<StorageConfig> {
 
 ```kotlin
 data class StorageConfig(
-    /** DSL 中手动添加的源（优先级高于配置文件） */
-    val sources: MutableList<SourceConfig> = mutableListOf()
+    /** 完整配置：同名时整体替换文件配置 */
+    val sources: MutableList<SourceConfig> = mutableListOf(),
+    val overrides: MutableList<SourceOverrides> = mutableListOf()
 ) {
     /** DSL 语法糖：添加一个源 */
-    fun source(name: String, block: SourceConfig.() -> Unit) {
-        sources.add(SourceConfig(name = name).apply(block))
+    fun source(name: String, block: SourceOverrides.() -> Unit) {
+        overrides.add(SourceOverrides(name = name).apply(block).copy())
     }
 }
 
@@ -625,6 +626,20 @@ data class SourceConfig(
 ```
 
 ### 6.3 DSL 语法糖
+
+`SourceOverrides` 是字段级覆盖模型：`name` 为只读 String，其余字段与
+`SourceConfig` 对应，但类型可空且默认 null；null 表示继承，空字符串、false、
+`"local"` 和 `"./uploads"` 都是有效的显式覆盖值。无文件时继承 `SourceConfig` 的默认值。
+DSL 执行结束时复制覆盖对象，避免外部保留 receiver 后意外修改配置。
+`StorageConfig.copy()` 保留两份列表，遵循 Kotlin data class 的浅复制语义。
+完整配置与覆盖列表之间出现同名也必须失败，不引入隐式优先级。
+覆盖对象及其 copy、嵌套配置的默认字符串展示均不得泄漏凭据。
+
+**冻结前迁移（尚未发布，不适用于 beta26）**：普通 `source("default") { ... }`
+赋值写法不变；显式 `SourceConfig.() -> Unit` 辅助函数改用
+`SourceOverrides.() -> Unit`，读取字段需处理 null。读取 `sources` 不再包含 DSL
+覆盖项，应检查 `overrides`；直接添加 `SourceConfig` 表示完整替换，不再猜测
+哪些默认值应继承。构造器/receiver ABI 有变化，消费者必须重新编译。
 
 ```kotlin
 fun Neton.LaunchBuilder.storage(block: StorageConfig.() -> Unit) {
@@ -673,10 +688,16 @@ Neton.run(args) {
 
 **优先级**（从高到低）：
 1. DSL 中定义的 source（按 name 匹配覆盖）
-2. storage.conf 中的 `[[sources]]`
-3. 环境变量覆盖（`STORAGE_DEFAULT_BASE_PATH` → default 源的 basePath）
+2. ConfigLoader 返回的有效配置（base + 环境文件，再按 Config SPI 应用 ENV/CLI 覆盖）
+3. `SourceConfig` 默认值（仅在字段或配置确实缺失时）
 
-**合并逻辑（冻结）**：按 `name` 匹配，**字段级 merge**，非整体替换。
+不提供专用 `STORAGE_DEFAULT_BASE_PATH` 别名，环境变量和集合路径支持以 Config SPI
+为准，不得据此虚构按 source 名称寻址的覆盖能力。配置字段类型必须正确，不能把
+字符串 `"false"` 当作 Boolean，也不能把非字符串凭据强制转换成字符串；报错不得包含原值。
+
+**DSL 合并逻辑（冻结候选）**：按 `name` 匹配，**字段级 merge**。
+直接加入 `StorageConfig.sources` 的完整配置按名称整体替换；同一配置内 sources
+与 overrides 重名必须拒绝。文件顺序保留，新完整源随后追加，再追加新 DSL 源。
 
 | 场景 | 行为 |
 |------|------|
