@@ -791,7 +791,7 @@ class JwtAuthenticatorAdapter(
 | 8 | 构造 IdentityUser(id, roles.toSet(), perms.toSet()) |
 | 9 | 契约测试：各 code 对应 path/message 稳定 |
 
-**实现建议**：不要手写 HMAC-SHA256，使用 Native 可用 crypto 库（如 cryptography-kotlin：CommonCrypto/OpenSSL）封装极薄的 HS256 verifier。
+**实现约束**：不要手写加密算法。Security 和 Storage 使用自有 `com.netonstream:openssl` 的 OpenSSL 4 封装，与 HTTP/TLS 共享同一个原生运行时；不得混入 OpenSSL 3 provider，也不得通过放宽重复符号检查绕过冲突。封装尚未提供的安全高层方法，可在内部桥接其 `neton.openssl.c` 绑定，必须明确释放原生上下文、验证返回值，并保持公开 API 不暴露原生句柄。迁移必须保留 PBKDF2 存储格式、SecretBox 的 nonce/ciphertext/tag 布局，并通过固定向量、失败路径和跨平台链接运行验收。
 
 ---
 

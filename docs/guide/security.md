@@ -5,6 +5,14 @@ Neton's security framework is declarative and built from two layers — **Authen
 
 ## Architecture
 
+### Cryptography backend (post-beta26 candidate)
+
+Security and Storage use Neton's own OpenSSL 4 wrapper, sharing the runtime used by HTTP/TLS.
+Do not mix in an OpenSSL 3 provider or suppress duplicate native symbols. Public Security APIs
+remain provider-neutral; PBKDF2 password hashes and SecretBox's nonce/ciphertext/tag format are
+preserved. This migration requires cryptographic regression and native runtime gates before release;
+the already published beta26 does not include it.
+
 ```
 HTTP request
   |

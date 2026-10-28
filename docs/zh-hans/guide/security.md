@@ -4,6 +4,13 @@ Neton 提供了一套声明式的安全框架，采用 **Authenticator（认证�
 
 ## 架构概览
 
+### 加密后端（beta26 之后的候选版本）
+
+Security 与 Storage 统一使用自有 OpenSSL 4 封装，和 HTTP/TLS 共用运行时。
+不得混入 OpenSSL 3 provider 或忽略原生重复符号。Security 公开 API 不暴露 provider，
+已有 PBKDF2 密码哈希和 SecretBox 的 nonce/ciphertext/tag 格式保持兼容。
+该迁移必须通过加密回归和原生运行门禁才能发布；已发布的 beta26 不包含此变更。
+
 ```
 HTTP 请求
   |
