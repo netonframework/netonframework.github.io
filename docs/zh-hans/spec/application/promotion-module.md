@@ -63,9 +63,11 @@ data class CommercialText(val title: String, val html: String? = null, val text:
 | 标题含促销话术 | 3 | 3 |
 | 标题含「促销话术 + 价格」 | 3 | 3 |
 | 价格 ≥ 3 处 / ≥ 6 处 | 2 / 3 | 3 |
+| 导购标题（降价箭头「1499 → 840 元」、新低、闭眼囤、秒杀、清仓、大促、发车、好价、券后、领券、几折、低过、补贴价、直降、破冰、立减、包邮、仅 / 仅需 x 元） | 4 | 4 |
 
-- `score ≥ promotion.threshold.promotional`（默认 8）→ `promotional`；**例外**：没有购买渠道（商家链接、口令）、标题没有强话术、也没有经销商信号的「纯文字」高分（新闻常写「叠加国家补贴后到手价 6499 元」）按边界处理，交给复核，复核不可用时为 `editorial`。
-- `promotion.threshold.borderline`（默认 4）≤ score < 8 → **边界**，交给大模型复核（§2.6）；复核不可用时：有商家链接或口令 → `promotional`，否则 `editorial`，并加原因 `CLASSIFIER_UNAVAILABLE`。
+- **规则直接判 `promotional`** 只在两种确凿情形，且 `score ≥ promotion.threshold.promotional`（默认 8）：**好价稿**（导购标题 + 购买渠道：商家链接或口令）；**经销商促销**（标题里有强经销商话术，且经销商信号 ≥ 2 个）。
+- 其余 `score ≥ promotion.threshold.borderline`（默认 4）的，以及**带购买渠道**的，都是**边界**，交给大模型复核（§2.6）：带零售链接的上市新闻、写了「国补到手价」「限时权益价」的发布 / 首销新闻、只在文字里谈价格，判断看稿件的目的，不看有没有价格。复核不可用时（加原因 `CLASSIFIER_UNAVAILABLE`）：有导购标题，或有购买渠道而标题不是资讯写法（发布、推出、上市、预售、开售、首销、官宣、众筹、定价、联名、评测、销量……）→ `promotional`（宁可多留人工）；否则 `editorial`（商品链接照样剥掉，§3）。
+- 「到店」只在邀请读者到店拿好处时算经销商信号（到店享 / 送 / 领 / 有礼 / 试驾……）；「新车已到店」「到店人数」是报道。
 - score < 4：有价格或商家链接 → `editorial`，否则 `none`。
 
 阈值后台可调（系统配置，§9）。分值表是代码常量，单测钉住（`PromotionRulesTest`），调整要改规范。
@@ -91,6 +93,22 @@ data class MerchantPattern(val merchant: String, val hosts: Set<String>, val kin
 - 模型 `promotion.classifier.model`（默认 `dashscope:qwen-flash`，经 neton-ai，`AiClient` 不在时视为不可用），温度 0，JSON 输出，超时 15 秒。
 - 输入：标题、正文前 2000 字、规则命中的证据；输出 `{"verdict":"none|editorial|promotional","reasons":["…"]}`，只取 `verdict`，模型给出的 reasons 作为一条 `classifier` 证据（≤ 200 字）。解析失败按不可用处理。
 - 只在边界区间调用：规则能定论的不花钱。结论按「标题 + 正文」的 sha256 进程内缓存 10 分钟（同一素材重投不重复调用）。
+- 提示词的口径（2026-10-28 按 §2.7 的样本集调定）：promotional = 好价 / 导购稿、给出购买渠道并号召行动、经销商促销、品牌促销活动通稿；editorial = 新闻、评测、发布、上市、预售或众筹开启、首销、销量、财报、行情——这些稿件照常写官方价、「国补到手价」「限时权益价」，甚至附购买链接；同一句「国补到手价 4999 元起」在发布新闻里是 editorial、在「某渠道国补直降到 x 元」的好价稿里是 promotional；报道破发、上架补贴频道的行情新闻是 editorial；网站统一附加的文末内容（广告声明、全站红包活动链接）忽略。规则命中作为「线索、不是结论」交给模型。
+
+### 2.7 标注样本集与回归
+
+`neton-application-module-promotion/test-fixtures/commercial-samples/`：从本地开发库（真实采集的 IT之家、懂车帝稿件）导出的节选（段落文本 + 链接，≤ 1800 字，保留来源地址），人工标注 `promotional` / `editorial` / `none`，误判过或最能说明口径的样本标 `pinned`。大模型复核的回答**录制回放**（`replay.json`，键 = sha256(模型 + 系统提示 + 用户提示)）：`PromotionSampleSetTest` 不连模型、结果确定；规则或提示词一改，缺的回答写进 `build/commercial-samples/pending.jsonl` 并失败，`scripts/record-classifier.py` 照着它调一次真实模型补录。门槛：「判成 promotional」的精确率、召回率 ≥ 90%，复核不可用时的召回率 ≥ 90%，`pinned` 全对。
+
+2026-10-28 的样本集（179 篇：IT之家 172、懂车帝 7；41 篇推广），qwen-flash：
+
+| | TP | FP | FN | TN | 精确率 | 召回率 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 调整前（规则 + 原提示词） | 41 | 26 | 0 | 112 | 61.2% | 100% |
+| 调整后（规则 + 新提示词） | 40 | 1 | 1 | 137 | 97.5% | 97.5% |
+| 调整前，复核不可用 | 39 | 15 | 2 | 123 | 72.2% | 95.1% |
+| 调整后，复核不可用 | 39 | 1 | 2 | 137 | 97.5% | 95.1% |
+
+调整前的 26 个误判：带零售链接的上市新闻（链接 + 价格就到 8 分，规则直接判推广）、写了「国补到手价」「限时」的发布 / 首销 / 上市新闻（模型照提示词判推广）、「新车到店」「百亿补贴」行情新闻、文末全站红包链接。
 
 ## 3. 处理计划
 
