@@ -1,10 +1,22 @@
 # 1.0 API 冻结整改与公开应用门禁
 
-状态：代码整改已提交，完整候选 CI 待核验；不是正式发布批准。
+状态：完整候选 CI 已通过；不是 1.0.0 正式发布批准。
 
 - Framework：`23e0b543e86f67b4bb0a6ba6c8dea8ee0e7e7e69`（实现提交 `f1e436e`，后续更新公开应用固定 SHA）。
 - Public app：`2ee7825503af3faff50a4fa19dbe74c7780a03f5`，由框架 `tools/ci/neton-app.lock` 固定。
-- 范围：neton、neton-docs、neton-app。未发布版本、未创建正式标签、未使用生产签名。
+- 范围：neton、neton-docs、neton-app。维护者已授权候选通过后发布新 beta，仍未授权发布 1.0.0 正式版。
+
+## 同提交完整 CI 证据
+
+[Backend CI 40665694771](https://github.com/netonframework/neton/actions/runs/40665694771) 已完成，结论为 `success`，对应上述 Framework SHA。
+
+- 编译 API/ABI 与源兼容正负样本、全量 framework-checks、PostgreSQL/Redis 契约均通过。
+- KSP macOS ARM64、Linux x64/ARM64、Windows x64 增量验收通过，Linux ARM64 有原生执行结果。
+- 三平台参考应用 release 构建、迁移重放/校验、两轮启停和数据库连接归零全部通过。
+- 签名本地候选制品通过；公开 neton-app 固定版本在 macOS ARM64、Linux x64、Windows x64 消费同批候选制品，构建和两轮运行全部通过。
+- 最终 `Neton release gates` 汇总成功；此结果不等同于 Maven Central 正式签名制品已经发布或发布后消费验收已经完成。
+
+后续 beta26 生产签名、Central 发布及公开预览版本的验收单独记录，不用测试密钥候选代替。
 
 ## 整改
 
@@ -31,7 +43,7 @@
 公开应用首次 Windows 编译暴露 KSP 生成源重复归属，原因是过滤路径没有归一化 Windows 分隔符，已由 `2ee7825` 修复。
 修复后 Windows release 构建和 HTTP 运行成功，但 beta25 在 CTRL_BREAK_EVENT 后退出码为 `3221225786`，不能视为正常停机。
 macOS/Linux 的 beta25 运行验收已通过。此处没有放宽退出码断言；当前框架候选的 Windows 停机路径仍由完整候选门禁独立验证。
-若要求默认公开预览版也全绿，必须在候选验证后发布含停机修复的新 beta，并升级应用版本；这需要额外的测试版发布授权，不等同于授权正式发布 1.0.0。
+默认公开预览版需要发布含停机修复的新 beta，并升级应用版本。维护者已授权在候选全绿后发布新 beta；不等同于授权正式发布 1.0.0。
 
 新框架候选 CI 必须完成 ABI/源消费者编译、KSP 增量、真实数据库、三平台参考应用、签名制品以及同批制品上的公开 neton-app 三平台运行。
 `Neton release gates` 现在要求 10 类前置任务全部成功，缺失、失败、跳过均不放行。
