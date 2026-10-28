@@ -2,8 +2,8 @@
 
 状态：代码整改已提交，完整候选 CI 待核验；不是正式发布批准。
 
-- Framework：`f1e436e68f5691cffdbec29399f60697446820b3`。
-- Public app：`aca950cfb7f1c428cd658d506ea0567e46da82d2`，由框架 `tools/ci/neton-app.lock` 固定。
+- Framework：`23e0b543e86f67b4bb0a6ba6c8dea8ee0e7e7e69`（实现提交 `f1e436e`，后续更新公开应用固定 SHA）。
+- Public app：`2ee7825503af3faff50a4fa19dbe74c7780a03f5`，由框架 `tools/ci/neton-app.lock` 固定。
 - 范围：neton、neton-docs、neton-app。未发布版本、未创建正式标签、未使用生产签名。
 
 ## 整改
@@ -16,7 +16,8 @@
 
 ## 本地证据与限制
 
-- Core/HTTP Native 测试、数据库/WebSocket/AI 测试源码编译、KSP JVM 测试命令成功；后续给身份测试追加跨调度器断言，需由新候选 CI 再确认。
+- Core/HTTP Native 测试、数据库/WebSocket/AI 测试源码编译、KSP JVM 测试命令成功；后续给身份测试追加跨调度器断言，也已单独重跑通过。
+- 7 组源消费者编译全部通过：stable/opt-in 编译成功；数据库内部 API、HTTP 内部 API、AI、WebSocket 引擎及旧全局身份调用均按预期编译失败，且匹配明确诊断。
 - 六个受影响模块的 `updateKotlinAbi` 成功，真实编译全部声明目标；差异仅为身份入口收敛与新增 AI 实验标记。
 - 门禁脚本 38 项单元测试通过；公开应用脚本 8 项单元测试通过。
 - 公开应用 release 构建通过，使用之前已验收的本地打包候选 `1.0.0-candidate.d2d176b3deb3`；不是本次新框架候选的端到端证据。
@@ -24,6 +25,13 @@
 - 构建未结束时的首次运行读到了旧二进制，不作为最终证据；最终记录为 `/tmp/neton-app-freeze-runtime-verified/evidence.json`，新门禁严格串行构建和运行。
 
 ## 放行条件
+
+### 已发布 beta25 的 Windows 限制
+
+公开应用首次 Windows 编译暴露 KSP 生成源重复归属，原因是过滤路径没有归一化 Windows 分隔符，已由 `2ee7825` 修复。
+修复后 Windows release 构建和 HTTP 运行成功，但 beta25 在 CTRL_BREAK_EVENT 后退出码为 `3221225786`，不能视为正常停机。
+macOS/Linux 的 beta25 运行验收已通过。此处没有放宽退出码断言；当前框架候选的 Windows 停机路径仍由完整候选门禁独立验证。
+若要求默认公开预览版也全绿，必须在候选验证后发布含停机修复的新 beta，并升级应用版本；这需要额外的测试版发布授权，不等同于授权正式发布 1.0.0。
 
 新框架候选 CI 必须完成 ABI/源消费者编译、KSP 增量、真实数据库、三平台参考应用、签名制品以及同批制品上的公开 neton-app 三平台运行。
 `Neton release gates` 现在要求 10 类前置任务全部成功，缺失、失败、跳过均不放行。
