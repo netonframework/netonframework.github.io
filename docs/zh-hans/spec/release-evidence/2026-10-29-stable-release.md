@@ -43,3 +43,21 @@ Neton 的 SQL 适配层使用 Statement、fetchAll、execute 和事务 API；未
 不可逆发布。发布后才更新公开模板默认版本、创建正式发布标记，并执行不使用 Maven Local、
 候选文件仓库或源码替换的公开 Central 消费验收。后续结果必须保留具体 SHA、制品摘要、
 签名身份及真实启停结果；缺失项不得推断为通过。
+
+## 首轮升级验收进度
+
+- 本地 `:neton-database:checkKotlinAbi` 通过（Kotlin 2.4.20）；这是补充检查，
+  不替代干净候选 CI。制品校验工具的 7 项单元测试通过。
+- 新提交的 PostgreSQL、Redis、Linux/Windows Core、Linux/Windows 参考应用迁移与
+  两轮启停，以及 Linux x64/ARM64、Windows KSP 增量检查通过。
+- 签名候选制品门禁通过，三平台公开应用消费及 macOS 基础检查仍在运行。
+- 全量 ABI、macOS 参考应用、macOS KSP job 未执行代码即被 GitHub 取消。注释明确为
+  hosted macOS ARM64 runner 容量不足。ARM64 后续执行 job 因依赖未满足被跳过。
+  当前凭据重跑返回 `Resource not accessible by personal access token`，已请求维护者
+  在本轮结束后执行 Re-run failed jobs。不得用本地数据库 ABI 检查替代这些缺失项。
+- Maven Central 逐项 HEAD 检查确认全部 79 个预期的 `1.0.0` 坐标尚不存在（404），
+  未发现已发布版本占用。此结果只代表检查时点，正式上传前仍应核对。
+- 生产签名制品在干净提交的独立目录本地准备。首次构建退出 143，Gradle 日志显示客户端
+  断开而取消，没有成功制品验收结论；保留原日志，第二次构建进行中。没有上传或发布。
+
+因此本轮目前仍为 **未放行**；旧候选全绿不能抵消升级后门禁取消/跳过。
