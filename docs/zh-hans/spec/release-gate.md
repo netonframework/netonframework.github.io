@@ -13,6 +13,9 @@ No private product or proprietary service is a mandatory dependency of a Neton r
 
 ## Mandatory gates
 
+Formal API stability and beta migration boundaries are defined in
+[the freeze contract](./release-freeze-contract.md). API dumps alone do not approve a freeze.
+
 1. macOS framework foundation tests pass.
 2. Linux `linuxX64` Core tests pass on a Linux runner.
 3. Windows `mingwX64` Core tests pass on a Windows runner.
@@ -149,6 +152,15 @@ The subsequent [API/ABI, KSP and candidate-artifact acceptance record](./release
 keeps the expanded gates and their failed intermediate candidates separate from that R0 baseline.
 
 ## CI enforcement and evidence
+
+- `public-app` builds a pinned `neton-app` SHA against the exact signed candidate
+  repository from this workflow on macOS ARM64, Linux x64 and Windows x64. Each target
+  links twice and performs two healthy/graceful-stop cycles. The job checks upstream
+  revision and payload hashes before linking; it does not use a previously published beta
+  as a substitute. Its result is mandatory in the release aggregate.
+- Internal/experimental source marker checks and positive/negative consumer compilation
+  supplement ABI comparison. KSP-generated support explicitly opts in to internal APIs;
+  business consumers must not inherit a project-wide internal opt-in from the framework.
 
 - The framework Backend CI runs macOS foundation/conformance suites, native Linux/Windows tests,
   and real Redis/PostgreSQL contracts. Dedicated `ci/**` branches can validate fixes without merging them first.

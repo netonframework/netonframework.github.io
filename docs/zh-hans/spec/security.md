@@ -801,7 +801,11 @@ class JwtAuthenticatorAdapter(
 |----------|------|
 | **HttpContext.attributes[SecurityAttributes.IDENTITY]** | 请求级存储，安全管道认证后写入 |
 | **@CurrentUser 注入** | KSP 生成代码从 `context.getAttribute(SecurityAttributes.IDENTITY)` 读取 |
-| **SecurityContext** | 辅助封装，内部委托给 HttpContext；主路径推荐直接用 `@CurrentUser` |
+| **SecurityContext(context)** | 显式绑定请求，内部委托给 HttpContext；主路径推荐直接用 `@CurrentUser` |
+
+1.0 冻结整改：`neton.core.security.SecurityContext` 是必须传入 `HttpContext` 的实例，
+不再提供进程全局当前用户。`neton.security.SecurityContext` 仅保留弃用的类型别名。
+禁止把实例存入全局单例或跨请求复用；异步任务应显式传递所需身份快照。
 
 ---
 

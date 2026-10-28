@@ -5,6 +5,8 @@
 > [`docs/neton-ai-protocol-adoption.md`](../../../../neton-application-module-gateway/docs/neton-ai-protocol-adoption.md)。
 >
 > **状态**：**Draft v1**。实施规格，未冻结 API。
+> **1.0 边界**：公开 AI 契约统一要求 `@OptIn(ExperimentalNetonAiApi::class)`，
+> 编译器按 ERROR 级执行。框架 1.0 稳定发布不自动冻结 AI 协议/SDK；使用方显式固定版本。
 >
 > **原则**：遵循**最新的主流实际标准**，不自创协议。参照：
 > - Vercel AI SDK `ai@7.0.137`（本地 `vercel-ai/`，Apache-2.0）：核心能力与 SDK 语义。

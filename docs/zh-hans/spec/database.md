@@ -4,6 +4,16 @@
 > Baseline: Kotlin 2.4.0 (KSP plugin 2.3.10)
 > Related: [Database Session and Transaction Contract](./database-session.md), [Schema Migration](#_12-schema-migration)
 
+### 1.0 API boundary clarification
+
+`api`/DSL contracts are application-facing. Public `adapter.sqlx` classes are
+cross-module implementation support, marked ERROR-level `InternalNetonApi`.
+KSP-generated code opts in explicitly; application logic must use `Table`,
+`DbContext` and framework-owned lifecycle rather than initializing/closing the
+SQLx singleton. Framework migration tooling may opt in, but does not turn those
+entry points into a stable application SPI. Kotlin/KSP release support is governed
+by the release contract, not the historical baseline noted above.
+
 ## 1. Positioning
 
 Neton Database is a Native-first, KSP-generated data access layer. Its authoritative execution path is:
