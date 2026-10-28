@@ -145,6 +145,8 @@ No publishing or product deployment is performed by this gate.
 Candidate results are recorded separately from normative requirements. See the
 [2026-10-28 public reference acceptance](./release-evidence/2026-10-28-native-reference.md)
 for its exact commit, CI run, binary hash, observations and scope limitations.
+The subsequent [API/ABI, KSP and candidate-artifact acceptance record](./release-evidence/2026-10-28-abi-ksp-candidate.md)
+keeps the expanded gates and their failed intermediate candidates separate from that R0 baseline.
 
 ## CI enforcement and evidence
 
