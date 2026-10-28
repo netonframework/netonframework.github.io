@@ -63,3 +63,32 @@ RSA/JWK/AES-GCM/TOTP 向量、篡改拒绝、历史数据、HTTP+Security 同进
 模块迁移已推送核心提交 `85c8ebd16a7f525f005a0b782c92c1b739aef622`；本地
 `:neton-websocket:updateKotlinAbi :neton-websocket:macosArm64Test :neton-ksp:test` 通过。
 Skill manifest 验证通过。加密改动和最终主分支门禁另行记录，尚不构成 1.0 放行。
+
+## 核心候选验收与冻结复评
+
+框架提交 `934764fcf15f960a61410780e32cc3c8d83ec470` 的
+[Backend CI 40744597869](https://github.com/netonframework/neton/actions/runs/40744597869)
+全部 19 个 job 通过，含最终 Neton release gates。对应未发布候选版本为
+`1.0.0-candidate.934764fcf15f`；制品摘要、临时签名验证结果、二进制摘要和运行证据
+保存在该运行的候选及各平台验收 artifacts 中。
+
+- 编译 API/ABI 基线和消费者正负编译通过。Security 公开 API 保持不变；WebSocket
+  的显式包名迁移及 AI 移出清单是本次冻结前已授权的边界调整，不承诺旧二进制兼容。
+- Security 统一 OpenSSL 4 后，Linux/Windows 原生测试和 macOS framework-checks
+  通过。本地 `:neton-security:macosArm64Test` 也通过，含 6 项新增迁移测试。
+  原有 RSA/JWK、摘要、HMAC、TOTP、PBKDF2 向量及历史哈希仍由回归覆盖；HTTP 与
+  Security 同进程真实创建/关闭的测试验证组合链接，未通过跳过 Linux 绕过问题。
+- macOS ARM64、Linux x64、Windows x64 的 release 参考应用均通过迁移和两轮启停。
+  PostgreSQL、Redis、KSP 各平台增量检查及 Linux ARM64 实际执行均通过。
+- 固定公开应用 `d1c31329daea1b76daa449ef461605e23a99cd6d` 从同一候选制品
+  三平台构建并通过两轮运行/退出；其自身 [CI 40739772323](https://github.com/netonframework/neton-app/actions/runs/40739772323) 通过。
+- 规范基线 `416476c1c0ce0e160de7577af641b80375db5431` 的文档构建和 secret-scan
+  均通过；后续证据记录提交不改变上述框架或应用验收基线。
+
+**本轮结论**：模块边界、命名迁移、加密后端替换及其公开契约复评未发现新的核心
+发布阻塞项，核心技术门禁满足冻结候选要求。正式发布仍须维护者确认版本、生产签名
+身份和发布说明；本轮不创建标签、不发布制品。正式 Central 发布后的独立消费复验
+尚未发生，不能用测试密钥候选替代它。平台、数据库和实验 SPI 的承诺边界不扩大。
+
+独立 AI 的候选消费 CI 另行记录；适配器迁出并不代表 Geario4k 原型已通过生产一致性
+验收，也不要求其补齐所有能力才放行核心框架。
