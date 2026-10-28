@@ -1,11 +1,25 @@
 ---
 name: neton-development
-description: Build, integrate, debug, or review Kotlin services using Neton Framework and maintain its components against Neton specs. Use for Neton lifecycle, Config SPI, KSP modules, routing, security SPI, database transactions, HTTP, events, and resource ownership. Application business conventions belong to neton-application-development; do not apply this skill to unrelated Kotlin projects.
+description: Build, extend, debug, and review Kotlin/Native server applications with Neton Framework using versioned specs, KSP, lifecycle and acceptance contracts. Use for new Neton services and framework maintenance, not unrelated Kotlin projects; Neton Application business conventions have a separate skill.
 ---
 
 # Neton development
 
 Deliver changes against the project's actual Neton version and the relevant accepted contracts. Preserve the user's task: a review produces findings; implementation produces verified code. This skill does not authorize deployments, publishing, or edits to unrelated repositories.
+
+Neton is an AI-native development framework: AI assistants should derive server code
+from its explicit contracts and verify the resulting service. This does not mean every
+application uses a model at runtime. Never add `neton-ai` merely because AI is writing
+the application; it is an optional, independently versioned official integration.
+
+## Build a server application
+
+For a new service or a new business capability, follow [service delivery](references/service-delivery.md).
+Start from the public `neton-app` structure at a compatible revision, not a private
+product or a reconstructed Spring/Ktor application. Resolve supported APIs before writing
+code. Deliver a working vertical slice through route, service and persistence when needed,
+including failure handling and lifecycle tests; do not stop at generated scaffolding.
+For a focused fix, use only the relevant contract and tests rather than rebuilding the app.
 
 ## Establish the contract
 
@@ -21,6 +35,7 @@ Deliver changes against the project's actual Neton version and the relevant acce
 - Use `@Module`, generated manifests/registries and declared dependencies as supported by the selected version. Edit source annotations/build inputs, never generated KSP output. Public symbol changes require searching actual downstream consumers.
 - Keep framework interfaces independent of application tables, business identities, permission strings and product names. Authentication policy belongs behind existing SPI. Do not add admin/account business rules to generic JWT signing primitives.
 - For inbound/outbound HTTP, use Neton abstractions. The distribution selects the engine dependency. Check required capabilities; do not import concrete engines or driver types into business contracts. Follow ownership, cancellation, timeout and streaming contracts.
+- WebSocket remains `neton-websocket`; current source uses `neton.websocket`, not `neton.ws` (legacy beta26). KSP and library versions must agree. Engine SPI requires its declared opt-in; ordinary business APIs are a different contract. `neton-ai` and compatibility adapters have independent repositories/versions and must not be assumed to follow the framework BOM.
 - Execute Table/Query/raw parameterized SQL through `DbContext` and the current session. Transactions commit once, roll back and rethrow on failure/cancellation; nested v1 transactions join the outer transaction. Do not parallelize operations sharing one transaction or let lazy work escape it.
 - Keep entities persistence-free. Use explicit insert/update/destroy operations. Production schema changes use versioned explicit migrations; startup is not a schema-upgrade hook. Small examples using automatic table creation are not production migration templates.
 - Use framework logging with structured fields and request context. Never log credentials or raw authentication payloads. Reuse cache, Redis, storage, jobs and events contracts when the task needs them; do not introduce competing execution paths.

@@ -4,6 +4,13 @@ This directory is the sole maintained source of Neton ecosystem skills. Specific
 define contracts; skills guide implementation and verification against those contracts.
 Installing a framework dependency does not install a skill.
 
+Neton + its skill supports AI-native **server application development**: the skill
+routes the assistant from versioned contracts to implementation and executable
+acceptance. This is distinct from runtime model integration (`neton-ai`, now an
+independently versioned optional project). An ordinary service needs no AI provider
+or key. Skills assist compliance; they do not replace compiler, tests, review or
+guarantee that every tool automatically loads them.
+
 | Future distribution identifier | Skill name and source |
 | --- | --- |
 | `neton/framework.skill` | [neton-development](neton-development/SKILL.md) |

@@ -5,7 +5,7 @@
 
 ## 范围与稳定性
 
-核心仓库为 `neton`、`neton-docs`、`neton-app`。Hyper4k/Ktor 独立适配器不阻塞核心发布。
+核心仓库为 `neton`、`neton-docs`、`neton-app`。Hyper4k/Ktor/Geario4k 独立适配器及独立 neton-ai 不阻塞核心发布，也不进入框架 BOM。各自负责其版本、测试和发布流程。
 
 稳定性分级说明的是正式 1.0 的兼容承诺范围，不是仅凭 ABI 检查成功就自动冻结。冻结评审必须同时核对规范语义与行为回归；状态过时的模块文档要按实际证据同步，不得把未来能力当成已实现。
 实际使用的 I/O、HTTP、TLS、WebSocket 依赖必须固定版本并通过核心集成验收；不要求整个生态同时发布 1.0。
@@ -13,8 +13,8 @@
 框架 ABI 清单内的 public API 默认受稳定兼容性约束，以下除外：
 
 - `InternalNetonApi`：框架内部与生成代码支持，不供业务扩展，编译器 ERROR 级 opt-in。
-- `ExperimentalNetonAiApi`：AI 协议和 SDK 尚未冻结，ERROR 级 opt-in。
-- `ExperimentalWebSocketEngineApi`：`neton.ws.spi` 引擎接入契约，包括握手、限制和预算类型，ERROR 级 opt-in；不等于业务 WebSocket API 全部实验化。
+- 独立 `neton-ai` 的 `ExperimentalNetonAiApi` 由 AI 仓库维护，ERROR 级 opt-in；不属于框架 1.0 ABI 清单。
+- `ExperimentalWebSocketEngineApi`：`neton.websocket.spi` 引擎接入契约，包括握手、限制和预算类型，ERROR 级 opt-in；不等于业务 WebSocket API 全部实验化。
 - KSP processor 实现类不是业务扩展点；生成结果、编译选项、诊断和服务入口必须配套测试。
 
 `neton.core.mock`、`neton.http.conformance` 是显式测试支持契约，不是业务认证的默认配置。

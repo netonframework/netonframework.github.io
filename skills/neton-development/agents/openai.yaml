@@ -1,4 +1,4 @@
 interface:
   display_name: "Neton Development"
-  short_description: "Develop Neton services against versioned framework contracts"
-  default_prompt: "Use $neton-development to implement this change against the project's Neton version and verify the relevant contracts."
+  short_description: "Build and verify spec-compliant Neton server applications"
+  default_prompt: "Use $neton-development to build or extend this Neton server application against its pinned framework contracts and verify the complete requested behavior."

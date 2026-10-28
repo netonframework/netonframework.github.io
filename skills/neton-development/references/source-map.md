@@ -2,7 +2,10 @@
 
 ## Resolve a version before reading examples
 
-Authoring baseline, 2026-10-15: framework `f03c389`, neton-docs `e6a837b`. These identify inspected snapshots, not a claim that every subsequent version is compatible. Resolve the target project's actual versions on each task.
+Calibration baseline, 2026-10-29: post-beta26 framework migration (`neton.websocket`)
+and independent `netonframework/neton-ai`. These changes are not in released beta26.
+Resolve the target project's actual versions on each task; do not upgrade imports from
+the skill's baseline alone.
 
 Canonical documentation repository: `https://github.com/netonframework/netonframework.github.io` (local checkout commonly named `neton-docs`). Paths below are relative to `docs/zh-hans/spec/` in that repository. English translations may exist; check their freshness against the same contract/version.
 
@@ -24,7 +27,8 @@ Source paths below are relative to the resolved framework checkout. Search withi
 | Events/outbox | `event.md`, `database-session.md` | `neton-core/src/commonTest/kotlin/neton/core/event/`; application outbox implementation when present |
 | Jobs, files | `jobs.md`, `storage-spec.md` | `neton-jobs/src/`, `neton-storage/src/`; lifecycle owners |
 | Logging | `logging.md` | `neton-logging/src/`; structured fields, redaction and shutdown tests |
-| WebSocket or AI | `websocket.md` or `ai.md` including status | Corresponding module's actual public API and tests; draft capability is not assumed implemented |
+| WebSocket | `websocket.md` including status | Framework `neton-websocket/src/`, current package `neton.websocket`; legacy beta26 uses `neton.ws` |
+| Optional runtime AI | `ai.md` including status | Independent `https://github.com/netonframework/neton-ai`, `neton-ai/src/` and its sample/tests; resolve AI and framework versions separately |
 | Native release | `release-gate.md` | `.github/workflows/backend-ci.yml`, target-specific Gradle tasks |
 
 ## Conflict handling

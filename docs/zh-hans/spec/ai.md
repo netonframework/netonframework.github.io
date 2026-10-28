@@ -1,12 +1,14 @@
 # neton-ai 规范：协议层与模型接入
 
-> **定位**：规定 neton-ai 作为**框架能力**应提供什么：主流大模型 API 协议的无损报文模型、跨协议转换、流式与用量、上游接入，以及建立在其上的高层 SDK。
+> **定位**：规定 neton-ai 作为 **Neton 官方可选 AI 集成**应提供什么：主流大模型 API 协议的无损报文模型、跨协议转换、流式与用量、上游接入，以及建立在其上的高层 SDK。
+> **代码归属（2026-10-29）**：[netonframework/neton-ai](https://github.com/netonframework/neton-ai)，规范继续归 neton-docs。模块和包名仍为 `neton-ai` / `neton.ai`，独立版本、ABI、测试和发布流程，不再是 Framework 子工程或 BOM 约束项。
+> **版本迁移**：独立候选 `0.1.0-alpha.1` 尚未发布，基线依赖 Framework `1.0.0-beta26`，Kotlin 2.4.20。旧版同名 AI 制品不删除；新版本号低于旧 beta26，消费方必须显式移除旧约束并检查解析结果，不能依赖自动升级或最高版本选择。
 > 中转站的渠道、计价、结算、配额等**业务**不在本文，写在 gateway 项目的
 > [`docs/neton-ai-protocol-adoption.md`](../../../../neton-application-module-gateway/docs/neton-ai-protocol-adoption.md)。
 >
 > **状态**：**Draft v1**。实施规格，未冻结 API。
 > **1.0 边界**：公开 AI 契约统一要求 `@OptIn(ExperimentalNetonAiApi::class)`，
-> 编译器按 ERROR 级执行。框架 1.0 稳定发布不自动冻结 AI 协议/SDK；使用方显式固定版本。
+> 编译器按 ERROR 级执行。框架 1.0 稳定发布不自动冻结 AI 协议/SDK；使用方分别固定 AI 与框架版本。AI 更新不要求框架同步发布，依赖只从 AI 指向框架的 core/http/logging/security。
 >
 > **原则**：遵循**最新的主流实际标准**，不自创协议。参照：
 > - Vercel AI SDK `ai@7.0.137`（本地 `vercel-ai/`，Apache-2.0）：核心能力与 SDK 语义。

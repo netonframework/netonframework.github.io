@@ -1,10 +1,15 @@
 # Neton WebSocket 规范
 
+2026-10-29 冻结前命名迁移：模块仍为 `neton-websocket`，源码包统一为
+`neton.websocket`（SPI 为 `neton.websocket.spi`）。不存在 `neton-ws` 模块。
+旧 beta26 使用 `neton.ws`，不回写旧制品；新候选必须同步更新 import、KSP 生成
+引用并重新编译，不能混用新包名与旧框架/KSP。下文示例以新候选包名为准。
+
 > **定位**：在 Neton 框架内提供 WebSocket 服务端能力：路由注册、握手安全、会话收发、关闭与停机。
 > 协议本身不在框架内实现，由 `com.netonstream:websocket` 提供；本文只规定**框架如何接入它**。
 >
 > **状态**：**v1 r12 业务 API 冻结候选**，最终放行遵循 release-freeze-contract。HandshakeInfo、CloseResult、awaitClosed 和单消费者接口已实施；不再将 r11 的缺口描述为当前实现。
-> `neton.ws.spi` 仍为 ERROR 级实验 API，不随业务 API 冻结。r10/r11 为历史记录。
+> `neton.websocket.spi` 仍为 ERROR 级实验 API，不随业务 API 冻结。r10/r11 为历史记录。
 > 功能一致性不等于性能认证：§11 的独立压力/性能验收未完成项仍保留，不宣称未经实测的容量或吞吐保证。
 > r2 按评审修订了运行时契约：单一协议读取者（§7.3）、发送顺序与数据所有权（§7.4）、
 > 三类配额（§7.6）、升级中连接的停机（§8.3）、心跳三项配置（§10.2）、性能验收（§11.1）。
@@ -344,7 +349,7 @@ Controller 由现有依赖注入创建，不要求继承基类。连接状态放
 ### 4.3 会话接口
 
 ```kotlin
-package neton.ws   // neton-websocket 模块
+package neton.websocket   // neton-websocket 模块
 
 import neton.core.interfaces.Identity
 
@@ -380,7 +385,7 @@ sealed interface WebSocketMessage {
 
 约束：
 
-- **包名为 `neton.ws`**。协议库 `com.netonstream:websocket` 已占用 `neton.websocket` 包，两个产物共用一个包会重现 `neton.http` 现在需要专门冲突检查（`checkNetonHttpPackageClash`）才能防住的问题，因此框架模块从一开始就使用独立的包。
+- **包名为 `neton.websocket`**。协议库 `com.netonstream:websocket` 已占用 `neton.websocket` 包，两个产物共用一个包会重现 `neton.http` 现在需要专门冲突检查（`checkNetonHttpPackageClash`）才能防住的问题，因此框架模块从一开始就使用独立的包。
 - **不暴露**协议库（`neton.websocket.*`）的任何类型，也不暴露 Ping、Pong、Close 帧。控制帧由框架与引擎处理。
 - `incoming` 使用标准 `Flow`，不再引入自定义迭代器；它是可续读的单消费者消息源，不是可重放流或广播流，具体取消边界见 §7.3。
 - `trySend`、`sendAndFlush` 和投递回执不进入本轮最小 API；未来扩展不能改变 `send` 的接受语义。
@@ -505,7 +510,7 @@ data class RouteDefinition(
 `neton-websocket` 提供 `UpgradeEndpoint` 的 WebSocket 实现，DSL 与注解都生成它，**只有这一种注册形态**：
 
 ```kotlin
-package neton.ws
+package neton.websocket
 
 internal class WebSocketEndpoint(
     // HTTP 参数绑定只在升级前执行，结果是一个连接处理函数。
@@ -617,7 +622,7 @@ annotation class WebSocket(
 | `WebSocketEngineConnection` | 框架运行时（内部） | 读取事件、写出确认、丢弃模式、强制断开、执行上下文 |
 
 ```kotlin
-package neton.ws.spi
+package neton.websocket.spi
 
 typealias WebSocketEngineProviderFactory = () -> WebSocketEngineProvider
 
@@ -938,7 +943,7 @@ enum class HttpCapability {
 
 ### 9.2 一致性套件
 
-仿照现有的 `HttpEngineConformanceSuite`，在 `neton-websocket` 的 `neton.ws.conformance` 包中提供两套测试：
+仿照现有的 `HttpEngineConformanceSuite`，在 `neton-websocket` 的 `neton.websocket.conformance` 包中提供两套测试：
 
 | 套件 | 测试对象 | 内容 |
 |---|---|---|
