@@ -1,7 +1,9 @@
 # Neton WebSocket 规范
 
 2026-10-29 冻结前命名迁移：模块仍为 `neton-websocket`，源码包统一为
-`neton.websocket`（SPI 为 `neton.websocket.spi`）。不存在 `neton-ws` 模块。
+`neton.websocket`（SPI 为 `neton.websocket.spi`）。框架注解为
+`neton.websocket.annotations.WebSocket`，配置为 `neton.websocket.config.WebSocketConfig`，
+避免与底层协议库同名类冲突。不存在 `neton-ws` 模块。
 旧 beta26 使用 `neton.ws`，不回写旧制品；新候选必须同步更新 import、KSP 生成
 引用并重新编译，不能混用新包名与旧框架/KSP。下文示例以新候选包名为准。
 

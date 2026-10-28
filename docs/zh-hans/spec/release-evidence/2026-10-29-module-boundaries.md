@@ -6,6 +6,8 @@
 
 - `neton-websocket` 仍是框架模块，包名统一 `neton.websocket`；KSP 生成的类型名、
   示例、测试、源码目录和编译 ABI 同步。旧 beta26 制品不回写，新旧包名不能混用。
+  框架注解与配置分别放入 `.annotations.WebSocket` / `.config.WebSocketConfig`，
+  避免与底层协议库同名根包类型发生链接/编译歧义。
 - `neton-ai` 连同示例、协议样本和相关提交历史迁至官方独立仓库；`neton.ai` 包名
   保持，独立候选版本 0.1.0-alpha.1，依赖公开 Framework beta26，不再使用兄弟源码。
   AI 的 ABI、实验 API 分类、正负消费者编译、三平台测试由独立 CI 接管。
@@ -42,3 +44,12 @@ AI release workflow 仅手动触发，要求匹配 main SHA、已提交版本和
 等待本次框架提交的完整发布门禁和固定应用 SHA 的三平台候选消费；旧 CI 不代替新证据。
 仅在同一候选验收通过后重新评审 1.0；命名迁移需要消费者重新编译。
 AI/独立适配器的未认证能力不扩张框架支持声明，生产签名和正式版本放行另行确认。
+
+## 独立消费发现的阻塞项
+
+[AI CI 40740198829](https://github.com/netonframework/neton-ai/actions/runs/40740198829)
+的 macOS 和 Windows 通过，但 Linux `linkDebugTestLinuxX64` 失败：HTTP 引入
+`com.netonstream:openssl:4.0.2-3`，Security 的 cryptography-kotlin 预编译 provider
+引入 OpenSSL 3，出现 `ossl_get_openssldir` 等重复符号。移出核心门禁并不解决这个
+框架模块组合问题，不得用允许重复符号、禁用 Linux 或剔除签名测试来伪造通过。
+需要统一加密后端并执行专项回归；未完成前不建议签署 1.0 最终放行。
