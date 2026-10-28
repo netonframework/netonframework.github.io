@@ -92,3 +92,12 @@ Skill manifest 验证通过。加密改动和最终主分支门禁另行记录�
 
 独立 AI 的候选消费 CI 另行记录；适配器迁出并不代表 Geario4k 原型已通过生产一致性
 验收，也不要求其补齐所有能力才放行核心框架。
+
+## 独立 AI 消费进度
+
+AI 提交 `51d419b64556e97271d7d673ac04afbe651ae340` 的
+[AI CI 40747405997](https://github.com/netonframework/neton-ai/actions/runs/40747405997)
+已验证上述固定框架候选的提交和正文摘要；Linux x64、Windows x64 的实际 AI 测试与
+示例链接均通过，原 Linux OpenSSL 重复符号故障在独立消费者中消除。本地候选与发布
+工具共 10 项测试通过。记录时 macOS job 仍排队，尚不能宣称这次独立 AI 全平台 CI
+通过；需以该运行后续结果为准。核心 19 项门禁的成功不替代此项独立验收。
