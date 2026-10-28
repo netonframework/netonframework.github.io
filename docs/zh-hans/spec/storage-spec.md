@@ -71,6 +71,9 @@ val sources = cfg?.get("sources") as? List<Map<String, Any?>>
 
 **fail-fast 规则（仅 storage）**：
 
+只有未提供 storage 配置文件、模块覆盖值和 DSL 源时才允许默认本地源。存在但为空或无效的配置必须失败，不能吞掉异常后改用 `./uploads`。
+文件和 DSL 各自先检查重复名称，再按名称合并；两者之间同名是合法覆盖，同一来源内部同名必须失败。
+
 | 条件 | 行为 |
 |------|------|
 | `sources` 缺失 | fail-fast：`"storage.conf: missing [[sources]]"` |
@@ -160,6 +163,8 @@ interface StorageManager {
 ---
 
 ## 2. StorageOperator 接口（冻结）
+
+凭据配置的默认字符串展示不得输出 accessKey、secretKey；嵌套 StorageConfig 和 copy 后同样适用。该约束不限制显式访问凭据字段用于签名，但禁止将这些字段写入日志。
 
 ```kotlin
 interface StorageOperator {

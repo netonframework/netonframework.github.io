@@ -421,22 +421,14 @@ logger.info("job.skipped", "jobId" to jobId, "fireTime" to fireTime)
 
 ### 5.5 Graceful Shutdown
 
-```kotlin
-override suspend fun shutdown(timeout: Duration) {
-    // 1. 取消调度（停止 delay 循环）
-    scope.coroutineContext[Job]?.cancel()
-    
-    // 2. 等待执行中的任务完成
-    withTimeoutOrNull(timeout) {
-        scope.coroutineContext[Job]?.join()
-    }
-    
-    // 3. 超时后强制取消
-    scope.cancel()
-    
-    logger.info("JobScheduler shutdown complete")
-}
-```
+调度循环与已接受的执行使用不同的 Job 所有者。旧示例先 cancel 共用父 Job，会立即取消执行，不能实现本节承诺，现撤回该示例。
+
+1. 在生命周期互斥区转入 stopping；后续 start/trigger 必须拒绝，重复 shutdown 可安全调用。
+2. 取消调度循环，但不取消已接受的执行。停止接收新的执行子任务。
+3. 在正数、有限的 shutdown timeout 内等待执行完成。正常完成保留 SUCCESS，不伪装成取消。
+4. 超时或 shutdown 调用方取消时，对尚未完成的执行发出协程取消。框架不能强制终止不配合取消的任意业务代码，也不无限等待它。
+
+定时和手动触发都遵守相同的接收边界。取消调度 waiter 不得传播到单独拥有的执行任务。
 
 ### 5.6 手动触发（trigger）
 

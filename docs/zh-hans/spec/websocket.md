@@ -3,9 +3,9 @@
 > **定位**：在 Neton 框架内提供 WebSocket 服务端能力：路由注册、握手安全、会话收发、关闭与停机。
 > 协议本身不在框架内实现，由 `com.netonstream:websocket` 提供；本文只规定**框架如何接入它**。
 >
-> **状态**：**Draft v1 r12，业务契约待实施/验收，API 未冻结**。本次只改规范，不改实现。
-> r12 的 §4、§5.2、§7.3–7.7、§8、§9.2 和 §11.2 是下一轮开发依据；r10/r11 记录仅说明历史实现。
-> 公开签名、生命周期与一致性套件通过本轮验收前，不宣称稳定 API 或生产就绪。
+> **状态**：**v1 r12 业务 API 冻结候选**，最终放行遵循 release-freeze-contract。HandshakeInfo、CloseResult、awaitClosed 和单消费者接口已实施；不再将 r11 的缺口描述为当前实现。
+> `neton.ws.spi` 仍为 ERROR 级实验 API，不随业务 API 冻结。r10/r11 为历史记录。
+> 功能一致性不等于性能认证：§11 的独立压力/性能验收未完成项仍保留，不宣称未经实测的容量或吞吐保证。
 > r2 按评审修订了运行时契约：单一协议读取者（§7.3）、发送顺序与数据所有权（§7.4）、
 > 三类配额（§7.6）、升级中连接的停机（§8.3）、心跳三项配置（§10.2）、性能验收（§11.1）。
 > r3 补充：各层职责划分（§2.5）、消费停滞与写阻塞不冒充心跳失败（§7.3、§7.4）、
@@ -137,16 +137,16 @@ neton-websocket ─→ neton-http ─→ neton-core
 | `Upgraded` 只在 101 写出、该次 HTTP 交换结束后才可用 | `h1/Server.kt:435` | **不得在返回 101 之前等待 `upgradeOn()`**（§7.2） |
 | 默认 `maxMessageSize` 64 MiB、`maxFrameSize` 16 MiB；`sendCloseOnProtocolError = false` | `WebSocketConfig.kt:32-51` | 框架必须覆盖这些默认值（§10.1） |
 
-### 2.4 框架当前状态（本轮文档基线：neton `e53eae0`）
+### 2.4 框架当前状态（复核基线：neton beta26 / `7290d85`）
 
 | 状态 | 位置/后续 |
 |---|---|
 | 有升级路由时使用支持升级的服务入口，保留 extensions 与预读数据 | `DefaultHttpAdapter.kt`，已有真实 TCP/WSS 测试 |
-| Session 当前仍暴露 HttpContext 和共享 Deferred | `WebSocketSession.kt`，按 §4.3 替换 |
+| Session 暴露独立 HandshakeInfo 和 awaitClosed，不暴露 HttpContext/共享 Deferred | HandshakeSnapshotTest、RuntimeTest 的多观察者取消与关闭测试 |
 | handler 固定在 Default，协议操作回连接执行器 | `ManagedWebSocketSession.kt`，功能已运行，性能选择未验收 |
-| 正常关闭排空、payload 预算和非取消关闭异常已修正 | `e53eae0`，但尚无完整 CloseResult |
-| WebSocket Origin 检查在握手前拒绝，而不是依赖 CORS 响应头 | `WebSocketRoutes.kt`；需独立握手快照 |
-| 尚无公开 Handler 对象重载和路由级只推送策略 | 本轮 §4.1、§7.3.2 待实施 |
+| 正常关闭排空、payload 预算、非取消关闭异常及 CloseResult 已实现 | RuntimeTest 覆盖空 Close、强停、排空失败、业务 finally 等待关闭 |
+| Origin 在握手前拒绝，握手参数/身份与 HTTP 请求脱离 | ServerIntegrationTest、HandshakeSnapshotTest |
+| Handler 对象接口和路由级 InboundPolicy 已实现 | WebSocketHandler、BACKPRESSURE/REJECT_DATA/DISCARD_DATA；EngineConformanceTest |
 | 已对齐 `io:0.3.2 / http:0.2.0 / tls:0.2.0`，默认使用相邻源码 composite build；普通 HTTP 性能出口仍需实测 | `neton-http/build.gradle.kts`、`settings.gradle.kts` |
 
 ### 2.5 职责划分：哪些靠配置，哪些要框架实现
@@ -234,7 +234,7 @@ if (useLocalNetonstream) {
 
 ### 4.0 安装与引擎选择
 
-HTTP 与 WebSocket 都采用**固定默认工厂、显式替换**，不依赖 `ServiceLoader`。`neton-http` 提供 `DefaultHttpAdapter`，`neton-websocket` 提供 `DefaultWebSocketEngineProvider`。旧的 HTTP 兜底重载与 Hyper4k 默认重载已移除；第三方不得通过提供同名默认重载来改变选择。路由与运行时已有实现，以下握手快照、Handler 重载和策略参数是 r12 待实施部分：
+HTTP 与 WebSocket 都采用**固定默认工厂、显式替换**，不依赖 `ServiceLoader`。`neton-http` 提供 `DefaultHttpAdapter`，`neton-websocket` 提供 `DefaultWebSocketEngineProvider`。旧的 HTTP 兜底重载与 Hyper4k 默认重载已移除；第三方不得通过提供同名默认重载来改变选择。以下握手快照、Handler 重载和策略参数已实现，实际验收范围以测试与本规范实施记录为准：
 
 ```kotlin
 Neton.run(args) {
@@ -1297,7 +1297,7 @@ maxHandshakeSnapshotBytes = 65536 # r12：复制前限制保留字符串总量�
 **协议一致性**
 - 通过框架 echo 路由跑 Autobahn 服务端测试，结果与独立库一致
 
-**r12 确定性验收（新增，全部是待实施/验证，不是完成声明）**
+**r12 验收清单（逐项以测试证据为准；已有功能测试不代表全部压力场景完成）**
 - 两个 awaitClosed 等待者中取消一个，另一个仍获得最终结果；关闭后重复等待结果相同；公开接口没有可 cancel 的共享 Deferred
 - 修改原请求集合和身份 roles/permissions 不改变快照；尝试修改返回集合不改变内部快照；未列白名单的凭据头不可读取；超限在 101 前失败且配额回滚
 - 身份快照可传给接收 Identity 的函数；六个权限辅助方法均按快照集合返回结果。用重写方法会计数或抛异常的原 Identity 验证：生成快照和调用辅助方法不转发原方法，修改原集合也不改变结果；未认证时 identity 为 null
@@ -1312,7 +1312,7 @@ maxHandshakeSnapshotBytes = 65536 # r12：复制前限制保留字符串总量�
 
 ## 十五、规范依据
 
-### 2026-10-11 实施记录（不等于全部验收）
+### 2026-10-11 历史实施记录（当时状态，不替代 §2.4 当前基线）
 
 - `neton-main-integration` 已实现握手快照、`awaitClosed`、分离的关闭结果、Handler 对象入口及连接级 `connectionId`（原字段 `sessionId` 已更名，不保留混淆语义的别名）。`sessionId` 专指现有认证体系的登录会话；同一登录会话可有多个连接，各自有不同订阅。断线重连产生新的 `connectionId`，不因此新建登录会话；订阅恢复须由业务重新授权，连接 ID 不是认证凭据。
 - `BACKPRESSURE`、`REJECT_DATA`、`DISCARD_DATA` 已接入 DSL、注解生成代码及默认 provider。后两项按路由校验引擎能力，不支持则启动失败。

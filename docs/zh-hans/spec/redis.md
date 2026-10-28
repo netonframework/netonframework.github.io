@@ -69,7 +69,7 @@
 设计要点：
 
 - 只提供「能力」，不提供「实现细节」；`getValue` 返回原始 String，类型化由扩展完成。
-- `set` 的 `value: Any` 由实现侧做字符串序列化（当前 DefaultRedisClient：String/Number/Boolean 直接，其它 `toString()`；若需对象 JSON 往返，可在此处扩展 Json.encodeToString）。
+- `set` 的 `value: Any` 保留字符串转换（其它对象 `toString()`）兼容行为。对象 JSON 往返使用显式的 `setTyped<T>`，不改变历史原始写接口的编码。
 - 不提供 `remember` 在接口层：带类型的「先读缓存再解码」由扩展 `remember&lt;T&gt;` 提供，避免接口与 reified 的冲突。
 
 ### 3.2 RedisPipeline
@@ -80,7 +80,9 @@ DSL 仅用于「排队」：`set`、`delete`、`incr`、`decr`、`hset`、`lpush
 
 - **get(key): String?**：委托 `getValue(key)`，与接口 `getValue` 区分命名，避免与 `get&lt;T&gt;` 递归。
 - **get&lt;T&gt;(key): T?**：`getValue(key)` 非 null 时，按 T 为 String/Int/Long/Double/Float/Boolean 或其它（JSON 反序列化）解码。
-- **remember&lt;T&gt;(key, ttl, block)**：先 `getValue(key)`，能解码为 T 则返回；否则执行 `block()`，再 `set(key, value, ttl)` 并返回。对象类型依赖 JSON；当前实现中 `set` 对非基本类型使用 `toString()`，若需完整 JSON 往返，建议在 DefaultRedisClient.serialize 中对可序列化类型使用 `Json.encodeToString`。
+- **setTyped&lt;T&gt;(key, value, ttl)**：与 `get<T>` 成对。String/Int/Long/Double/Float/Boolean 使用原有字符串形式，其余类型使用编译期 `serializer<T>()` 进行 JSON 编码。
+- **remember&lt;T&gt;(key, ttl, block)**：先 `get<T>`；无法解码视为 miss，执行 block 后用 `setTyped<T>` 写回。旧版以 toString 写入的对象值可按 miss 自动回填。null 不保证被缓存；不承诺 singleflight。loader 异常/取消原样传播且不写缓存。
+- **原始 set(Any)** 保留历史字符串转换语义，不自动改为 JSON；对象缓存必须使用 setTyped/remember。解码失败不输出 key 或可能含原始内容的异常消息。
 
 ---
 
@@ -296,7 +298,7 @@ end
 ### 8.1 Redis 客户端
 
 - **Pipeline**：改用底层驱动的 pipeline API，减少 RTT。
-- **对象 set 序列化**：在 DefaultRedisClient.serialize 中对 `kotlinx.serialization.Serializable` 使用 Json，使 `remember&lt;T&gt;` 与 `get&lt;T&gt;` 对自定义类型形成完整 JSON 往返。
+- **对象往返已收敛**：使用显式 `setTyped<T>` 与 `remember<T>`，不通过运行期反射猜测 `Any` 的 serializer。
 - **健康检查**：可选在 RedisComponent.onStart 中 ping 或暴露健康端点。
 - **指标**：可选对 get/set/delete/pipeline 做简单计数或延迟统计（不改变现有 API）。
 

@@ -3,7 +3,7 @@
 > **定位**：模块间解耦的进程内事件总线。事件由**发生方所在模块**定义，消费方订阅；发生方不需要认识任何消费方。需要脱离主流程的监听者可声明持久化投递，由事务性 outbox 落库后异步重试。
 >
 > **状态**：
-> - **框架契约：冻结**。`DomainEvent` / `DomainEventListener` / `DomainEventBus` / `DomainEventStore` / `DomainEventCodec` 在 neton-core，语义见二至六节；框架不选载体、不依赖数据库、不依赖序列化库。
+> - **框架契约：冻结候选，按 1.0 发布冻结契约验收**。事件端口与总线在 neton-core，不依赖数据库。可显式选择 `SerializerDomainEventCodec` 作为 kotlinx.serialization JSON 实现；总线本身不强制选用它。
 > - **PostgreSQL 存储契约：冻结**。参考实现在应用层 infra，由真实 PostgreSQL 契约测试守着（9.1）。
 > - **`RETRYABLE` 生产就绪：运维面已建立**（第八节）。参考实现具备终态失败出口、积压指标与告警、清理任务、配置接入，且全部在真实 PostgreSQL 上验证。可用于资金链路，前提仍是**监听者幂等**。
 >
@@ -18,7 +18,7 @@
 | **发生方不认识消费方** | 事件定义在发生方模块，消费方订阅。这是它优于「直接回调某个业务端口」的地方：端口只能有一个实现，第二个消费方接入就得挤进第一方的实现里做分流，那个实现于是退化成认识所有下游的中央调度器。 |
 | **默认同步同事务** | 发布点通常已在数据库事务中，同步派发让消费方的写入并入同一事务。改为异步就变成最终一致，需要额外自建重试与幂等，且中间存在「发布方已生效、消费方尚未生效」的可观察窗口。 |
 | **代价由需要的人付** | 真的需要脱离主流程的监听者声明 `RETRYABLE`，走 outbox；其余监听者不为此付出任何复杂度。 |
-| **框架只定义端口，实现禁止进框架** | 用什么载体投递（数据库 / 线程 / 中间件）是应用层的选择。core 不依赖数据库、不依赖序列化库，无持久化设施时框架仍可运行。**这是硬规则**：`DomainEventStore` 的任何实现、outbox 表与迁移、投递器、调度任务、运维接口，一律不得出现在 Neton 框架仓库，见第十二节。 |
+| **持久化实现不进框架** | 用什么载体投递由应用层选择。core 不依赖数据库；JSON codec 是显式可选工具，不携带应用事件清单，也不自动装配。`DomainEventStore` 实现、outbox 表与迁移、投递器、调度任务、运维接口仍不得进入框架仓库。 |
 | **装配期可变，服务期只读** | 监听者与持久化设施只在启动阶段登记，`seal()` 之后总线只读。运行期请求跑在多线程调度器上，一边遍历一边增删是数据竞争，而它表现出来的样子（偶发漏投递）极难定位。 |
 | **配置错误在启动期暴露** | 声明了 `RETRYABLE` 却没装持久化设施，是装配遗漏而不是可降级的情况，`seal()` 直接失败。运行期静默降级会把「至少一次」变成「至多一次」，且把外部调用拖进主事务——恰好是声明该模式的人最想避免的两件事。 |
 
@@ -134,6 +134,9 @@ bind(NetonContext) → bind(DomainEventBus) → 组件 init → 模块 init → 
 1. 转只读。此后 `register` / `attachStore` 抛错。
 2. 校验 `listenerId`：空白或重复都**启动失败**。重复时 `listenerOf` 只会命中第一个，后注册者的积压事件永远投给别人——静默地。
 3. 校验：存在 `RETRYABLE` 监听者时，必须已 `attachStore`，否则**启动失败**并指名是哪个监听者、缺什么。
+4. 调用已装配 codec 的 `seal()`，成功后总线才进入 sealed 状态。无状态 codec 可以沿用默认空实现；可变 codec 必须在 seal 后拒绝注册。
+
+`SerializerDomainEventCodec` 的重复注册必须先校验后修改；冲突失败保留旧 serializer。`registered()` 返回快照而非 backing map 的动态视图。登记只允许单线程启动装配；运行期并发只读，不提供热注册。封印失败必须阻止启动。
 
 ---
 
@@ -159,6 +162,7 @@ interface DomainEventStore {
 }
 
 interface DomainEventCodec {
+    fun seal() {} // 无状态实现兼容；可变注册表必须覆盖并封印
     fun encode(event: DomainEvent): String?
     fun decode(eventType: String, payload: String): DomainEvent?
 }
@@ -452,7 +456,7 @@ P1 已完成，`RETRYABLE` 可承载关键业务；剩余阶段是能力扩展�
 
 | 层 | 允许 | 禁止 |
 |---|---|---|
-| **neton-core** | `DomainEvent` / `DomainEventListener` / `DeliveryMode` / `DomainEventBus` / `DomainEventStore` / `DomainEventCodec` 契约；进程内派发；启动期绑定与 `seal()` | 任何 `DomainEventStore` 实现；任何序列化选型；任何数据库引用 |
+| **neton-core** | 事件端口、进程内派发、启动期绑定与 seal；显式可选的 SerializerDomainEventCodec | 任何 DomainEventStore 实现；强制应用选择 JSON；应用事件清单；任何数据库引用 |
 | **neton-database** | 通用数据库能力（如 `inTransaction()`） | 任何带事件语义的代码 |
 | **neton-ksp** | 通用生成器（如从 `@Serializable` 事件生成 codec） | 生成物落在框架里；框架内的事件注册表 |
 | **应用 infra 模块** | outbox 表与迁移、`DomainEventStore` 实现、投递器、调度任务、配置、指标、告警、管理接口、**真实数据库集成测试** | — |
