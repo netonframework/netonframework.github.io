@@ -18,13 +18,63 @@ No private product or proprietary service is a mandatory dependency of a Neton r
 3. Windows `mingwX64` Core tests pass on a Windows runner.
 4. A documented, publicly reproducible reference integration application compiles against the candidate.
 5. A release binary passes migration `status` and `verify` against an isolated database.
-6. The release binary completes two READY, HTTP health check and SIGTERM cycles.
+6. The release binary completes two READY, HTTP health check and graceful-stop cycles
+   (`SIGTERM` on POSIX, targeted `CTRL_BREAK_EVENT` on Windows).
 7. After shutdown, the HTTP port is closed and application database connections return to zero.
 8. Gradle emits no Gradle 9 deprecation warning.
 9. KSP AWT shutdown noise remains documented and non-blocking; any task failure, missing generated
    source, no-clean instability or CI flake promotes it to a release blocker.
 
-## Reference integration smoke contract
+## 1.0 completion gates beyond R0
+
+R0 evidence is retained as a historical baseline, not a claim that all 1.0 work is complete.
+The following gates must close in order before stable publication; adding a workflow is not
+evidence that it passed.
+
+1. **Compiled API/ABI baseline.** Every published Kotlin library, including the KSP JVM
+   artifact, has a checked-in dump produced by the candidate's Kotlin ABI tool. The BOM has
+   no executable ABI; its constraints belong to artifact validation. The experimental
+   `neton-http-geario4k` adapter remains unpublished and outside the stable baseline.
+   CI compares compiled outputs with committed dumps and never updates them. Missing dumps
+   and ABI differences fail. Baseline changes require explicit review of public signatures,
+   platform differences and accidental implementation exposure. An initial generated dump
+   is a **candidate** baseline, not approval to freeze every currently public declaration.
+   Native target inference is not evidence that a foreign-target binary ran successfully.
+2. **KSP incremental Native acceptance.** The public `examples/ksp-incremental` fixture runs
+   for macOS ARM64, Linux x64/ARM64 and Windows x64 (the database target set).
+   Compilation uses a Kotlin/Native-supported host. Linux ARM64 uses a Linux x64
+   cross-build followed by a separate ARM64 native execution job verifying candidate SHA
+   and all five binary hashes; cross-build success alone leaves acceptance pending.
+   In one output tree it builds clean, builds unchanged, adds an entity, changes its column,
+   then deletes it, without cleaning between stages. Each stage compiles and links a Native
+   executable that references generated APIs, and runs that executable. Assertions reject
+   missing generated tables, stale column mappings, deleted symbols in aggregate registries,
+   driver imports, and changed no-op generated output. Logs, source revision, target and
+   stage results are retained even on failure. These tests complement, not replace, KSP
+   diagnostics and module/controller contract tests.
+3. **Full native reference runtime.** Run the release reference build, migration and two-cycle
+   resource-release contract on macOS, Linux and Windows. Windows must use a documented native
+   graceful console-control mechanism; `TerminateProcess`/forced termination is never graceful
+   shutdown evidence. Preserve the R0 macOS results without relabeling them as multi-platform.
+4. **Candidate artifacts.** Build the candidate publications without source substitution,
+   validate publication inventory, POM/module metadata, BOM constraints and signatures, then
+   compile a clean external consumer with the candidate artifacts and released dependencies.
+   This staging rehearsal performs no remote upload, publication or release tagging.
+   Maven Central-only verification after publication is a separate later step.
+   The rehearsal uses an isolated Gradle home and an ephemeral signing key, never a
+   developer or production key. Retain the public key and fingerprint with evidence;
+   cryptographic verification must bind every payload to that key. This proves signing
+   mechanics, not approval of the production signing identity. The repository must have
+   exactly the expected coordinates, one candidate version, matching checksums and local
+   metadata references. The independent consumer must not use source substitution or
+   Maven Local, and must resolve the database version through the entry module's BOM.
+   Run migrations and both lifecycle cycles against its release executable as well.
+
+The baseline and candidate-artifact gates must identify which published targets and database
+driver variants were actually checked. Missing targets/variants remain unverified, not inferred
+from another target or quietly dropped to make the aggregate pass.
+
+## Reference integration smoke contract (R0)
 
 The candidate manifest must identify the public fixture repository/path, immutable revisions,
 build command, native target and smoke command. The fixture must exercise module assembly,
@@ -40,7 +90,8 @@ The fixture must:
   production data, production services or implicit developer credentials.
 - Apply migrations and verify clean status: no pending, changed or failed migrations.
 - Run two process cycles. Each must reach READY, remain healthy for at least 60 seconds, answer an
-  HTTP health request and exit with code zero within 30 seconds of SIGTERM.
+  HTTP health request and exit with code zero within 30 seconds of the platform graceful-stop
+  signal (`SIGTERM` or targeted Windows `CTRL_BREAK_EVENT`).
 - Require the HTTP port to be closed and database connections to be zero **before teardown**.
   For PostgreSQL, inspect `pg_stat_activity` through a maintenance database; forced database deletion
   is not proof of resource release. Query failures and malformed results fail closed.
@@ -81,11 +132,14 @@ PostgreSQL version, build/smoke commands, binary SHA-256, migration results and 
 observations. `passed` describes this fixture only, not an assertion of every 1.0 requirement.
 Failed runs retain `passed: false` and their logs; reruns do not erase the original failures.
 
-Backend CI runs `Reference release (macosArm64)` and retains its evidence under the candidate
-commit. `Neton release gates` requires it together with macOS framework tests, Linux/Windows
-native Core tests, PostgreSQL and Redis contracts on that same commit. Failed or skipped
-prerequisites fail the aggregate. The fixture baseline is macOS ARM64: it does not claim full
-Linux/Windows application-runtime acceptance, nor replace Maven Central consumer verification.
+Backend CI's expanded `Reference release` matrix requires `macosArm64`, `linuxX64` and `mingwX64`,
+using published dependencies without source substitution. Each target retains its own evidence
+under the candidate commit. `Neton release gates` requires it together with framework tests,
+native Core tests, PostgreSQL, Redis, ABI, KSP incremental contracts and the signed local
+candidate-artifact rehearsal on that same commit.
+Failed or skipped prerequisites fail the aggregate. The historical R0 macOS-only evidence
+does not satisfy the expanded matrix. New platform jobs remain unverified until their actual
+evidence passes. This matrix does not replace candidate-publication/Maven Central verification.
 No publishing or product deployment is performed by this gate.
 
 Candidate results are recorded separately from normative requirements. See the

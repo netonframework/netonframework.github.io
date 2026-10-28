@@ -122,11 +122,23 @@ Shutdown is idempotent and follows this order:
 
 Every stop failure is structured and observable, but best-effort cleanup continues.
 
-On Native targets, Core installs process-wide `SIGINT` and `SIGTERM` handlers immediately before
+On POSIX Native targets, Core installs process-wide `SIGINT` and `SIGTERM` handlers immediately before
 HTTP startup. The C handler only sets a `sig_atomic_t` flag; a Kotlin coroutine observes the flag
 and stops the active adapter. Signal handling therefore enters the same ordered shutdown path and
 never invokes Kotlin or suspend code from the asynchronous signal callback. Neton restores the
 host process's previous handlers after shutdown, including failed and repeated startup attempts.
+
+On Windows, Core additionally registers a console-control handler for `CTRL_C_EVENT` and
+`CTRL_BREAK_EVENT`. It only sets an interlocked flag; Kotlin observes it through the same
+ordered shutdown path. Registration failure aborts startup and rolls back installed handlers.
+Repeated installation must not erase an already requested shutdown. Reset removes Core's
+handler and restores the previous CRT signal handlers. Console close/logoff and Windows Service
+Control Manager stop events are not claimed by this console-process contract.
+
+Windows release acceptance creates a dedicated process group and sends `CTRL_BREAK_EVENT`
+to that group only. It must not broadcast to group zero or call `TerminateProcess` and count
+forced cleanup as graceful shutdown. A runner without a console may allocate one owned by
+the test harness and release it after its child processes finish.
 
 ## 8. Hooks
 
