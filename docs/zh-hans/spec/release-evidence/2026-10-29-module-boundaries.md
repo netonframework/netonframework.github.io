@@ -101,3 +101,51 @@ AI 提交 `51d419b64556e97271d7d673ac04afbe651ae340` 的
 示例链接均通过，原 Linux OpenSSL 重复符号故障在独立消费者中消除。本地候选与发布
 工具共 10 项测试通过。记录时 macOS job 仍排队，尚不能宣称这次独立 AI 全平台 CI
 通过；需以该运行后续结果为准。核心 19 项门禁的成功不替代此项独立验收。
+
+## 独立 AI 最终验收（2026-10-29）
+
+上述 [AI CI 40747405997，attempt 2](https://github.com/netonframework/neton-ai/actions/runs/40747405997/attempts/2)
+在同一提交 `51d419b64556e97271d7d673ac04afbe651ae340` 上全部通过：固定框架候选
+校验、macOS ARM64 / Linux x64 / Windows x64 原生测试与示例链接，以及最终 AI gates。
+macOS 的完整 ABI 与 opt-in 边界检查也通过；该检查按工作流设计仅在 macOS 执行，
+其他平台的 skipped 不代表在那里执行了 ABI 检查。
+
+第一次运行的 macOS 没有执行任何代码：GitHub 注明 hosted runner 获取失败及 macOS
+ARM64 容量不足。维护者重跑后成功，本轮没有为基础设施排队问题修改源码或跳过测试。
+本机补充 AI 构建因宿主负载过高主动停止，不计作成功；最终证据来自上述实际 CI。
+
+## 运行时 HTTP 路径复核
+
+范围为上述框架候选、独立 AI 提交和公开 neton-app 固定提交；不把任意业务 fork、
+第三方注入实现或独立兼容适配器纳入“官方默认客户端”的承诺。
+
+- 默认链路：`HttpClient.create` → `createDefaultHttpClient` →
+  `createNetonStreamHttpClient` → 自有协议库 `Client` + `ClientConnector` →
+  `neton.io.net.connect`；HTTPS 使用自有 `neton.tls.tlsConnect` 和 OpenSSL 封装。
+- AI 的模型请求、SSE、多媒体、Google token 获取、MCP 流及会话删除均使用注入的
+  `neton.http.client.HttpClient`。超时包装仍委托同一个客户端，没有引入供应商 SDK
+  自带的 HTTP 栈。示例通过默认工厂创建并负责关闭客户端。
+- Storage S3 请求及流式传输使用同一 HTTP 抽象；公开 neton-app 安装默认 HTTP
+  组件。所核查生产源码及依赖中未发现 Ktor Client、OkHttp、Apache HTTP、
+  URLSession 或 libcurl 等外部 HTTP 客户端路径。
+- `MediaResolver` 的下载器、`JwksFetcher` 及实时通道仍是宿主提供的扩展契约，
+  不是隐藏的第二套 HTTP 实现；官方实现必须遵循 HTTP 引擎规范。不能由此声称
+  任意第三方扩展都已完成网络实现审计。
+
+除源码检查外，还通过 `tools/framework_candidate.py` 验证并下载同一固定候选，执行：
+
+```sh
+./gradlew --no-daemon -Pneton.repository=/tmp/neton-ai-http-audit-934764f/repository \
+  :neton-ai:dependencies --configuration macosArm64CompileKlibraries
+```
+
+依赖解析成功：`com.netonstream:http:0.3.0`、`io:0.4.1`、`tls:0.3.0`，HTTP/TLS
+和 Security 使用同一 `openssl:4.0.2-3`。候选 HTTP 模块的 POM/Gradle metadata
+也未发现外部 HTTP 客户端坐标。这里不承诺“零第三方基础依赖”：Kotlin 协程、序列化
+及 OpenSSL 本身仍是正常依赖。CI 中的 gh/curl/Gradle 制品下载属于构建工具，不是
+服务运行时 HTTP 路径；外迁的显式可选适配器也不属于核心默认栈。
+
+**最终复评**：本轮独立 AI 三平台消费验证消除了此前待确认项，未发现新的核心 1.0
+技术门禁阻塞。核心候选及公开参考应用的基线不变，发布范围继续遵循冻结契约。
+仍需正式发布时确认版本、生产签名身份和发布说明；Central 发布后的消费复验必须
+在发布后执行。本轮仅补充验收记录，不创建发布标签、不发布或暂存正式制品。
