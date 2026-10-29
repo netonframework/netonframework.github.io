@@ -1,6 +1,7 @@
 # Neton 1.0.0 正式发布准备
 
-状态：1.0.0 已发布，全部公开制品与独立数据库消费验收通过；模板及收尾主分支 CI 待最终确认。
+状态：1.0.0 已发布，全部公开制品与独立数据库消费验收通过，模板及收尾框架主分支 CI 全部通过。
+GitHub Release 页面及附件仍因令牌写权限不足待创建；Maven Central 正式发布与标签已完成。
 维护者已授权正式发布及公开消费复验。以下首轮进度作为历史保留，以末节的新证据为准。
 
 ## 版本及依赖
@@ -112,5 +113,18 @@ Maven Central 发布不受该权限问题影响。
 更新器选择正式版且不回退预览版，不跨未批准的版本线；7 项更新器测试及 4 项启停工具测试通过。
 [模板三平台公开消费 CI](https://github.com/netonframework/neton-app/actions/runs/40832617091)
 和收尾框架提交 `b8a017879b708638ac48d834d9812c1ee91c5abb` 的
-[主分支 CI](https://github.com/netonframework/neton/actions/runs/40832760598) 结果待最终确认。
+[主分支 CI](https://github.com/netonframework/neton/actions/runs/40832760598) 均已通过。
 收尾提交只更新 changelog、冻结状态与模板 pin，不改变已发布制品或移动发布标签。
+
+## 收尾确认
+
+- 框架 `b8a0178`：完整主分支门禁全部通过，包括更新后的公开模板候选消费。
+- 模板 `a03d7be`：macOS ARM64、Linux x64、Windows x64 直接从公开 Central 获取 1.0.0，
+  release 构建及两轮运行全部通过。push 事件不运行自动升级 PR job，是预期条件分支，
+  不属于缺失的发布验收。
+- 模板更新器对真实 Central metadata 检查得到 `Current: 1.0.0; latest shared release: 1.0.0`。
+- 文档发布说明和机器证据提交 `58584de` 的网站构建、secret-scan 均通过。
+  本节记录提交随后继续由同一文档 CI 检查。
+- GitHub Release API 创建返回 403；隐藏浏览器没有已有登录态，已关闭，未代填凭据。
+  维护者可以为已存在的 `v1.0.0` 标签创建正式 Release，或补充当前认证的 Contents 写权限。
+  不重复发布 Maven Central，也不移动标签；创建页面后再附上本目录的三份机器证据。
