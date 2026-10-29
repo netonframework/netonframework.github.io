@@ -1,7 +1,7 @@
 # Neton 1.0.0 正式发布准备
 
 状态：1.0.0 已发布，全部公开制品与独立数据库消费验收通过，模板及收尾框架主分支 CI 全部通过。
-GitHub Release 页面及附件仍因令牌写权限不足待创建；Maven Central 正式发布与标签已完成。
+GitHub Release and all three evidence attachments are now published; Maven Central publication and the original tag are unchanged.
 维护者已授权正式发布及公开消费复验。以下首轮进度作为历史保留，以末节的新证据为准。
 
 ## 版本及依赖
@@ -128,3 +128,24 @@ Maven Central 发布不受该权限问题影响。
 - GitHub Release API 创建返回 403；隐藏浏览器没有已有登录态，已关闭，未代填凭据。
   维护者可以为已存在的 `v1.0.0` 标签创建正式 Release，或补充当前认证的 Contents 写权限。
   不重复发布 Maven Central，也不移动标签；创建页面后再附上本目录的三份机器证据。
+
+## GitHub Release completed — October 29, 2026
+
+The maintainer authorized publication using the existing Firefox session. The stable
+[Neton Framework 1.0.0 Release](https://github.com/netonframework/neton/releases/tag/v1.0.0)
+is now public, neither a draft nor a prerelease, and is marked Latest. Its existing
+`v1.0.0` tag still resolves to `e7a78204854464326ca878414968a96f4bdb2575`.
+
+The title and complete cumulative feature overview are English-only. The body was
+checked against the prepared source, including migration guidance, module boundaries,
+experimental SPI exclusions and platform-specific acceptance scope. A maintained copy
+is at [Complete Release Notes](../../../releases/1.0.0-github.md).
+
+All three machine-readable evidence files are attached: production manifest, public
+artifact verification and Central-only database runtime. Downloading them from the
+published Release confirmed byte-for-byte equality with the approved evidence files.
+The documentation site build and whitespace checks passed locally. This resolves the historical
+403 blocker above without changing credentials, generating a token, moving the tag or
+republishing Maven artifacts. The existing personal token's resource owner was the
+individual account, not the organization; adding Contents permission alone would not
+have changed that repository scope.
