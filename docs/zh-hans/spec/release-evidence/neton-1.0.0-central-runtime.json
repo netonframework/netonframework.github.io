@@ -1,0 +1,70 @@
+{
+  "passed": true,
+  "version": "1.0.0",
+  "source": "Maven Central only",
+  "frameworkRevision": "e7a78204854464326ca878414968a96f4bdb2575",
+  "target": "macosArm64",
+  "binarySha256": "2e1026d7d1bdae5bba2a634b103a00493646ff287d09889a00dde9e91daab433",
+  "migrations": [
+    {
+      "command": "up",
+      "exitCode": 0,
+      "connectionsAfterExit": 0
+    },
+    {
+      "command": "up",
+      "exitCode": 0,
+      "connectionsAfterExit": 0
+    },
+    {
+      "command": "status",
+      "exitCode": 0,
+      "connectionsAfterExit": 0
+    },
+    {
+      "command": "verify",
+      "exitCode": 0,
+      "connectionsAfterExit": 0
+    }
+  ],
+  "cycles": [
+    {
+      "exitCode": 0,
+      "shutdownSeconds": 0.14412958297180012,
+      "portClosed": true,
+      "databaseConnections": 0,
+      "observedBeforeTeardown": true,
+      "shutdownSignal": "SIGTERM",
+      "cycle": 1,
+      "healthySeconds": 60.12691683403682,
+      "health": {
+        "code": 0,
+        "message": "OK",
+        "data": {
+          "status": "READY",
+          "value": "neton-reference"
+        }
+      },
+      "connectionsWhileServing": 1
+    },
+    {
+      "exitCode": 0,
+      "shutdownSeconds": 0.0836284999968484,
+      "portClosed": true,
+      "databaseConnections": 0,
+      "observedBeforeTeardown": true,
+      "shutdownSignal": "SIGTERM",
+      "cycle": 2,
+      "healthySeconds": 61.00840279099066,
+      "health": {
+        "code": 0,
+        "message": "OK",
+        "data": {
+          "status": "READY",
+          "value": "neton-reference"
+        }
+      },
+      "connectionsWhileServing": 1
+    }
+  ]
+}

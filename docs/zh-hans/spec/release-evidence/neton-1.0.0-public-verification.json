@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "source": "https://repo.maven.apache.org/maven2/",
+  "revision": "e7a78204854464326ca878414968a96f4bdb2575",
+  "version": "1.0.0",
+  "coordinates": 79,
+  "verifiedPayloads": 345,
+  "signaturesMatchApprovedProductionKey": true,
+  "fingerprint": "AA93E367430D0F9FC4CCB7AB4EC1381BAA4F649B"
+}

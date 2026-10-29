@@ -1,6 +1,6 @@
 # Neton 1.0.0 正式发布准备
 
-状态：发布前门禁已全部通过；Central 已返回 PUBLISHED，公开 POM 可下载。公开消费验收进行中。
+状态：1.0.0 已发布，全部公开制品与独立数据库消费验收通过；模板及收尾主分支 CI 待最终确认。
 维护者已授权正式发布及公开消费复验。以下首轮进度作为历史保留，以末节的新证据为准。
 
 ## 版本及依赖
@@ -79,3 +79,38 @@ Central deployment ID：`7e302f24-1e16-476d-bd64-3e17afbd5475`。
 当前 `PUBLISHING` 尚不等于公开仓库同步完成，不能提前宣布公开消费通过。
 Central 提醒组织月度配额已达到限额，但处于截至 2026-11-02 的发布宽限期；
 本次验证成功，不涉及付费升级或绕过配额。
+
+## 正式发布与公开消费结果
+
+Central 已返回 `PUBLISHED`，公开仓库可获取全部正式制品。发布后的状态响应另带
+`Deployment components info not found` 元数据查询提示；因此未仅依赖 Portal 状态下结论，
+而是从 `https://repo.maven.apache.org/maven2/` 实际下载并逐项验证：
+
+- 全部 79 个坐标、345 个正文文件大小与 SHA-256 均匹配生产清单。
+- 所有公开 `.asc` 签名与已核验生产签名逐字节一致。
+- 首次下载曾远端断连；重试过程中另有两次超时，限次重试后全部成功，没有跳过任何文件。
+  本机 pyenv Python 的无关 BLAKE2 初始化异常不计成功依据；最终完整核验使用 Python 3.12。
+
+独立 macOS ARM64 消费项目只配置 Maven Central，使用新的 Gradle home，不使用 Maven Local、
+候选文件仓库或源码替换。来自发布源码的通用数据库参考应用完成两次 release 构建，
+并显式执行 `up`、重复 `up`、`status`、`verify`，均退出 0、迁移命令退出后连接为 0。
+
+- 二进制 SHA-256：`2e1026d7d1bdae5bba2a634b103a00493646ff287d09889a00dde9e91daab433`。
+- 第一轮健康 60.13 秒，SIGTERM 后约 0.144 秒正常退出；端口关闭，数据库连接 0。
+- 第二轮健康 61.01 秒，SIGTERM 后约 0.084 秒正常退出；端口关闭，数据库连接 0。
+- 两轮服务期间均实际观测到数据库连接；归零在数据库清理前确认，不以强制清理冒充释放。
+
+机器证据：[生产清单](./neton-1.0.0-production-manifest.json)、
+[公开文件验证](./neton-1.0.0-public-verification.json)、
+[公开数据库消费](./neton-1.0.0-central-runtime.json)。
+
+`v1.0.0` 标签已推送，绑定实际制品源码 `e7a7820`。GitHub Release 创建返回 403，
+当前令牌缺少写权限，已请求维护者补充权限或网页创建；不把标签存在等同于 Release 页面已创建。
+Maven Central 发布不受该权限问题影响。
+
+公开模板更新为 `a03d7bec9d58b51dde980b34e4f291d44eac3012`：默认 1.0.0、serialization 1.12.0，
+更新器选择正式版且不回退预览版，不跨未批准的版本线；7 项更新器测试及 4 项启停工具测试通过。
+[模板三平台公开消费 CI](https://github.com/netonframework/neton-app/actions/runs/40832617091)
+和收尾框架提交 `b8a017879b708638ac48d834d9812c1ee91c5abb` 的
+[主分支 CI](https://github.com/netonframework/neton/actions/runs/40832760598) 结果待最终确认。
+收尾提交只更新 changelog、冻结状态与模板 pin，不改变已发布制品或移动发布标签。
