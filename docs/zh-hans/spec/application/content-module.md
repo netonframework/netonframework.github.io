@@ -312,6 +312,7 @@ draft ──提交──► pending ──通过──► published ──撤回
 - **编辑锁**（延后）：打开编辑时加锁（带心跳），别人打开时提示「xx 正在编辑」，可强制接管。
 - **审核**：类型或栏目要求审核时走 pending；通过、驳回（附原因）、下线都写 `content_review_logs`。审核策略可替换：`ContentPublishPolicy` 决定某次提交是否免审（`REVIEW` / `PUBLISH`）；查找顺序是 `ContentPublishPolicies` 里按 producer 登记的规则 → 上下文里绑定的整体策略 → 内置规则（类型或主栏目要求审核时待审，否则直接发布）。终端用户投稿一律待审，不经过策略。
 - **保留**（审核保留原因）：外部写入方可以给某一版附上 `contract.core.ReviewHold`（机器码 + 证据，如 promotion 的 `CONTENT_COMMERCIAL_SUSPECTED`），存在版本上（`content_revisions.holds`）。**有保留原因的版本提交时一律待审**，写入方登记的发布策略、整体策略都不能放行，后台「发布」按钮也拒绝（`REVIEW_REQUIRED`）；编辑看过后照常通过或驳回，保留原因留作审计。写入方每次写入替换上一版的保留原因（空 = 不保留）；后台编辑、回滚产生的新版本沿用当前未上线版本的保留原因（编辑改过的稿件仍要审核通过）。后台列表带 `holdCodes`，编辑视图带 `holds`（含证据，供高亮），队列 `queue=held` 列出有保留原因、尚未上线的版本。
+- **保留原因消失后的自动复核**（2026-10-28）：待审**只因**写入方的保留原因的内容，写入方再次交付、这一版不再带保留原因时（例如联盟转链后来启用了，promotion 把商品链接转成了托管链接），保存后**重新跑写入方的发布策略**：通过就发布（审核日志 `hold_cleared` → `auto_approve`；已上线内容的待审新版本是 `hold_cleared` → `submit_revision` → `auto_approve_revision`），策略要求审核就留在普通待审（只记 `hold_cleared`，不再出现在 `held` 队列）。**编辑已经接手这一轮审核的内容永不自动变化**：内容在审核中（待审、版本级待审）或这一轮被驳回，且最近一次提交之后编辑驳回过、改过稿（当前版本由后台保存）或明确「保留待审」过（`POST /admin/content/item/keep/{id}`，审核日志 `keep`，只对带保留原因的待审提供），写入方的再次交付**不应用**（不产生新版本、不改状态），只记一条 `redelivery_skipped`（连续多次只记一次）。编辑通过、上线即结束这一轮，之后的交付照常按发布策略走。真库测试 `ContentHoldsDbTest`。
 - **定时**：定时发布、定时下线由 neton-jobs 任务 `content-schedule`（每分钟，单节点）扫描执行；定时下线进入 `withdrawn`。
 - **删除**：进回收站（`trash`），可恢复到进入前的状态；彻底删除（purge）P1 由后台手动执行，保留期后自动清理延后。
 - **归档**：只能从 `withdrawn` 归档。
