@@ -29,7 +29,8 @@ HTTP 状态由框架按类别推导（客户端只看 body 的 `code`：凭据�
 | `INVALID_REFRESH_TOKEN_SUBJECT` | INVALID_TOKEN | 内置身份后端：令牌主体不是账号 id | — |
 | `REFRESH_TOKEN_EXPIRED` | REFRESH_TOKEN_EXPIRED | 内置身份后端：刷新令牌过期 / 会话记录已不存在 | — |
 | `REFRESH_TOKEN_REVOKED` | REFRESH_TOKEN_REVOKED | 内置身份后端：会话已撤销（退出、改密、注销） | — |
-| `DEVICE_ID_REQUIRED` | MISSING_REQUIRED_PARAM | 刷新令牌没带 `deviceId` | `deviceId` |
+| `DEVICE_ID_REQUIRED` | MISSING_REQUIRED_PARAM | 登录（密码 / 短信 / 用户名 / 社交 / 扫码签发）、注册没带 `device.deviceId`；刷新令牌没带 `deviceId`。服务端不再代生成设备标识 | 登录 / 注册 `device.deviceId`；刷新 `deviceId` |
+| `INVALID_DEVICE_ID` | INVALID_PARAMS | 设备标识不是小写带连字符的 UUID v4（`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`）：客户端首次用安全随机数生成并持久化，之后重启 / 升级 / 重新登录都不变；服务端不做大小写或格式归一 | 同上 |
 | `INVALID_MOBILE` | INVALID_PARAMS | 手机号不是 E.164（`+` + 国家码 + 号码，如 `+8615000000000`）：登录、短信登录、发码、换绑、找回密码；注册流程绑定时号码为空；后台编辑手机号格式不对 | `mobile` |
 | `MOBILE_IN_USE` | RESOURCE_ALREADY_EXISTS | 换绑手机（发码时与提交时各查一次）：号码已属于另一个账号 | `mobile` |
 | `MOBILE_ALREADY_BOUND` | OPERATION_CONFLICT | 注册流程免验证绑定手机号：当前账号已绑过（改号走带验证码的换绑） | — |
