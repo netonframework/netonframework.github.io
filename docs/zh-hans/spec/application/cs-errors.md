@@ -23,7 +23,8 @@ cs（客服：组织开通 / 坐席 / 访客进线 / 会话路由 / 审核 / 订
 | `PAID_EXPIRED` | CsErrorCode.PAID_EXPIRED (23005) | 进线：付费已到期，不接新访客 | — |
 | `INTAKE_RATE_LIMITED` | RATE_LIMIT_EXCEEDED | 匿名进线按 IP 限流（`@RateLimit` 的 message） | — |
 | `DEVICE_ID_REQUIRED` | MISSING_REQUIRED_PARAM | 访客进线 deviceId 为空 | `deviceId` |
-| `FIELD_TOO_LONG` | INVALID_PARAMS | 访客进线入参超长（deviceId 128 / displayName 64 / externalUserId 128 / contextJson 4096） | 对应字段 |
+| `INVALID_DEVICE_ID` | INVALID_PARAMS | 访客进线 deviceId 不是小写带连字符的 UUID v4（widget 每个浏览器生成一次并持久化，原样用作 IM 设备号，服务端不派生、不规范化） | `deviceId` |
+| `FIELD_TOO_LONG` | INVALID_PARAMS | 访客进线入参超长（displayName 64 / externalUserId 128 / contextJson 4096） | 对应字段 |
 | `CUSTOMER_NOT_FOUND` | RESOURCE_NOT_FOUND | 进线后会话指向的顾客记录缺失 | — |
 | `NO_ORGANIZATION` | CsErrorCode.NO_ORGANIZATION (23010) | 工作台：当前账号不属于任何组织，或同属多个未指定（前端据此进入开通引导） | — |
 | `OWNER_REQUIRED` | CsErrorCode.OWNER_REQUIRED (23011) | 工作台：仅组织所有者可执行 | — |
