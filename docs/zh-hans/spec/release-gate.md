@@ -32,6 +32,15 @@ Mandatory checks added to the existing aggregate gate:
    queued payloads; shared shutdown reclaims all blocked sessions. Missing,
    skipped, duplicated or failed required cases fail acceptance.
 
+   Kotlin/Native does not support a Linux ARM64 compiler host in the pinned
+   toolchain. Build ARM64 test executables on Linux x64, then transfer them to a
+   native ARM64 runner. Require the same candidate SHA and baseline digest, clean
+   build inputs, executable SHA-256 and ARM64 ELF identity before execution.
+   The native execution job must run both full suites and verify their complete
+   test summaries and required WebSocket contracts. Cross-compilation alone is
+   never an ARM64 pass; both build and native execution jobs are required by the
+   release aggregate. Retain binary manifests, raw logs and native test reports.
+
 Root metadata checks prove publication identity and availability only. They do
 not verify every platform binary, production signature or runtime. Existing
 signed-candidate, ABI, public-app and platform runtime gates remain mandatory;
