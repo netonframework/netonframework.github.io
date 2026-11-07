@@ -28,7 +28,11 @@ This is not a complete copy-paste project. Define the version variable and check
 
 ## Independent versions, explicit release status
 
-Library pages show source-declared versions, not publication confirmations from Maven Central. OpenSSL follows upstream versions plus wrapper revisions; other libraries evolve independently. HTTP/3 still depends on http/quic 0.2.0, while newer HTTP, TLS and QUIC sources use a different dependency set. These are not advertised as a jointly validated release bundle.
+Libraries evolve independently and need not share the Framework version. The published baseline checked on 2026-11-07 is Framework 1.1.0, io 0.4.1, HTTP / TLS / WebSocket / QUIC / HTTP3 0.3.0, OpenSSL 4.0.2-3, msgtrans 0.5.0 (QUIC / WebSocket adapters 0.2.0 each), and PulseKit 0.3.0.
+
+Exact coordinates, release source revisions and Central root metadata digests live in [release-baseline.json](https://github.com/netonframework/neton/blob/main/tools/ci/release-baseline.json). The [release gate](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/release-gate.md#published-stack-baseline-110-onward) distinguishes publication availability, resolved dependencies, platform execution and long-duration stability evidence. QUIC / HTTP3 / msgtrans / PulseKit are independent extensions, not all certified by the Framework HTTP/WebSocket gate. A published `0.x` artifact does not automatically promise a stable 1.x API.
+
+Neither source version declarations nor Maven's `latest` field replace fixed-version acceptance. Independent `neton-ai:0.1.0` shares historical coordinates with Framework beta releases: pin it explicitly rather than automatically choosing the greatest metadata version. AI is outside the Framework BOM and this transport baseline.
 
 Current Kotlin/Native projects use Kotlin 2.4.20. Prefer the compiler used to publish the chosen artifact and revalidate compiler or dependency upgrades. JVM bytecode/metadata compatibility and Native KLIB compatibility are different concerns.
 

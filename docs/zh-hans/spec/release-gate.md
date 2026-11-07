@@ -2,7 +2,68 @@
 
 > Status: active release gate
 
-Neton 1.0 is not release-ready until every mandatory gate below is green on the release commit.
+These requirements continue to apply to stable 1.x releases. A candidate is not
+release-ready until every mandatory gate below is green on the release commit.
+
+## Published stack baseline (1.1.0 onward)
+
+The machine-readable inventory is Framework
+[`tools/ci/release-baseline.json`](https://github.com/netonframework/neton/blob/main/tools/ci/release-baseline.json).
+It records the release tag and immutable source revision, exact artifact versions,
+toolchain and SHA-256 of each root POM and Gradle module metadata file. Framework
+publications, core protocols, optional WebSocket and independent extensions have
+separate ownership. QUIC, HTTP/3, msgtrans and PulseKit are inventoried releases;
+their runtime compatibility is **not** certified by Framework HTTP/WebSocket tests.
+Independent AI and comparison adapters are outside this baseline.
+
+Mandatory checks added to the existing aggregate gate:
+
+1. `Published dependency baseline` verifies the complete declared inventory and
+   retrieves exact-version metadata from Maven Central. Missing artifacts,
+   checksum/identity mismatch, moved/missing remote release tags, preview or dynamic versions and drift between
+   protocol source locks and release revisions fail the gate. Network failure is
+   not a skipped success. CI never regenerates the baseline or chooses `latest`.
+2. `Published transport stability` resolves and checks actual transport dependency
+   versions, then executes HTTP and WebSocket suites on macOS ARM64, Linux x64,
+   Linux ARM64 and Windows x64. Composite builds are forbidden and
+   `-Pnetonstream.local=false` is mandatory. The test report gate requires all
+   three bounded stress cases: repeated cancelled senders release admission while
+   the connection stays usable; owner cancellation releases blocked writes and
+   queued payloads; shared shutdown reclaims all blocked sessions. Missing,
+   skipped, duplicated or failed required cases fail acceptance.
+
+Root metadata checks prove publication identity and availability only. They do
+not verify every platform binary, production signature or runtime. Existing
+signed-candidate, ABI, public-app and platform runtime gates remain mandatory;
+the inventory of declared targets is not an execution record. macOS x64 and
+Android/JVM are not certified by the new four-target Framework transport gate.
+Record their evidence in the owning protocol release when those targets are claimed.
+
+For a protocol upgrade, review the version/revision/digest change, update
+`protocol-sources.lock` together, and rerun published resolution, platform tests,
+ABI, source compatibility and the public consumer. Do not globally override
+versions in applications merely because a newer protocol exists. Old transitive
+declarations may coexist; record the actually selected versions in
+`resolved-<target>.json`. No API dump change is permitted as an automatic way to
+make the ABI gate pass. Framework patch releases preserve public source/ABI and
+behavioral contracts; additions belong in a minor release, incompatible public
+changes require the versioning and deprecation review.
+
+Evidence must include candidate SHA, target, toolchain, baseline identity, resolved
+dependencies, commands and test results, retaining failures as well as successes.
+Changing these requirements or adding workflows is not evidence of execution.
+
+### Follow-up stability and performance acceptance
+
+The bounded stress tests above are regression gates, not long-duration soak or
+performance certification. The next acceptance work is a dedicated >=24-hour
+connection/traffic soak with slow peers, reconnects, injected failures and repeated
+shutdown; report errors, memory growth, open handles and post-shutdown resources.
+Protocol owners must retain their RFC/interoperability/fuzz evidence separately.
+Performance changes require fixed hardware/toolchains/workloads and interleaved
+before/after runs covering throughput, p99, allocation and multi-core scaling.
+Agree regression thresholds from measured variance before making them release
+blockers; do not infer performance improvements from fewer allocations alone.
 
 ## Ownership boundary
 

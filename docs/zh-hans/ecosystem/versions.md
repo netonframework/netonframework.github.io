@@ -28,7 +28,11 @@ commonMain.dependencies {
 
 ## 版本不统一，不猜测发布状态
 
-各库页面的“构建声明版本”来自源码，不代表本轮确认已在 Maven Central 发布。OpenSSL 跟随上游版本和封装修订号；其余库各自演进。HTTP/3 当前依赖 http/quic 0.2.0，而 HTTP、TLS、QUIC 等新源码已转向另一组依赖，不应展示为一个已验证的统一版本套装。
+各库独立演进，不要求与 Framework 使用相同版本号。2026-11-07 核对的发布基线为：Framework 1.1.0、io 0.4.1、HTTP / TLS / WebSocket / QUIC / HTTP3 0.3.0、OpenSSL 4.0.2-3、msgtrans 0.5.0（QUIC / WebSocket 适配各 0.2.0）、PulseKit 0.3.0。
+
+精确坐标、发布源码提交及 Central 根元数据摘要以 [release-baseline.json](https://github.com/netonframework/neton/blob/main/tools/ci/release-baseline.json) 为准；[发布门禁](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/release-gate.md#published-stack-baseline-110-onward) 区分元数据存在、实际依赖解析、平台运行测试和长期稳定性证据。QUIC / HTTP3 / msgtrans / PulseKit 是独立扩展链，并非都被 Framework 的 HTTP/WebSocket 门禁覆盖。`0.x` 的正式制品不自动等于已承诺 1.x API 稳定性。
+
+源码版本声明和 Maven 的 `latest` 字段都不能替代固定版本验收。尤其独立 `neton-ai:0.1.0` 与历史 Framework beta 版本共用过坐标，须明确指定版本，不按元数据的最大版本自动升级；AI 不属于 Framework BOM 或上述通信栈基线。
 
 Kotlin/Native 项目当前使用 Kotlin 2.4.20。优先使用产物发布时的编译器版本；升级编译器或替换依赖后重新验证。JVM 字节码/元数据兼容策略与 Native KLIB 兼容性不是一回事。
 
