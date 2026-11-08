@@ -28,9 +28,11 @@ commonMain.dependencies {
 
 ## 版本不统一，不猜测发布状态
 
-各库独立演进，不要求与 Framework 使用相同版本号。2026-11-09 核对的发布基线为：Framework 1.1.1、io 0.4.1、HTTP / TLS / WebSocket / QUIC / HTTP3 0.3.0、OpenSSL 4.0.2-3、msgtrans 0.5.0（QUIC / WebSocket 适配各 0.2.0）、PulseKit 0.3.0。
+各库独立演进，不要求与 Framework 使用相同版本号。2026-11-09 核对的发布基线为：Framework 1.1.2、io 0.4.1、HTTP / TLS / WebSocket / QUIC / HTTP3 0.3.1、OpenSSL 绑定 4.1.0-1（底层 OpenSSL 4.1.0）、msgtrans 0.5.1（QUIC / WebSocket 适配各 0.2.1）、PulseKit / pulsekit-android 0.3.1。
 
-Framework 1.1.1 是 API 兼容的测试与发布验收维护版，相比 1.1.0 没有运行时实现变更；框架模块、KSP 制品及 BOM 统一为 1.1.1，不机械提升独立协议库版本。[发布 CI](https://github.com/netonframework/neton/actions/runs/42508252042) 已通过，345 个制品文件及其 345 个签名均已从 Central 回读核对。独立的 24 小时低负载 HTTP 长稳在发布时仍在运行，本次发布不宣称已完成长稳或性能认证。
+Framework 1.1.2 升级共享加密依赖链，保持公开 API 和 Kotlin/KSP 工具链兼容；框架模块、KSP 制品及 BOM 统一为 1.1.2。绑定版本 4.1.0-1 修复了底层 OpenSSL 4.1.0 在 Windows Kotlin/Native 上的链接问题，应使用这一修订版而非原始 4.1.0 制品。本次也消除了数据库源码 JAR 的重复条目，并增加发布回归门禁。
+
+精确发布提交的[完整 CI](https://github.com/netonframework/neton/actions/runs/42532494358) 已通过，345 个制品文件及其 345 个签名均已从 Central 回读核对。使用全新缓存、仅依赖 Central 的公开应用完成两次 Release 构建及两轮健康运行、优雅关闭，每轮关闭后监听端口均已释放。独立的 24 小时低负载 HTTP 长稳运行于上一条依赖基线，不能认证本次升级；本次发布不宣称已完成长稳或性能认证。
 
 精确坐标、发布源码提交及 Central 根元数据摘要以 [release-baseline.json](https://github.com/netonframework/neton/blob/main/tools/ci/release-baseline.json) 为准；[发布门禁](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/release-gate.md#published-stack-baseline-110-onward) 区分元数据存在、实际依赖解析、平台运行测试和长期稳定性证据。QUIC / HTTP3 / msgtrans / PulseKit 是独立扩展链，并非都被 Framework 的 HTTP/WebSocket 门禁覆盖。`0.x` 的正式制品不自动等于已承诺 1.x API 稳定性。
 
