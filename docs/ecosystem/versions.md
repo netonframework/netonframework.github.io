@@ -28,7 +28,9 @@ This is not a complete copy-paste project. Define the version variable and check
 
 ## Independent versions, explicit release status
 
-Libraries evolve independently and need not share the Framework version. The published baseline checked on 2026-11-07 is Framework 1.1.0, io 0.4.1, HTTP / TLS / WebSocket / QUIC / HTTP3 0.3.0, OpenSSL 4.0.2-3, msgtrans 0.5.0 (QUIC / WebSocket adapters 0.2.0 each), and PulseKit 0.3.0.
+Libraries evolve independently and need not share the Framework version. The published baseline checked on 2026-11-09 is Framework 1.1.1, io 0.4.1, HTTP / TLS / WebSocket / QUIC / HTTP3 0.3.0, OpenSSL 4.0.2-3, msgtrans 0.5.0 (QUIC / WebSocket adapters 0.2.0 each), and PulseKit 0.3.0.
+
+Framework 1.1.1 is an API-compatible maintenance release for tests and release acceptance, with no runtime implementation changes from 1.1.0. Its modules, KSP artifact and BOM are aligned at 1.1.1; independent protocol libraries are not renumbered. [Release CI](https://github.com/netonframework/neton/actions/runs/42508252042) passed, and all 345 payloads plus their 345 signatures were read back from Central. The separate 24-hour low-load HTTP soak was still running at publication; neither a completed soak nor performance certification is claimed by this release.
 
 Exact coordinates, release source revisions and Central root metadata digests live in [release-baseline.json](https://github.com/netonframework/neton/blob/main/tools/ci/release-baseline.json). The [release gate](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/release-gate.md#published-stack-baseline-110-onward) distinguishes publication availability, resolved dependencies, platform execution and long-duration stability evidence. QUIC / HTTP3 / msgtrans / PulseKit are independent extensions, not all certified by the Framework HTTP/WebSocket gate. A published `0.x` artifact does not automatically promise a stable 1.x API.
 
