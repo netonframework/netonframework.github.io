@@ -1,7 +1,7 @@
 # Guide
 
 ::: info Version
-This documentation covers **Neton 1.0.0** (Kotlin 2.4.0 / KSP 2.3.10), currently in public beta. The final release date is not yet fixed.
+This documentation covers **Neton 1.0.0** (Kotlin 2.4.20 / KSP 2.3.12), released on October 29, 2026. See the [release notes](/releases/1.0.0) for the supported scope and migration guidance.
 Where the documentation and the code disagree, **the compilable examples under
 `neton/examples/` and the framework sources are authoritative**.
 :::

@@ -214,7 +214,7 @@ export default defineConfig({
           { text: "Framework", link: "/guide/" },
           { text: "Application", link: "/guide/application" },
           { text: "Architecture & Ecosystem", link: "/ecosystem/" },
-          { text: "1.0 Public Beta", link: "/releases/1.0.0" },
+          { text: "1.0.0 Stable", link: "/releases/1.0.0" },
         ],
         sidebar: {
           "/guide/": enGuideSidebar,
@@ -242,7 +242,7 @@ export default defineConfig({
           { text: "应用框架", link: "/zh-hans/guide/" },
           { text: "业务应用", link: "/zh-hans/guide/application" },
           { text: "技术架构与生态", link: "/zh-hans/ecosystem/" },
-          { text: "1.0 正式公测", link: "/zh-hans/releases/1.0.0" },
+          { text: "1.0.0 正式版", link: "/zh-hans/releases/1.0.0" },
         ],
         sidebar: {
           "/zh-hans/guide/": zhGuideSidebar,

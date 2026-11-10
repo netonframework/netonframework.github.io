@@ -43,5 +43,5 @@ features:
 Networking is the technical foundation, not the application programming model. See the [technical architecture and networking ecosystem](/ecosystem/) for independent libraries, protocol details and integration boundaries.
 
 ::: info Capabilities, platforms and versions
-Current sources use Kotlin 2.4.20; the framework remains on its 1.0 Beta development line. Libraries release independently and source versions do not confirm artifact availability. Read the [support matrix](/ecosystem/support) and [integration/version guide](/ecosystem/versions) for implemented capabilities, recorded validation and limitations.
+Neton Framework [1.0.0 is released](/releases/1.0.0), using Kotlin 2.4.20. Libraries release independently and source versions do not confirm artifact availability. Read the [support matrix](/ecosystem/support) and [integration/version guide](/ecosystem/versions) for implemented capabilities, recorded validation and limitations.
 :::

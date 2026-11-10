@@ -43,5 +43,5 @@ features:
 网络协议栈是技术底座，而不是业务开发者的主要编程接口。独立库、协议细节与接入边界，请参阅[技术架构与网络生态](/zh-hans/ecosystem/)。
 
 ::: info 能力、平台与版本
-当前源码工具链为 Kotlin 2.4.20，框架仍处于 1.0 Beta 演进阶段。各库独立发布，源码版本不等于可下载产物。参阅[支持矩阵](/zh-hans/ecosystem/support)与[接入和版本](/zh-hans/ecosystem/versions)，了解已实现、历史验证和未支持的边界。
+Neton Framework [1.0.0 已正式发布](/zh-hans/releases/1.0.0)，工具链为 Kotlin 2.4.20。各库独立发布，源码版本不等于可下载产物。参阅[支持矩阵](/zh-hans/ecosystem/support)与[接入和版本](/zh-hans/ecosystem/versions)，了解已实现、历史验证和未支持的边界。
 :::
