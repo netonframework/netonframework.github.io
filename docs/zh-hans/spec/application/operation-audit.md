@@ -2,9 +2,22 @@
 
 System 模块默认装配 HTTP 路由 completion 观察器，不要求 CRUD 控制器加注解。审计仅覆盖匹配到的 admin 路由；登录审计、访问日志和真实业务提交事实仍各自独立。
 
-- `application.conf` 的 `audit.operations` 支持 `off`、`delete`、`write`（默认）、`all`。普通 CRUD 由脚手架路由约定和 HTTP 方法识别：DELETE 为删除，PUT/PATCH 为更新，POST 的 `/create` 为创建，其他 POST 为领域动作，GET/HEAD 为读取。自定义领域动作不得单靠 HTTP 方法判断风险。
+- `application.conf` 的 `audit.operations` 支持 `off`、`delete`、`update`、`write`（默认）、`all`。普通 CRUD 由脚手架路由约定和 HTTP 方法识别：DELETE 为删除，PUT/PATCH 为更新，POST 的 `/create`、`/update`、`/delete` 或 `/delete-list` 按动作归类，其他 POST 为领域动作，GET/HEAD 为读取。自定义领域动作不得单靠 HTTP 方法判断风险。
 - 普通记录异步进入有界队列，溢出或落库失败须可观测，但不影响业务响应。仅记录路由模板、结果、主体、可信 IP、耗时、关联标识等允许字段。不得保存请求/响应正文、查询值、凭据、PIN、密码、验证码或密钥。读取记录表示接口请求，不证明人在页面看到了什么。
 - 危险操作的 HTTP 尝试不受普通范围开关影响，但 completion 记录不是可靠业务事实。已声明的危险 DB 写入须在同一数据库事务中追加审计事实，写入失败必须回滚；使用类型化动作与目标 ID，不保存完整业务对象。接入新危险动作时，必须同时接入危险路由声明及事务事实写入，并验证故障回滚。外部设备命令须先持久化接受/派发事实，执行结果另记，不得以 HTTP 成功充当执行成功。
 - 查询复用 System 操作日志权限与页面。HTTP 尝试与事务事实分开标识，通过同一服务端调用 ID 关联；统计不得将两者重复计成业务成功。不可将旧日志正文重新暴露到接口。
 
 验收至少包括免注解 CRUD、配置范围、非 admin 隔离、危险动作在 off 下仍留痕、真实 PostgreSQL 回滚及敏感输入不落库。通用契约不表示现有产品的危险接口已经接线；由其业务模块逐项确认。
+
+## 接入和迁移
+
+在启用新版 System 前运行模块迁移（PostgreSQL `V005__operation_audit.sql`），同时使用包含路由生命周期 API 的框架版本。审计范围通过部署配置设置，不从前端传入：
+
+```toml
+[audit]
+operations = "write"
+```
+
+危险操作由模块在装配期调用 `OperationAudit.register(method, routePattern, actionKey)`，以未挂载的路由模板和固定业务键声明；执行时用 `OperationAudit.commit(http, actionKey, targetId) { ... }` 包裹同一个 `DbContext` 上的变更。System 内置接线覆盖管理员 MFA 策略和重置、角色与菜单授权、管理员创建/更新/删除、密码变更与管理员重置、角色更新/删除、菜单创建/更新/删除和系统设置修改。异步命令不得用该 DB 事务包裹外部请求。
+
+macOS ARM64 上可在 System 仓库运行 `bash scripts/test-operation-audit-postgres.sh`：脚本启动独立的本机 PostgreSQL 与 HTTP 监听器，应用真实迁移，验证普通 CRUD、权限拒绝、危险操作以及写入故障回滚，然后清理数据库。

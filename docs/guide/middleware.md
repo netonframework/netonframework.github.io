@@ -34,6 +34,12 @@ HTTP request
 
 ---
 
+Applications can register [route lifecycle extensions](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/http-route-lifecycle.md)
+at startup. An around interceptor wraps the handler after security and rate limiting. A read-only
+completion observer also sees rejections, failures, and cancellations on matched routes. It does
+not report that the response reached the client. Neither extension can reorder the built-in
+security pipeline.
+
 ## 2. The security pipeline
 
 Security runs automatically **before** each handler and has two layers.

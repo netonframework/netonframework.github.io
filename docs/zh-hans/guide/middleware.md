@@ -34,6 +34,8 @@ HTTP 请求
 
 ---
 
+应用模块可在启动时注册 [路由生命周期扩展](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/http-route-lifecycle.md)：around 在安全检查和限流之后包裹 handler；completion 只读观察匹配路由的处理结果，包括鉴权拒绝、失败和取消。二者都不改变内建安全阶段的顺序。
+
 ## 二、安全管道：内建中间件
 
 Neton 的安全体系作为内建中间件，在每个请求的 handler 执行**之前**自动运行，由两层组成：

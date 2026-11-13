@@ -12,3 +12,18 @@
 ## 验收
 
 覆盖嵌套顺序、选择器、短路、重复 next、鉴权拒绝、限流、异常、取消、观察器故障、未匹配路由，以及流式响应已提交后失败不被记成成功。未装扩展时不额外构造每请求观察快照。
+
+## 注册示例
+
+```kotlin
+val lifecycle = ctx.routeLifecycle()
+val admin = RouteSelector(group = "admin")
+lifecycle.intercept("app.request-context", { http, next ->
+    http.setAttribute("app.area", "backoffice")
+    next()
+}, admin)
+lifecycle.observe("app.route-metrics", { result ->
+    // 只同步记录指标或尝试投递到有界队列；不在这里等待数据库。
+    metrics.record(result.endpoint.pattern, result.result, result.durationMillis)
+}, admin)
+```
