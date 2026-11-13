@@ -27,6 +27,7 @@ Application 将产品装配与可复用模块分开。例如，system 负责管�
 
 ## 从哪里开始
 
+- 配置 System 模块的 [后台操作审计](./operation-audit.md)。
 - 按[框架快速开始](./quick-start.md)开发一个服务。
 - 了解 [Application 仓库](https://github.com/neton-application/neton-application)，在选择发行版前检查模块与依赖声明。
 - 按需安装[开发技能](https://github.com/netonframework/netonframework.github.io/tree/main/skills)，获得版本相关的实现指导；技能不能替代测试。

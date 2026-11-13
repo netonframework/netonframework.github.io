@@ -34,7 +34,7 @@ HTTP 请求
 
 ---
 
-应用模块可在启动时注册 [路由生命周期扩展](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/http-route-lifecycle.md)：around 在安全检查和限流之后包裹 handler；completion 只读观察匹配路由的处理结果，包括鉴权拒绝、失败和取消。二者都不改变内建安全阶段的顺序。
+从 1.2.0 候选版本开始，应用模块可在启动时注册 [路由生命周期扩展](./route-lifecycle.md)：around 在安全检查和限流之后包裹 handler；completion 只读观察匹配路由的处理结果，包括鉴权拒绝、失败和取消。二者都不改变内建安全阶段的顺序。
 
 ## 二、安全管道：内建中间件
 
@@ -193,7 +193,7 @@ Neton 对每个 HTTP 请求自动生成结构化访问日志，无需手动编�
 | 字段 | 说明 |
 |------|------|
 | `method` | HTTP 方法（GET/POST/PUT/DELETE 等） |
-| `path` | 请求路径 |
+| `path` | 请求路径；1.2.0 候选版本改为记录路由模板，不记录实际路径参数 |
 | `status` | HTTP 状态码 |
 | `latencyMs` | 请求耗时（毫秒） |
 | `bytesIn` | 请求体大小（字节） |
@@ -342,17 +342,6 @@ class AppSecurityConfig : SecurityConfigurer {
 
 ---
 
-## 八、后续展望：正式中间件管道
+## 八、路由扩展的边界
 
-Neton v1 的中间件能力（安全、限流、日志、追踪）内建于请求处理流程中，满足大多数场景。后续计划引入正式的中间件管道 API，支持：
-
-- 自定义中间件的注册与排序
-- 请求/响应的拦截与修改
-- CORS 等通用中间件（限流已在 v1 内建，见第三章）
-- 中间件的条件执行（按路由、按方法等）
-
-当前版本下，如需类似中间件的自定义逻辑，可通过以下方式实现：
-
-1. **HttpContext.attributes**：在管道各阶段传递数据。
-2. **@NetonConfig**：在启动阶段注入全局配置。
-3. **Guard**：实现自定义授权逻辑。
+1.2.0 候选版本的 [路由生命周期 API](./route-lifecycle.md) 扩展的是已匹配的路由，不是全局中间件链，也不能重排内建安全阶段。

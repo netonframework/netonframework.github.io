@@ -29,6 +29,7 @@ The [technical architecture and networking ecosystem](/ecosystem/) describe the 
 
 - Build a service with the [Framework quick start](./quick-start.md).
 - Explore the [Application repository](https://github.com/neton-application/neton-application) and its module/dependency declarations before selecting a distribution.
+- Configure the System module's [admin operation audit](./operation-audit.md).
 - Use the [development skills](https://github.com/netonframework/netonframework.github.io/tree/main/skills) for version-aware implementation guidance; installation is optional and does not replace tests.
 
 Positioning and assembly boundaries checked on 2026-10-27 against Framework `804e770` and Application `95185a7`. This is not a release or runtime acceptance claim.

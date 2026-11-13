@@ -30,6 +30,7 @@ All of it wired by KSP at compile time rather than assembled at runtime.
 | Logging | Structured JSON, traceId / spanId propagation, asynchronous writes, sink routing, automatic redaction |
 | Object storage | One abstraction over local and S3, with multi-source configuration |
 | HTTP client | Outbound client, streaming responses, SSE |
+| Route lifecycle (1.2.0 candidate) | [Around interceptors and read-only completion observers](./route-lifecycle.md) |
 
 ## Left to the platform
 

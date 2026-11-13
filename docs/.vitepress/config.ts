@@ -64,7 +64,10 @@ const enGuideSidebar = [
   },
   {
     text: "Security",
-    items: [{ text: "Security guide", link: "/guide/security" }],
+    items: [
+      { text: "Security guide", link: "/guide/security" },
+      { text: "Admin operation audit", link: "/guide/operation-audit" },
+    ],
   },
   {
     text: "Data and caching",
@@ -79,6 +82,7 @@ const enGuideSidebar = [
     text: "Advanced",
     items: [
       { text: "Middleware", link: "/guide/middleware" },
+      { text: "Route interceptors", link: "/guide/route-lifecycle" },
       { text: "Deployment and targets", link: "/guide/deployment" },
       { text: "Toolchain known issues", link: "/guide/tooling-known-issues" },
     ],
@@ -107,7 +111,10 @@ const zhGuideSidebar = [
   },
   {
     text: "安全与认证",
-    items: [{ text: "安全指南", link: "/zh-hans/guide/security" }],
+    items: [
+      { text: "安全指南", link: "/zh-hans/guide/security" },
+      { text: "后台操作审计", link: "/zh-hans/guide/operation-audit" },
+    ],
   },
   {
     text: "数据与缓存",
@@ -122,6 +129,7 @@ const zhGuideSidebar = [
     text: "进阶",
     items: [
       { text: "中间件机制", link: "/zh-hans/guide/middleware" },
+      { text: "路由拦截器", link: "/zh-hans/guide/route-lifecycle" },
       { text: "部署与跨平台", link: "/zh-hans/guide/deployment" },
       { text: "工具链已知问题", link: "/zh-hans/guide/tooling-known-issues" },
     ],

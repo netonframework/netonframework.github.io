@@ -28,6 +28,7 @@ Neton 只做**几乎每个服务都要用的组件**，其余不做。组件少�
 | 日志 | 结构化 JSON，traceId / spanId 贯通，异步写入，Sink 路由，自动脱敏 |
 | 对象存储 | Local / S3 统一抽象，多源配置 |
 | HTTP 客户端 | 出站客户端、流式响应、SSE |
+| 路由生命周期（1.2.0 候选） | [around 拦截器与只读 completion 观察器](./route-lifecycle.md) |
 
 ## 交给平台的
 

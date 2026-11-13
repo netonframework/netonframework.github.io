@@ -34,7 +34,7 @@ HTTP request
 
 ---
 
-Applications can register [route lifecycle extensions](https://github.com/netonframework/netonframework.github.io/blob/main/docs/zh-hans/spec/http-route-lifecycle.md)
+In the 1.2.0 candidate, applications can register [route lifecycle extensions](./route-lifecycle.md)
 at startup. An around interceptor wraps the handler after security and rate limiting. A read-only
 completion observer also sees rejections, failures, and cancellations on matched routes. It does
 not report that the response reached the client. Neither extension can reorder the built-in
@@ -193,7 +193,7 @@ the fixed message `"http.access"`.
 | Field | Meaning |
 |---|---|
 | `method` | HTTP method |
-| `path` | Request path |
+| `path` | Request path; the 1.2.0 candidate records the route template instead of concrete path values |
 | `status` | Response status code |
 | `latencyMs` | Duration in milliseconds |
 | `bytesIn` | Request body size in bytes |
@@ -331,18 +331,6 @@ The principles behind it:
 
 ---
 
-## 8. Looking ahead
+## 8. Scope of route extensions
 
-v1 builds security, logging and tracing into the request flow, which covers most needs. A formal
-middleware pipeline API is planned, adding:
-
-- registration and ordering of custom middleware
-- request and response interception
-- common middleware such as CORS
-- conditional execution per route or method
-
-Until then, custom pipeline logic has three good homes:
-
-1. **`HttpContext.attributes`** — pass data between stages.
-2. **`@NetonConfig`** — inject global configuration at startup.
-3. **`Guard`** — implement custom authorization.
+The [route lifecycle API](./route-lifecycle.md) in the 1.2.0 candidate extends matched routes. It is not a global middleware chain and does not allow applications to reorder built-in security stages.
