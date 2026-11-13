@@ -657,7 +657,7 @@ class UserController {
 - **Request/Response 适配**：Simple* 为适配器简化实现；响应语义已按 v1.1 冻结为"response.write 优先"（见 3.3、5.2）。
 - **CORS**：已支持，通过 DSL `cors { }` 或 `application.conf [cors]` 配置。
 - **Multipart/文件上传**：已支持，`HttpRequest.uploadFiles()` 返回 `UploadFiles`；支持按 fieldName 查询、KSP 按参数名自动绑定。
-- **中间件**：无独立 Middleware 管道；日志、异常、access 在 handleRoute 内线性完成。
+- **中间件**：没有可重排安全阶段的通用 Middleware 管道；路由级扩展参见 [HTTP 路由生命周期扩展](./http-route-lifecycle.md)。
 - **多后端**：当前 HTTP 引擎 + Mock（Core 内 MockHttpAdapter）。
 - **固定端点**：/health、/api/routes、/api/info 若仍在适配器内，视为过渡，v1.1 迁移至由路由/组件注册（见 5.1）。
 
