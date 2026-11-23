@@ -1,5 +1,7 @@
 # Neton Storage 模块规范（Phase 1）
 
+运行时配置消费者可使用 `StorageOperatorFactory.create(SourceConfig, HttpClient?, Logger?)` 构造同一套 Local/S3 驱动。配置必须由可信策略校验；S3 借用应用持有的 Neton HttpClient，工厂不创建也不关闭客户端。启动组件也走此工厂。Application 后台动态配置与文件定位规则见 [infra-file-config](./application/infra-file-config.md)。
+
 > **目标**：轻量级统一存储抽象——借鉴 OpenDAL Operator 概念，Phase 1 只做 Local + S3 两种后端。  
 > **验收闭环**：用 Local 和 S3（MinIO）跑通文件的上传、下载、删除、列表。  
 > **附带成果**：冻结 storage 的 `[[sources]]` 多源配置规范（**不适用于 database/redis**，二者格式见 0.1）。

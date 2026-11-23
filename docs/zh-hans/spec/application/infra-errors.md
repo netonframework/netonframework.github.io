@@ -31,6 +31,14 @@ infra（文件上传与读取、媒体服务、后台文件配置 / 定时任务
 | `MEDIA_URL_RATE_LIMITED` | RATE_LIMIT_EXCEEDED | `GET /app/infra/media/url/{fileId}` 超过每 IP 120 次/分钟（`@RateLimit` message） | — |
 | `MEDIA_VARIANT_UNKNOWN` | INVALID_PARAMS | `GET /app/infra/media/url/{fileId}` 的 `variant` 不是 w180 / w360 / w720 / w1080 / w1440 / og | `variant` |
 | `FILE_CONFIG_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台更新文件配置，id 不存在 | — |
+| `FILE_STORAGE_INVALID` | INVALID_PARAMS | 存储字段无效、旧空配置或不支持的驱动 | — |
+| `FILE_STORAGE_SECRET_MISSING` | INVALID_PARAMS | 引用的存储环境变量未配置 | — |
+| `FILE_STORAGE_NOT_ALLOWED` | INVALID_PARAMS | 目录或端点未在部署允许范围内 | — |
+| `FILE_STORAGE_TEST_FAILED` | INVALID_PARAMS | 真实 write/read/delete 探针失败或超时 | — |
+| `FILE_STORAGE_RATE_LIMITED` | RATE_LIMIT_EXCEEDED | 后台配置请求超过按用户阈值 | — |
+| `FILE_CONFIG_IN_USE` | INVALID_PARAMS | 文件仍引用配置，拒绝改址或删除 | — |
+| `FILE_CONFIG_IS_MASTER` | INVALID_PARAMS | 拒绝删除主配置 | — |
+| `FILE_STORAGE_PRESIGN_UNSUPPORTED` | INVALID_PARAMS | 禁止旧接口绕过标准上传链路直传 | — |
 | `JOB_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台更新 / 手动触发任务，任务不存在 | — |
 | `API_ERROR_LOG_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台更新错误日志处理状态，日志不存在 | — |
 | `DOMAIN_EVENT_NOT_FOUND` | RESOURCE_NOT_FOUND | 后台查 / 重投 / 丢弃领域事件，id 不存在 | — |
