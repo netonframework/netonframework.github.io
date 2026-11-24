@@ -34,7 +34,12 @@ infra（文件上传与读取、媒体服务、后台文件配置 / 定时任务
 | `FILE_STORAGE_INVALID` | INVALID_PARAMS | 存储字段无效、旧空配置或不支持的驱动 | — |
 | `FILE_STORAGE_SECRET_MISSING` | INVALID_PARAMS | 引用的存储环境变量未配置 | — |
 | `FILE_STORAGE_NOT_ALLOWED` | INVALID_PARAMS | 目录或端点未在部署允许范围内 | — |
-| `FILE_STORAGE_TEST_FAILED` | INVALID_PARAMS | 真实 write/read/delete 探针失败或超时 | — |
+| `FILE_STORAGE_TEST_FAILED` | INVALID_PARAMS | 旧版探针通用失败码 | — |
+| `FILE_STORAGE_{WRITE,READ,DELETE}_{FAILED,DENIED,TIMEOUT}` | INVALID_PARAMS | 探针写入、读取或删除失败、被拒绝或超时 | 不返回原始上游异常 |
+| `FILE_STORAGE_TEST_MISMATCH` | INVALID_PARAMS | 探针读回内容与写入内容不一致 | — |
+| `FILE_CONFIG_MASTER_EDIT` | INVALID_PARAMS | 尝试修改当前主配置的存储参数 | 新建配置后测试和切换 |
+| `FILE_CONFIG_DISABLED` | INVALID_PARAMS | 尝试激活已禁用的配置 | 先启用该配置 |
+| `FILE_CONFIG_MASTER_DISABLE` | INVALID_PARAMS | 尝试禁用当前主配置 | 先切换主配置 |
 | `FILE_STORAGE_RATE_LIMITED` | RATE_LIMIT_EXCEEDED | 后台配置请求超过按用户阈值 | — |
 | `FILE_CONFIG_IN_USE` | INVALID_PARAMS | 文件仍引用配置，拒绝改址或删除 | — |
 | `FILE_CONFIG_IS_MASTER` | INVALID_PARAMS | 拒绝删除主配置 | — |
