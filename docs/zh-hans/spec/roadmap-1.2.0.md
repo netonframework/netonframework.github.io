@@ -1,6 +1,6 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r13 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r14 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
 >
 > 本次核对的框架源码 `gradle.properties` 为 `1.1.2`；本文规划目标为 1.2.0，不修改版本号、不启动发布。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
@@ -822,6 +822,10 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 
 **源码核对基线：** neton `37c92fe` 的 `neton-core/.../annotations/HttpAnnotations.kt` 已有 HTTP 方法、Body、PathVariable、Query、Header、Cookie；`neton-ksp/.../ControllerProcessor.kt` 已生成 RouteDefinition 与返回值 serializer，并传递安全元数据；`neton-validation` 已有 Min/Max/Size 等注解。在本轮检查的 core/routing/KSP 中未发现 OpenAPI exporter。复用这些事实来源，不能把下面的候选能力描述成已完成。
 
+**r14 源码复审补充：** 同一基线的 `ControllerProcessor.generateHandlerCall` 对非空 Header 缺失使用空字符串，Cookie 缺失则报 REQUIRED；`generateArgConversion` 对非字面量默认值存在警告后回退零值的行为。因此不能用 Kotlin 非空性/源码默认值直接声明 required/default。必须以实际绑定器的缺失、空串、重复值和转换行为做对照；若运行行为本身与声明矛盾，先修绑定契约再生成，不用文档掩盖。`validation/ValidationSupport.validatorRefFor` 能按名称发现依赖模块校验器，但不能据此还原其约束；契约片段还必须证明该操作实际调用了该校验器。`SecurityPreHandle` 的匿名放行由路由声明、组白名单和组策略共同决定；导出器不得另写一套覆盖优先级。
+
+**KSP 工具链事实与候选升级：** 当前 `gradle/libs.versions.toml` 锁定 **2.3.12**，`neton-ksp/build.gradle.kts` 的 symbol-processing-api 复用该版本，并非已使用 2.3.14。[Google KSP 2.3.14 发布说明](https://github.com/google/ksp/releases/tag/2.3.14)包含并发执行时库符号丢失修复、context parameter 支持、注解 vararg/默认参数修复等，适合作为 1.2.0 升级候选；本次只记录、不升级。插件与 processor API 同步升级，须验证当前 Kotlin/Gradle、Native 消费构建、多模块并发、无改动增量及注解默认值。KSP 是符号处理器，不是 OpenAPI 实现，也不能求值任意函数体、默认表达式或 DSL；版本升级不改变这条边界。
+
 | 信息 | 权威来源 | 不允许的做法 |
 |---|---|---|
 | 方法、路径、参数位置、wire 名称 | 实际路由与绑定规则；路径/查询别名必须一致 | ApiOperation 再声明一份不同路径 |
@@ -834,6 +838,8 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 候选注解放 `neton.routing.annotations`，只做薄元数据：`ApiOperation(id, summary, description, tags)`、`ApiField(description)`、`ApiResponse(status, description, body)` 与显式文档可见性；仅补无法从代码推导的语义。复用已有 Deprecated、序列化与校验声明，不再造另一套 required/min/max/type 注解。注解的 body 类型无法表达泛型/自定义 serializer 时，使用显式 typed schema contributor，不使用 Any 或错误的对象占位。普通接口不写任何文档注解也必须能生成结构契约。
 
 **注解协同规则：** 先生成真实运行契约，再补文档语义，不设置一个“文档注解总是覆盖其他注解”的全局优先级。
+
+只识别明确的注解全限定名，不能把第三方同名 Get/Body/Permission 当作框架注解。复用并收敛现有绑定解析器，重复参数位置注解、多个互斥 body 来源必须诊断，不能让文档按另一种顺序选择。ApiField 不引入 getter 专属语义；仅归并实际属于同一序列化字段的 use-site 注解，不执行 getter，不让非序列化计算属性进入 schema。
 
 | 场景 | 唯一合并规则 |
 |---|---|
@@ -865,9 +871,28 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 
 对递归 schema 保留引用图并检测循环，不无界展开。跨模块注解协同通过生产模块生成的版本化契约片段传递，不能假设编译后的依赖仍保有 SOURCE 注解/KDoc；片段绑定库版本、serializer 配置与摘要。缺片段或版本不匹配时使用显式 contributor 或构建失败，不猜测、不运行反射扫描。Controller 与 DSL 汇入同一合并/诊断流程，不能各用一套优先级。
 
+**生成阶段与跨模块落点（收紧上述构建任务约定）：**
+
+1. KSP 提取可静态确认的声明，生成类型化契约描述与生产模块片段，不实例化业务对象或执行自定义 serializer。静态无法确认的 wire 行为由显式 contributor 承担验证义务；不能因为存在 SerialDescriptor 就声称已证明编码行为。
+2. 在指定部署 profile 的契约装配模式下，读取与运行时相同的最终路由、安全和响应配置。该模式不启动监听、后台任务、数据库或远程调用。普通声明式路由复用同一注册过程，不能要求用户再维护一份文档路由 DSL；依赖业务 I/O 的动态注册必须显式提供契约并比对，或报告不可导出。Native 目标不能在当前宿主执行时，在匹配目标的验收环境装配，不假装 JVM KSP 已执行 Native DSL。
+3. 对最终 operation 集合与实际注册集合做覆盖检查（含显式排除清单）；依赖库没有被应用挂载的 Controller 不导出。同一 Controller 多次挂载后，每个最终 operation 有唯一 ID；显式 ID 冲突报错，默认 ID 从稳定挂载身份生成，不靠顺序后缀。参数改名但形状相同的 path 模板、同一 path/method 不同 host/组的变体若无法忠实表达，拆为命名 profile 文档或拒绝，不能覆盖丢失路由。
+4. 片段随生产模块作为构建元数据产物发布并由 Gradle 显式解析，不依赖临时生成目录/mavenLocal，也不向业务源码追加手写 manifest。记录格式版本、模块/variant、类型身份、serializer/validator 身份与摘要；common/平台重复片段按身份和内容去重，冲突失败。对没有约束的第三方标准类型不强求它发布 Neton 片段，可用已验证内建映射；有未知校验/serializer 语义的类型才要求 contributor 或失败。
+5. 片段输出声明正确的 KSP 源依赖；聚合任务将片段集合、依赖版本和 profile 配置全部计为输入。删除/移动源码、移除依赖、修改安全配置、增量无脏文件和并行多 target 构建后，必须与 clean build 得到相同契约；旧片段不能残留。以上复用 KSP/Gradle 产物机制，不新建契约注册服务或另一套构建系统。
+
+**核心与完整支持的差距与决策：** 不按规范章节数虚构“支持百分比”。输出合法的 3.2.1 文档、准确描述 Neton 路由，与能导入并处理所有合法 OpenAPI 文档是三种不同承诺。1.2.0 优先前两项；导入仅指本核心范围的契约校验/差异比较，不额外承诺通用 server stub、任意外部文档往返或通用客户端生成器。OA-05 的客户端选定经验证的工具链完成，不为了该验收自建跨语言 SDK 平台。
+
+| 维度 | 1.2.0 核心承诺 | 扩大到完整处理的额外工作 |
+|---|---|---|
+| HTTP 契约 | 实际路由、绑定、响应和安全映射；当前 JSON/text/空 body | multipart/XML、复杂编码和流式 item schema 等逐项绑定/序列化验证；不是多加几个字段 |
+| schema | 明确支持的 JSON Schema 词汇与验证过的自定义映射 | 组合/条件/dynamic ref 等更广泛方言语义、验证及代码生成；文档合法不等于可生成静态类型 |
+| 描述图 | 单文档本地引用和受限递归 | 多文件/远程引用、URI 基址、缓存与安全限制；callbacks/webhooks/links 的关系及表达式处理 |
+| 工具链 | 3.2.1 确定性导出、选定 validator/客户端和覆盖矩阵 | 任意合法文档无损往返、更多工具兼容和格式/扩展支持，需独立能力矩阵而非“完整”一词 |
+
+因此不将“完整最新规范”作为 1.2.0 一次性交付门槛，也不为未来扩展预建通用插件框架。先让现有路由在已承诺范围内可验证地完整描述；multipart 等实际业务需要优先扩展，其次再按消费者需求加 webhooks/流式等。只新增对应描述节点、映射和测试，不另起注解体系。显式排除必须可审计，不能用大量排除来宣称已覆盖整个应用。
+
 **AI 使用边界：** 可生成可编译客户端、测试骨架和请求/响应示例；契约附 routeId、buildId、schema 摘要及内部源码映射，公开产物移除本机绝对路径。不得从 OpenAPI 自动将全部写操作暴露为 Agent/MCP 工具；如需工具化，必须另外配置白名单、身份、审批/幂等与预算。WebSocket 只描述 HTTP 握手和协议链接，不把双向消息冒充 HTTP operation；RPC/HTTP3 不为追求单一格式重写各自契约。
 
-**验收 OA-01～12：**
+**验收 OA-01～15：**
 
 | ID | 验收目标 |
 |---|---|
@@ -883,6 +908,9 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 | OA-10 | 类/方法/组、构造参数/属性、SerialName/Transient/Deprecated 的组合自然合并；冲突定位两个来源；Controller/DSL 语义一致 |
 | OA-11 | 安全 OR/AND/匿名与真实装配相符；身份注入不泄漏为参数；Unicode 长度/正则/format 不被错误等价映射 |
 | OA-12 | 生产/消费模块独立编译后契约元数据仍完整；SOURCE 注解丢失、片段陈旧/缺失不生成假契约 |
+| OA-13 | Header/Cookie/query 的缺失/空串/默认/重复值与 binder 一致；外来同名注解不识别；仅实际执行的校验进入约束 |
+| OA-14 | DSL/profile 装配不触发业务 I/O；多重挂载、host/组变体、等价 path 模板不覆盖丢失；实际路由与导出/排除清单闭合 |
+| OA-15 | 正式依赖片段与本地源码结果一致；删除依赖/路由、修改策略、增量/clean、多 target 并行一致；KSP 升级通过注解默认值和库符号回归 |
 
 ### 11.4 可追溯诊断：参考 Rust 与 Swift 的分层
 
@@ -946,7 +974,7 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 |---|---|---|---|
 | N12-01 | A / P0 | 当前能力、平台、依赖和运行验证矩阵 | 每项有源码与测试依据，缺口明确 |
 | N12-02 | A / P0 | 应用 Manifest、架构约束与构建追溯（§11.2） | 确定性生成、错误装配反例、源码定位 |
-| N12-03 | A / P0 | API 契约一致性、OpenAPI 3.2.1 核心与自然协同的语义注解（§11.3–11.3.1） | OA-01～12；schema/serializer/客户端往返、跨模块契约、注解合并与安全发布负例 |
+| N12-03 | A / P0 | API 契约一致性、OpenAPI 3.2.1 核心与自然协同的语义注解（§11.3–11.3.1） | OA-01～15；schema/serializer/客户端往返、跨模块契约、注解合并、装配/增量一致性与安全发布负例 |
 | N12-04 | A / P0 | 调用预算、结构化并发与 drain（§6、§11.6） | 可控时钟、取消、超时和停机竞态测试 |
 | N12-05 | A / P0 | 诊断 SPI、trace/metrics 可选适配（§11.4） | 敏感数据检查、过载与关闭验证 |
 | N12-06 | A / P0 | 静态/DNS 发现、客户端池与故障策略（§11.5–11.6） | 多实例、断网、恢复、无重试风暴 |
