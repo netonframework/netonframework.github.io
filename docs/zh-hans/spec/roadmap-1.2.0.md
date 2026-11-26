@@ -1,6 +1,6 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r11 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r12 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
 >
 > 本次核对的框架源码 `gradle.properties` 为 `1.1.2`；本文规划目标为 1.2.0，不修改版本号、不启动发布。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
@@ -326,6 +326,8 @@ COMMIT 成功但连接断开可能导致调用方不知道提交结果：应按�
 | DC-50 | 同 token 的两个批次并发、已提交批次重试、校验跨批次变化 | 数据与批次回执/游标/全局 manifest 版本原子；同批次异摘要冲突；旧校验不能激活 |
 | DC-51 | 控制者失权后对象复制完成、清理与新控制者引用竞争 | 尝试对象隔离且不可覆盖；无有效 token 不挂接；不删活跃引用或源对象；孤儿有界可追踪 |
 | DC-52 | 目标重建/换代后使用旧退休回执，激活成功后重复激活 | 原目标预留代次匹配；同计划重复返回原激活回执；不同代次不开放，进入灾难恢复核查 |
+| DC-53 | 批次提交未知后换复制 attempt 重试，物理对象 key 改变 | 原 batchId/逻辑摘要返回原结果；已提交绑定不替换，新尝试对象按孤儿回收；逻辑内容变化仍拒绝 |
+| DC-54 | 使用公开事务入口 enqueue、嵌套 JOIN、外层回滚及作用域逃逸 | 无需用户持 proof；同一数据库事务原子；未准备的外层事务拒绝；作用域失效不能写或伪装已提交 |
 
 端到端场景最终校验订单、库存、支付账目之间的业务不变量，以及持久记录、计时器、连接和 worker 的释放；不能只断言返回 200 或最终有一条成功日志。输出每次故障的提交摘要、恢复轨迹、最终业务状态、重复次数与资源指标。
 
@@ -345,7 +347,7 @@ COMMIT 成功但连接断开可能导致调用方不知道提交结果：应按�
 | P2 | 事件投递器/jobs/客户端的重试与生命周期所有权可能重叠 | §8.3 单一状态权威与统一 attempt 预算；DC-11、13 |
 | P2 | 大载荷引用的提交与回收缺少时序规则 | §8.6 外部引用生命周期；DC-19 |
 
-状态迁移、存储原子批次和传输确认见 §8.11–8.14；公共 API、schema 与迁移候选及交叉检查见 §8.15–8.23。均未通过实现验证。开始运行时代码前仍须评审事件 v1 和 database-session 的显式变更、各平台接口可表达性、容量参数及具体迁移 SQL。不能仅凭本路线图冻结全部接口。
+状态迁移、存储原子批次和传输确认见 §8.11–8.14；公共 API、schema 与迁移候选及交叉检查见 §8.15–8.24。均未通过实现验证。开始运行时代码前仍须评审事件 v1 和 database-session 的显式变更、各平台接口可表达性、容量参数及具体迁移 SQL。不能仅凭本路线图冻结全部接口。
 
 ### 8.11 状态迁移契约
 
@@ -470,7 +472,7 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 - 模块验收证明无独立 PostgreSQL 产物、只复用一个所选原生 driver；数据库后端禁用时没有额外池/扫描器，启用却缺能力时启动失败。
 - 新增 DC-20：嵌套事务返回后外层回滚，不能发送 durable ACK 或可见事件；DC-21：备份回退丢失已确认状态时禁止自动发送并进入对账；DC-22：取消与最后一步成功并发，只有一个合法终态且迟到副作用可追踪。
 
-这些用例与 §8.18–8.23 合并为一个发布门槛。当前只有规格，没有实现或通过记录；§8.15–8.17 给出 API、事务证明、schema 与迁移候选，须评审后才进入编码。不同模块分批开发不等于降低完整闭环的验收标准。
+这些用例与 §8.18–8.24 合并为一个发布门槛。当前只有规格，没有实现或通过记录；§8.15–8.17 给出 API、事务证明、schema 与迁移候选，须评审后才进入编码。不同模块分批开发不等于降低完整闭环的验收标准。
 
 ### 8.15 公共 API 候选（非现有可调用代码）
 
@@ -479,12 +481,13 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 | 所属接口 / 操作 | 输入 → 输出 | 语义与边界 |
 |---|---|---|
 | `DurableClient.submit`（suspend） | `Submission` → `SubmissionReceipt` | 独立持久提交成功才返回；有外层业务事务时拒绝，改用事务桥；异常/取消不证明未提交 |
-| `DurableTransactions.enqueue`（suspend） | `TransactionProof, Submission` → `EnlistedMessage` | 加入同资源当前事务；返回待提交句柄，不能转成远端 ACK |
+| `DbContext.transaction` 的 durable 扩展重载（suspend） | `DurableClient, block` → `R` | 仍由既有数据库事务拥有提交；框架在业务 block 之前准备同资源 durable 参与者；业务不持 proof |
+| `DurableClient.enqueue`（suspend） | `Submission` → `EnlistedMessage` | 仅加入已准备的同资源当前事务；返回待提交句柄，不能转成远端 ACK |
 | `DurableClient.status`（suspend） | `OperationRef` → `OperationView` | 每次鉴权；返回状态、结果版本及查询权威性，不暴露内部可变对象 |
 | `DurableClient.findSubmission`（suspend） | `SubmissionKey` → `Lookup<SubmissionReceipt>` | 无回执时按原键查本方持久记录；作用域由可信上下文补齐，不能跨租户查找 |
 | `DurableClient.awaitResult`（suspend） | `OperationRef, TargetSelection, WaitBudget` → `WaitResult` | 有界等待；超时返回未结束/未知观察，取消只终止等待 |
 | `SagaClient.start`（suspend） | `SagaStart` → `SagaReceipt` | 稳定启动键、固定版本及摘要，重复返回同一 sagaId；不得嵌套于业务事务 |
-| `SagaTransactions.start`（suspend） | `TransactionProof, SagaStart` → `EnlistedSaga` | 同资源原子启动；不同存储时必须从业务 Outbox 发送启动命令，不做双写 |
+| `SagaClient.enqueueStart`（suspend） | `SagaStart` → `EnlistedSaga` | 使用已准备的同资源事务；不同存储时从业务 Outbox 发送启动命令，不做双写 |
 | `SagaClient.status / awaitResult`（suspend） | `SagaRef / WaitBudget` → `SagaView / WaitResult` | 与 durable 查询/等待同样的授权、取消及未知语义 |
 | `SagaClient.findStart`（suspend） | `flowName, startKey` → `Lookup<SagaReceipt>` | 按原启动键恢复引用，不要求调用方已知道 sagaId |
 | `SagaClient.cancel`（suspend） | `SagaRef, commandId, reason` → `CancelReceipt` | 持久取消意图，返回不等于补偿完成；同 commandId 幂等 |
@@ -497,7 +500,22 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 
 **处理器注册：** 启动期注册稳定 `HandlerId + schemaVersion`，freeze 后只读。`LocalHandler<I,O>` 在受控业务事务内执行，正常成功提交；明确拒绝/异常按 §8.11 回滚。`ExternalHandler<I,O>` 的 execute/query 接口在无业务事务环境执行，必须声明对端幂等窗口、权威查询能力和恢复策略。不能以“可查询”声称查询总能证明未执行。SagaDefinition 以稳定步骤 ID、方向、输入/输出 codec、补偿规则和期限注册；不持久化函数引用、KClass 名或捕获闭包作为流程身份。
 
-**数据库新增契约：** database 层提供 `requireTransactionProof(resourceId)` 的候选能力，返回由它创建、不可序列化且不可由业务构造的证明；含资源、事务代次与活动状态，随外层提交/回滚失效。每次 enqueue 校验当前协程事务与证明匹配，不使用线程局部变量，不允许跨协程并行复用。现有 DbContext 继续拥有提交，durable 不能提前 commit。持久接收入口必须拥有顶层事务边界；存在调用方事务时拒绝，不伪装独立事务。COMMIT 中断后的 UNKNOWN 是观测结果，不能由“取消应回滚”的本地约定推断服务器已经回滚；该澄清须同步评审 database-session。
+**数据库内部桥契约：** `requireTransactionProof(resourceId)` 降为 database/durable 内部 SPI，不作为普通业务调用。证明由 database 创建、不可序列化，含资源、事务代次和活动状态，随外层提交/回滚失效；扩展事务入口在调用用户 block 前获取 gate 并绑定证明。每次 enqueue 校验当前协程事务与证明匹配，不使用线程局部变量、不允许跨协程并行复用。已准备的同资源 JOIN 复用证明；未准备的外层事务一律拒绝，不靠猜测它是否已经执行 SQL 来补 enlist。DbContext 继续拥有提交，durable 不提前 commit，不另起事务引擎。持久接收入口必须拥有顶层事务边界；COMMIT 中断仍是 UNKNOWN，不能从调用方取消推断服务器回滚。
+
+**推荐使用方式（候选，非当前可运行代码）：**
+
+```kotlin
+// 无业务数据库联动：持久接收后返回本方回执。
+val receipt = durable.submit(submission)
+
+// 业务写入和事件同一事务；submission 的稳定键由业务操作确定。
+db.transaction(durable) {
+    orders.insert(order)
+    durable.enqueue(submission)
+}
+```
+
+重载定义在 neton-durable，复用 DbContext，不让 neton-database 反向依赖 durable。不要求用户传 gate、lease、manifest、epoch 或 TransactionProof；这些只在内部与受保护运维接口出现。稳定业务键、逻辑目标和是否需要业务结果仍显式声明，不能为了简短自动换键重试。事务 block 的返回值不赋予 EnlistedMessage 已提交语义，只有外层成功返回才说明本方事务已提交；加入外层事务时仍遵守 JOIN。取消/COMMIT 未知使用原键查证。允许修改草案 API，不为旧候选签名维护兼容门面；现有无 durable 的 `db.transaction { }` 保持原有语义和开销。公开用法必须有独立、同库事务、Saga 启动三种最小编译样例及作用域误用反例。
 
 **SPI：** `DurableStore` 提供 §8.12 的语义操作，返回 `Applied(newVersion)`、`AlreadyApplied(snapshot)`、`Conflict(snapshot)`、`UnknownCommit(recoveryKey)`；recoveryKey 是调用前已知的类型化提交/启动/管理键，worker 则用原记录 ID 与动作代次查证；不能将数据库异常一律翻译成 NotFound。`DurableTransport.deliver/query` 返回经过验证的协议结果或不确定传输结果，不直接改存储。原子批次限制在同一资源，不公开一个任意跨库 transaction(block) 冒充原子性。首版业务 API 走显式组件安装，不新增扫描式装配。
 
@@ -600,7 +618,7 @@ FROZEN 的授权维护写入不是普通路径后门：逐批校验 migrationId�
 
 激活事务原子提交本资源 ACTIVATED、递增 epoch 和 OPEN；同资源恢复位置不变，跨资源必须先将源端持久设为 RETIRED 且保证源执行者失去写/发送能力，再开放目标。中间故障允许不可用，不允许双主。旧 token、上传完成和续租拒绝；逻辑引用由可信路由解析新权威资源。源尚未 RETIRED 时，取消迁移也要另行授权并查证目标从未激活/外发；源已 RETIRED 则只按下文原计划恢复或另行对账，不通过回退直接改回 OPEN。
 
-**事务桥锁序与自等待：** 仅启用 durable 的事务在第一条业务 SQL 前显式 enlist **一个**同库资源，获取 gate 后由 database 创建 TransactionProof；同外层事务及 JOIN 嵌套调用只复用证明，不重复取 gate/连接。晚 enlist、跨库、跨协程并行使用或 shared→exclusive 升级直接拒绝；证明失效后不可续用。管理屏障不得从业务事务中调用。事务内禁止 awaitResult、外部载荷 I/O、等待迁移完成和另开连接续 reader；锁/事务/连接池等待均受限。业务锁与 durable 行之间仍可能发生普通数据库死锁，发现后整个本地事务回滚，框架不自动重跑任意业务闭包；不能承诺仅凭框架锁序排除业务死锁。以上是数据库事务桥待评审变更，不是假定现有 DbSession 已支持。
+**事务桥锁序与自等待：** 用户通过 `db.transaction(durable)` 选择联动，框架在用户 block 前内部 enlist **一个**同库资源，获取 gate 并创建内部 TransactionProof；已准备的同外层事务及 JOIN 只复用证明，不重复取 gate/连接。未准备的外层事务、跨库、跨协程并行使用或 shared→exclusive 升级直接拒绝；证明失效后不可续用。管理屏障不得从业务事务中调用。事务内禁止 awaitResult、外部载荷 I/O、等待迁移完成和另开连接续 reader；锁/事务/连接池等待均受限。业务锁与 durable 行之间仍可能发生普通数据库死锁，发现后整个本地事务回滚，框架不自动重跑任意业务闭包；不能承诺仅凭框架锁序排除业务死锁。以上是数据库事务桥待评审变更，不是假定现有 DbSession 已支持。
 
 **性能预算：** durable 未安装或事务未参与时不取 gate；只读状态查询、内联载荷读取不写 reader。一个参与事务至多获取一次 shared gate并读一次控制状态，可批量 enqueue，不为每条消息再校验控制行；元数据查证使用短快照，不把整个 awaitResult 保持为长事务。禁止按请求/消息创建 advisory key，锁数量随存储资源而非请求量增长。高频共享对象的 reader 行数、续租频率、持锁时长有上限，不能为节约 SQL 共享跨主体租约。验收分别记录 gate 获取失败/重试、DB 往返、WAL、锁等待、池占用、p99 与吞吐；与等价正确性基线对比，性能闸门数值在实施前按硬件与负载冻结，达标前不宣称优化成功。
 
@@ -620,6 +638,8 @@ manifest 以固定源快照、迁移 codec/映射版本、逻辑身份与转换�
 
 **目标预留与激活幂等：** 跨库计划绑定目标可信资源身份、incarnation 与预留 epoch，而不只是地址/库名。目标在 FROZEN 中持久预留该计划后，源端才能提交匹配的 retirementReceipt；目标预留/计划身份进入 planDigest，控制者接管不得改目标。激活事务先查原计划 activationReceipt：已激活且摘要一致返回原回执，不再次增加 epoch；否则核对本地预留身份、verifiedVersion 和源退休证明后原子写回执及 OPEN。旧回执不能用于目标重建或不同 incarnation；目标从备份还原须按 §8.12/§8.17 灾难恢复隔离查证，不当作普通接管。凭证不能自动识别未经登记的整库克隆，部署约束必须禁止同一资源身份同时运行两份可写克隆；无法证明唯一性时不激活。首版不实现跨库共识或自动改绑目标，原目标不可恢复时明确停在人工对账，不宣称自动收敛。
 
+**批次逻辑身份与物理尝试：** batchId 在首次复制前固定，其请求摘要覆盖源快照、确定的键范围/逻辑内容摘要、转换版本和逻辑目标，不把 controllerToken、attemptId 或尚未选定的目标对象 key 混入幂等请求摘要。物理 key/objectVersion 是该尝试提交时选定的结果，第一次合法批次提交将其与载荷引用/回执原子固定。重试先查原批次回执；原批次已提交则返回原绑定，不能用新复制对象替换并重复推进 manifest。原批次未提交时，新尝试须校验源内容一致、目标对象摘要/大小正确，再提交自己的绑定；多次尝试只能有一次合法提交。未获选对象保留已登记的回收责任；所有批次选定的物理对象版本必须纳入最终 manifest，不能借“逻辑相同”绕过对象完整性核验。
+
 ### 8.18 r5 交叉评审与补充验收
 
 | 级别 | r5 矛盾/遗漏 | r6 处理 |
@@ -633,7 +653,7 @@ manifest 以固定源快照、迁移 codec/映射版本、逻辑身份与转换�
 
 新增 DC-23：RESULT 重复/丢回执不产生结果循环；DC-24：本地 handler 写入后拒绝，业务修改全部回滚；DC-25：换 messageId 保持同 invocation/startKey，不重复动作/流程；DC-26：结果先于 ACK、完成与续租竞争、锁内跨期限，仅一次合法推进；DC-27：迁移中断/回滚、旧 worker 复活和不兼容状态写入被阻止；DC-28：清理身份保护、payload 引用与活动流程竞争，不丢恢复依据。
 
-公共 API 验收还包括：Kotlin/Native 编译样例、取消语义、不可伪造/过期事务证明、嵌套事务待提交句柄不可当 ACK，以及零业务 DB 的外部 API 编排。schema 验收必须运行真实 DDL、唯一约束、CHECK、并发锁顺序和 expand/contract 测试；文档构建不能证明这些用例已通过。全部 DC-01–52 与 API/schema/协议测试是整套交付条件。
+公共 API 验收还包括：Kotlin/Native 编译样例、取消语义、不可伪造/过期事务证明、嵌套事务待提交句柄不可当 ACK，以及零业务 DB 的外部 API 编排。schema 验收必须运行真实 DDL、唯一约束、CHECK、并发锁顺序和 expand/contract 测试；文档构建不能证明这些用例已通过。全部 DC-01–54 与 API/schema/协议测试是整套交付条件。
 
 ### 8.19 r6 交叉评审：恢复契约的可表达性
 
@@ -693,6 +713,15 @@ manifest 以固定源快照、迁移 codec/映射版本、逻辑身份与转换�
 | P1 | targetResourceId 未区分重建代次，激活重试未规定固定结果 | 目标预留 incarnation/epoch、固定激活回执；恢复旧备份走灾难恢复，不能重放旧授权 | DC-52 |
 
 不新增状态机阶段、服务或模块：沿用 gate、nd_control、批次表和既有载荷生命周期。无法证明原目标唯一可写或外部 I/O 隔离时保持人工待核查，是安全边界，不以自动换目标掩盖未知。当前规范闭环仍须由实际 DDL、控制者进程故障、对象存储及恢复演练证明；本轮只有文档修订。
+
+### 8.24 r11 恢复与使用方式复审
+
+| 级别 | r11 缺口 | r12 处理 | 验收 |
+|---|---|---|---|
+| P1 | 批次请求摘要未区分逻辑输入与对象复制尝试；换 attempt 重试可能冲突或替换已提交对象 | batchId/逻辑摘要稳定；物理绑定是首次提交结果；重试返回原回执，多余对象回收 | DC-53 |
+| P2 | 用户必须传递 TransactionProof 与分别记忆 Transactions facade，泄漏内部锁序 | 使用既有 DbContext 事务入口扩展；proof 内部化，enqueue/submit 仍明确区分提交边界 | DC-54 |
+
+这轮未发现需要新增迁移阶段或协调服务的依据，保留已有控制权、manifest 和目标激活协议；没有将静态复审等同于实现验证。管理 API 与 CLI 面向运维，不混入普通业务示例。草案 API 按合理用法直接调整，不保留无价值的旧候选兼容层；所有候选仍须编译与故障验证。HTTP 契约生成和少量文档注解见 §11.3.1，与 durable 的操作状态 ID 分开命名，不因都有 operationId 就混用身份。
 
 ## 9. CQRS：按需分离，不强制事件溯源（P1）
 
@@ -783,6 +812,51 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 - 契约差异按请求与响应方向检查兼容性；新增必填请求字段、移除响应字段等反例能被识别，不声称覆盖所有语义兼容问题。
 - 更换受支持传输实现不重写业务 DTO；不支持的流式或编码能力在构建/装配时拒绝，不能静默缓存全量内容降级。
 
+#### 11.3.1 OpenAPI 与少量语义注解（P0，候选设计）
+
+**结论：支持，目标是可执行、可追溯的 HTTP 契约，不是为每个字段再写一遍 Swagger 注解。** OpenAPI 可供人和工具理解 HTTP 接口；对于 AI 编程，生成文档、客户端、请求样例和兼容性检查比增加 DSL 更有价值。它不自动证明业务正确，也不授予 AI 调用权限。规范参考 [OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html)；首个导出 profile 固定 3.1.1 的明确子集，不称其为最新版，不默认宣称兼容所有 3.x 工具。
+
+**源码核对基线：** neton `37c92fe` 的 `neton-core/.../annotations/HttpAnnotations.kt` 已有 HTTP 方法、Body、PathVariable、Query、Header、Cookie；`neton-ksp/.../ControllerProcessor.kt` 已生成 RouteDefinition 与返回值 serializer，并传递安全元数据；`neton-validation` 已有 Min/Max/Size 等注解。在本轮检查的 core/routing/KSP 中未发现 OpenAPI exporter。复用这些事实来源，不能把下面的候选能力描述成已完成。
+
+| 信息 | 权威来源 | 不允许的做法 |
+|---|---|---|
+| 方法、路径、参数位置、wire 名称 | 实际路由与绑定规则；路径/查询别名必须一致 | ApiOperation 再声明一份不同路径 |
+| 请求/响应结构 | serializer 描述、SerialName、泛型实参、可空/缺省规则及实际响应包装策略 | 仅用 Kotlin 属性名猜 JSON，或把可空当可省略 |
+| 输入约束 | 已安装并真实执行的 validation 规则 | 只在文档声明 Min，却不执行校验；不能等价映射时静默近似 |
+| 安全要求 | 路由组最终装配、安全声明和显式 scheme 映射 | 文档注解绕过 RequireAuth，或暴露内部角色/权限清单 |
+| 人类/AI 可读意图 | 可选 ApiOperation/ApiField 描述、标签、脱敏 examples、弃用原因 | 从函数名自动编造业务语义或真实用户样例 |
+| 状态码与错误 | 实际响应类型/全局错误映射，无法推导部分显式 ApiResponse | 扫描函数体声称穷尽所有可能错误 |
+
+候选注解放 `neton.routing.annotations`，只做薄元数据：`ApiOperation(id, summary, description, tags)`、`ApiField(description)`、`ApiResponse(status, description, body)` 与显式文档可见性；仅补无法从代码推导的语义。复用已有 Deprecated、序列化与校验声明，不再造另一套 required/min/max/type 注解。注解的 body 类型无法表达泛型/自定义 serializer 时，使用显式 typed schema contributor，不使用 Any 或错误的对象占位。普通接口不写任何文档注解也必须能生成结构契约。
+
+```kotlin
+// 候选用法，尚未实现；路径、参数和响应类型不在 ApiOperation 中重复声明。
+@Get("/orders/{id}")
+@ApiOperation(id = "orders.get", summary = "查询订单", tags = ["orders"])
+suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
+```
+
+**与 DSL/KSP 的关系：** Controller 的结构信息由 KSP 提取；DSL 使用同一 typed route/contract 元数据，不要求业务改写成 Controller。KSP 不执行任意路由闭包，纯手写 HttpContext、动态路由或返回任意 Response 的路径无法可靠推导时，发布构建必须要求显式契约或显式排除并输出清单，不能悄悄漏掉接口。不存在/重复的 operationId、冲突的参数位置、覆盖实际 wire 类型等在构建时报源码位置。operationId 使用稳定 routeId 的确定性映射或显式 ID；不能因生成器排序、文件移动改变，导出差异纳入兼容性报告。
+
+**产物与边界：** neton-ksp 输出版本化契约片段；构建任务聚合 Controller、DSL 与最终装配的安全/响应策略，再导出 openapi.json、静态调用文档和构建摘要。注解不引入运行期扫描，未启用文档服务时无后台任务。KDoc 可作为说明来源，但优先级必须固定，不能覆盖结构声明。请求与响应可有不同 schema（包括只读/只写字段）；nullable、optional、default、空 body、204、泛型和精确数值分别测试。生产动态配置无法在构建时冻结的部分要求显式部署 profile 或标为未解析并阻止该 profile 发布，不生成一份假装适用于所有部署的完整文档。
+
+静态文档优先，不强制新增独立运行时模块；Swagger UI/其他展示器只是可选消费者。发布文档和在线 Try it out 分开开关，生产默认不开放在线调试或后台管理契约；不用 URL/配置实值推导 secrets、内网地址或租户数据。隐藏文档不等于鉴权。导入第三方 OpenAPI 的远程 $ref 默认禁止联网解析，允许源须显式配置、锁版本/摘要并限大小和深度；描述与 examples 当作不可信文本处理，不作为 AI 的系统指令。
+
+**AI 使用边界：** 可生成可编译客户端、测试骨架和请求/响应示例；契约附 routeId、buildId、schema 摘要及内部源码映射，公开产物移除本机绝对路径。不得从 OpenAPI 自动将全部写操作暴露为 Agent/MCP 工具；如需工具化，必须另外配置白名单、身份、审批/幂等与预算。WebSocket 只描述 HTTP 握手和协议链接，不把双向消息冒充 HTTP operation；RPC/HTTP3 不为追求单一格式重写各自契约。
+
+**验收 OA-01～08：**
+
+| ID | 验收目标 |
+|---|---|
+| OA-01 | 无新增注解的 Controller 与 typed DSL 生成一致契约；动态/未知路由显式报缺口 |
+| OA-02 | serializer/运行期验证/schema 三方正反例一致，覆盖别名、可空/缺失/默认、泛型、数值与自定义 codec |
+| OA-03 | 注解与真实路由/类型/安全冲突、重复 ID 在构建时失败并定位源码 |
+| OA-04 | 固定构建输入产物确定；移动源码不改变 operationId；请求/响应方向的破坏性差异可见 |
+| OA-05 | 选定 OpenAPI validator 校验通过；生成客户端实际编译、与服务端网络往返，不只渲染页面 |
+| OA-06 | 文档和真实错误/状态码/媒体类型一致；未覆盖的动态行为不伪称完整 |
+| OA-07 | 生产默认无调试入口/敏感样例；远程引用、描述脚本/注入、超大 schema 的负例被处理 |
+| OA-08 | durable 使用示例及独立、事务、Saga 的客户端说明区分“已接收/已提交/已完成/未知”，不生成自动换键重试 |
+
 ### 11.4 可追溯诊断：参考 Rust 与 Swift 的分层
 
 **参考依据：** [Rust tracing](https://docs.rs/tracing/latest/tracing/)提供 span、event 和 subscriber；[Swift Service Context](https://github.com/apple/swift-service-context)提供类型安全的上下文容器，[Swift Distributed Tracing](https://github.com/apple/swift-distributed-tracing)提供追踪接口。
@@ -845,14 +919,14 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 |---|---|---|---|
 | N12-01 | A / P0 | 当前能力、平台、依赖和运行验证矩阵 | 每项有源码与测试依据，缺口明确 |
 | N12-02 | A / P0 | 应用 Manifest、架构约束与构建追溯（§11.2） | 确定性生成、错误装配反例、源码定位 |
-| N12-03 | A / P0 | API 契约一致性与变更检测（§11.3） | schema/serializer/客户端往返测试 |
+| N12-03 | A / P0 | API 契约一致性、OpenAPI 自动文档与少量语义注解（§11.3–11.3.1） | OA-01～08；schema/serializer/客户端往返、未知路由与安全发布负例 |
 | N12-04 | A / P0 | 调用预算、结构化并发与 drain（§6、§11.6） | 可控时钟、取消、超时和停机竞态测试 |
 | N12-05 | A / P0 | 诊断 SPI、trace/metrics 可选适配（§11.4） | 敏感数据检查、过载与关闭验证 |
 | N12-06 | A / P0 | 静态/DNS 发现、客户端池与故障策略（§11.5–11.6） | 多实例、断网、恢复、无重试风暴 |
-| N12-07 | A / P0 | neton-durable、内部数据库桥、可靠交付与恢复（§8.3–8.7、8.11–8.23） | API/schema/迁移及事件边界评审；DC-01–05、09–15、17–21、23–52 中适用场景 |
+| N12-07 | A / P0 | neton-durable、内部数据库桥、可靠交付与恢复（§8.3–8.7、8.11–8.24） | API/schema/迁移及事件边界评审；DC-01–05、09–15、17–21、23–54 中适用场景 |
 | N12-08 | A / P0 | 性能回归、可复现证据与发布闸门 | 普通 HTTP/WS/多系统混合负载 |
 | N12-09 | B / P1 | 一个真实注册中心适配 | 租约、权限、过期、滚动退出 |
-| N12-10 | B / P1；整套交付必选 | neton-saga 完整闭环（§8.8–8.23），非仅原型 | 依赖 N12-07；DC-01–52 及三服务业务不变量、运维与迁移 |
+| N12-10 | B / P1；整套交付必选 | neton-saga 完整闭环（§8.8–8.24），非仅原型 | 依赖 N12-07；DC-01–54 及三服务业务不变量、运维与迁移 |
 | N12-11 | B / P1 | CQRS 示例与投影支持 | 重复、乱序、重建、读写一致性说明 |
 | N12-12 | B / P1 | 开发设施与集成测试工具 | 可重复启动/清理，不影响宿主环境 |
 | N12-13 | 调研 / P2 | 独立统一网关可行性 | 与现成代理的差距、成本和实测，不先建产品 |
@@ -872,7 +946,7 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 
 ## 14. 兼容性与不做事项
 
-1.2.0 优先增量兼容，现有 HTTP/WebSocket 应用不必启用发现、CQRS、Saga 或网关。破坏性变更不能只靠改草案合法化，必须有迁移方案与版本策略评审。
+1.2.0 草案优先正确性、简约用法和长期边界；不合理的候选 API 直接重设计，不为历次草案保留兼容包装。现有 HTTP/WebSocket 应用不必启用发现、CQRS、Saga 或网关。若最终修改已发布 API，需要记录迁移说明和发布策略，但不能以兼容旧设计为由继续暴露不合理的机制；本任务不执行实现或发布。
 
 新事件和持久化状态需要前后版本混跑验证；新增稳定 API 先通过契约套件，实验 API 明确标识。文档、配置 schema、诊断字段与实现一起交付。
 
