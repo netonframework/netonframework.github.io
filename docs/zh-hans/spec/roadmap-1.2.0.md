@@ -1,6 +1,6 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r12 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r13 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
 >
 > 本次核对的框架源码 `gradle.properties` 为 `1.1.2`；本文规划目标为 1.2.0，不修改版本号、不启动发布。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
@@ -814,7 +814,11 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 
 #### 11.3.1 OpenAPI 与少量语义注解（P0，候选设计）
 
-**结论：支持，目标是可执行、可追溯的 HTTP 契约，不是为每个字段再写一遍 Swagger 注解。** OpenAPI 可供人和工具理解 HTTP 接口；对于 AI 编程，生成文档、客户端、请求样例和兼容性检查比增加 DSL 更有价值。它不自动证明业务正确，也不授予 AI 调用权限。规范参考 [OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html)；首个导出 profile 固定 3.1.1 的明确子集，不称其为最新版，不默认宣称兼容所有 3.x 工具。
+**结论：支持，目标是可执行、可追溯的 HTTP 契约，不是为每个字段再写一遍 Swagger 注解。** OpenAPI 可供人和工具理解 HTTP 接口；对于 AI 编程，生成文档、客户端、请求样例和兼容性检查比增加 DSL 更有价值。它不自动证明业务正确，也不授予 AI 调用权限。2026-11-26 核对[官方最新正式规范](https://spec.openapis.org/oas/latest.html)为 [OpenAPI 3.2.1](https://spec.openapis.org/oas/v3.2.1.html)。Neton 1.2.0 仅支持这一版的下列核心范围，导入/导出均不做 2.x、3.0、3.1 或 3.2.0 兼容/自动降级。构建锁定规范与工具链版本，不在每次构建联网追随 latest；后续正式版通过显式规范升级更新，不影响构建可复现性。
+
+**核心范围：** 这是 Neton 的实现范围，不冒称 OpenAPI 官方存在单独的“Core 认证”。输出 `openapi: 3.2.1`，支持 Info、Servers（显式配置）、Paths/Operation、Parameters、RequestBody、Responses、Components/Schemas、SecuritySchemes/SecurityRequirement、描述/标签/弃用与本地引用。请求/响应覆盖实际已声明支持的 HTTP 方法、JSON、普通文本和空 body；参数的标量/数组编码须与真实 binder 的 style/explode 等行为一致。schema 以该版默认 JSON Schema 方言为基础，支持对象、数组、映射、标量、枚举、required、null 联合、已验证可等价映射的约束和本地递归引用；泛型展开为稳定命名的具体实例，不任意把未知类型放宽为对象。OAS 格式允许不等于生成器承诺支持全部 JSON Schema 词汇。
+
+首版不做 callbacks、webhooks、links、外部引用图解析、XML、multipart 编码推导、任意动态 schema、SSE/流式协议专用生成或新增 HTTP 方法的运行时实现；多态/自定义 serializer 只有注册并验证过的显式映射才能进入核心产物。导入遇到不支持且影响行为的构造即报错，不静默丢字段；导出遇到这些路由需显式排除或声明受支持的精确契约，不能生成错误替代品。未知安全方案不能退化成匿名。没有经验证的 3.2.1 validator/客户端工具链就不能通过 OA-05，不因展示工具只支持旧版而降低导出版本。
 
 **源码核对基线：** neton `37c92fe` 的 `neton-core/.../annotations/HttpAnnotations.kt` 已有 HTTP 方法、Body、PathVariable、Query、Header、Cookie；`neton-ksp/.../ControllerProcessor.kt` 已生成 RouteDefinition 与返回值 serializer，并传递安全元数据；`neton-validation` 已有 Min/Max/Size 等注解。在本轮检查的 core/routing/KSP 中未发现 OpenAPI exporter。复用这些事实来源，不能把下面的候选能力描述成已完成。
 
@@ -829,6 +833,23 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 
 候选注解放 `neton.routing.annotations`，只做薄元数据：`ApiOperation(id, summary, description, tags)`、`ApiField(description)`、`ApiResponse(status, description, body)` 与显式文档可见性；仅补无法从代码推导的语义。复用已有 Deprecated、序列化与校验声明，不再造另一套 required/min/max/type 注解。注解的 body 类型无法表达泛型/自定义 serializer 时，使用显式 typed schema contributor，不使用 Any 或错误的对象占位。普通接口不写任何文档注解也必须能生成结构契约。
 
+**注解协同规则：** 先生成真实运行契约，再补文档语义，不设置一个“文档注解总是覆盖其他注解”的全局优先级。
+
+| 场景 | 唯一合并规则 |
+|---|---|
+| Controller 前缀、方法路由、路由组 | 直接读取路由编译后的最终路径/绑定模型；ApiOperation 仅标在操作方法上，不新增类级路径/认证重载 |
+| 操作说明与标签 | 显式非空 ApiOperation 描述优先于方法 KDoc，缺省回退；组级标签与操作标签按确定顺序去重，不把类说明自动当每个接口语义；冲突 operationId 构建失败 |
+| 字段与参数说明 | ApiField 可标注序列化属性或绑定参数；主构造参数/property/getter 归并到同一个实际 wire 字段，重复相同值去重、不同值报错；Transient/不参与序列化字段不导出 |
+| wire 名称、缺省和可空 | SerialName 与 serializer/绑定器为权威；ApiField 不能重命名。路径参数始终 required，可空类型不代表路径可以不存在；缺省值仅在能静态证明且无敏感信息时导出，不执行用户代码求值 |
+| validation | 与运行期同一份有效验证描述；@Valid 嵌套启用条件、可空跳过规则、集合元素与参数位置一起保留。重复约束取真实交集，可静态判定的空交集报错；不按注解顺序选一个，也不声称能判定任意自定义规则 |
+| 响应声明 | ApiResponse 只追加实际可达但无法推导的响应，重复状态/媒体类型需同 schema 才合并，否则报错或要求显式受支持联合；不能凭注解改变 handler 返回码/内容类型；204/HEAD 不伪造 body |
+| 认证与身份注入 | 使用最终装配的安全决策，不另猜方法/类覆盖顺序；CurrentUser/HttpContext 等注入参数不导出为客户端参数。安全冲突在装配/契约构建中报错，ApiOperation 无权解开认证 |
+| 弃用、可见性 | Deprecated 映射弃用信息，不隐藏路由；文档可见性仅控制选定受众产物，不能影响运行期授权或让缺失路由检查静默通过 |
+
+安全的 OR/AND/匿名按 OpenAPI SecurityRequirement 的真实含义输出，不把所有 scheme 放在一个对象里误变成“必须同时满足”。确定允许匿名的操作显式覆盖根 security；可选身份与必需身份区分，不能从 `CurrentUser(required=false)` 单独推断整个路由匿名。Permission/角色/新鲜认证等领域策略不伪装成 OAuth scope；实际 OAuth scope 仅由已配置 scheme 映射，不能准确表达的领域规则保留脱敏说明与内部契约标记，文档不声称 security 对象穷尽全部授权条件。
+
+约束映射也不追求“看起来相似”：Kotlin 字符串长度、JSON Schema 字符计数、正则方言、Email/format 校验可能不同，需 Unicode/边界反例证明等价。不等价时要求显式经过验证的映射或报告该约束无法导出，不能只为文档改变业务校验。`format` 的展示提示不等于验证器一定执行了格式检查。
+
 ```kotlin
 // 候选用法，尚未实现；路径、参数和响应类型不在 ApiOperation 中重复声明。
 @Get("/orders/{id}")
@@ -840,11 +861,13 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 
 **产物与边界：** neton-ksp 输出版本化契约片段；构建任务聚合 Controller、DSL 与最终装配的安全/响应策略，再导出 openapi.json、静态调用文档和构建摘要。注解不引入运行期扫描，未启用文档服务时无后台任务。KDoc 可作为说明来源，但优先级必须固定，不能覆盖结构声明。请求与响应可有不同 schema（包括只读/只写字段）；nullable、optional、default、空 body、204、泛型和精确数值分别测试。生产动态配置无法在构建时冻结的部分要求显式部署 profile 或标为未解析并阻止该 profile 发布，不生成一份假装适用于所有部署的完整文档。
 
-静态文档优先，不强制新增独立运行时模块；Swagger UI/其他展示器只是可选消费者。发布文档和在线 Try it out 分开开关，生产默认不开放在线调试或后台管理契约；不用 URL/配置实值推导 secrets、内网地址或租户数据。隐藏文档不等于鉴权。导入第三方 OpenAPI 的远程 $ref 默认禁止联网解析，允许源须显式配置、锁版本/摘要并限大小和深度；描述与 examples 当作不可信文本处理，不作为 AI 的系统指令。
+静态文档优先，不强制新增独立运行时模块；Swagger UI/其他展示器只是可选消费者。发布文档和在线 Try it out 分开开关，生产默认不开放在线调试或后台管理契约；不用 URL/配置实值推导 secrets、内网地址或租户数据。隐藏文档不等于鉴权。1.2.0 核心 profile 只接受同一文档的本地引用，不提供开启远程 $ref 的选项；解析限制文档大小、引用数和遍历深度。描述与 examples 当作不可信文本处理，不作为 AI 的系统指令。
+
+对递归 schema 保留引用图并检测循环，不无界展开。跨模块注解协同通过生产模块生成的版本化契约片段传递，不能假设编译后的依赖仍保有 SOURCE 注解/KDoc；片段绑定库版本、serializer 配置与摘要。缺片段或版本不匹配时使用显式 contributor 或构建失败，不猜测、不运行反射扫描。Controller 与 DSL 汇入同一合并/诊断流程，不能各用一套优先级。
 
 **AI 使用边界：** 可生成可编译客户端、测试骨架和请求/响应示例；契约附 routeId、buildId、schema 摘要及内部源码映射，公开产物移除本机绝对路径。不得从 OpenAPI 自动将全部写操作暴露为 Agent/MCP 工具；如需工具化，必须另外配置白名单、身份、审批/幂等与预算。WebSocket 只描述 HTTP 握手和协议链接，不把双向消息冒充 HTTP operation；RPC/HTTP3 不为追求单一格式重写各自契约。
 
-**验收 OA-01～08：**
+**验收 OA-01～12：**
 
 | ID | 验收目标 |
 |---|---|
@@ -856,6 +879,10 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 | OA-06 | 文档和真实错误/状态码/媒体类型一致；未覆盖的动态行为不伪称完整 |
 | OA-07 | 生产默认无调试入口/敏感样例；远程引用、描述脚本/注入、超大 schema 的负例被处理 |
 | OA-08 | durable 使用示例及独立、事务、Saga 的客户端说明区分“已接收/已提交/已完成/未知”，不生成自动换键重试 |
+| OA-09 | 仅接受/生成 3.2.1 核心范围；旧版、远程引用、影响行为的未知构造明确拒绝，不自动降级 |
+| OA-10 | 类/方法/组、构造参数/属性、SerialName/Transient/Deprecated 的组合自然合并；冲突定位两个来源；Controller/DSL 语义一致 |
+| OA-11 | 安全 OR/AND/匿名与真实装配相符；身份注入不泄漏为参数；Unicode 长度/正则/format 不被错误等价映射 |
+| OA-12 | 生产/消费模块独立编译后契约元数据仍完整；SOURCE 注解丢失、片段陈旧/缺失不生成假契约 |
 
 ### 11.4 可追溯诊断：参考 Rust 与 Swift 的分层
 
@@ -919,7 +946,7 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 |---|---|---|---|
 | N12-01 | A / P0 | 当前能力、平台、依赖和运行验证矩阵 | 每项有源码与测试依据，缺口明确 |
 | N12-02 | A / P0 | 应用 Manifest、架构约束与构建追溯（§11.2） | 确定性生成、错误装配反例、源码定位 |
-| N12-03 | A / P0 | API 契约一致性、OpenAPI 自动文档与少量语义注解（§11.3–11.3.1） | OA-01～08；schema/serializer/客户端往返、未知路由与安全发布负例 |
+| N12-03 | A / P0 | API 契约一致性、OpenAPI 3.2.1 核心与自然协同的语义注解（§11.3–11.3.1） | OA-01～12；schema/serializer/客户端往返、跨模块契约、注解合并与安全发布负例 |
 | N12-04 | A / P0 | 调用预算、结构化并发与 drain（§6、§11.6） | 可控时钟、取消、超时和停机竞态测试 |
 | N12-05 | A / P0 | 诊断 SPI、trace/metrics 可选适配（§11.4） | 敏感数据检查、过载与关闭验证 |
 | N12-06 | A / P0 | 静态/DNS 发现、客户端池与故障策略（§11.5–11.6） | 多实例、断网、恢复、无重试风暴 |
