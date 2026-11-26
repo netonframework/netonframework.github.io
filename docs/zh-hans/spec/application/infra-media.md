@@ -330,7 +330,7 @@ image_params = "tencent"               # tencent | aliyun | none
 | `GET /app/infra/media/policy` | 匿名；`{ strategy, validitySeconds?, bucketSeconds?, imageParams }`，`Cache-Control: public, max-age=300`。`none` 时 `validitySeconds` 是中转签名的有效期（600），`public` 时为空（永不过期），签名策略为桶长 + 宽限期 |
 | `GET /app/infra/media/url/{fileId}?variant=` | 匿名；与 `resolve` 同一可见性判断，返回当前桶的 `{ url, expiresAt? }`；`variant` 不在档位表 → 400 `MEDIA_VARIANT_UNKNOWN`；档位不存在（未开图片处理、比原图宽）给原图；看不到 → 404 `FILE_NOT_FOUND`；按 IP 每分钟 120 次（`MEDIA_URL_RATE_LIMITED`）；`Cache-Control: private, max-age=60` |
 
-**CDN 回源**：CDN 地址是 `{base_url}/{infra_files.path}`，`path` 是存储源里的对象键（内容寻址：`{系统前缀}/{assetDir}/{sha[0..2]}/{sha[2..4]}/{sha}.{ext}`）。所以 CDN 的源站就是对象存储的桶（S3 / COS / OSS），回源路径与对象键一一对应；B / C 型的签名段由 CDN 去掉后再回源，源站不需要任何特殊处理，也不需要后端参与。
+**CDN 回源**：CDN 的源站是对象存储的桶（S3 / COS / OSS）。回源路径使用存储源解析后的物理对象键。标准 Infra 上传在存储根为空时直接使用 `infra_files.path`，路径包含系统前缀和 `assetDir`。应用自管的存储源配置桶内根前缀时，适配层把该前缀与 `infra_files.path` 中的业务相对路径拼接一次。参见[存储源根目录与业务路径](./infra-file-config.md#存储源根目录与业务路径)。B / C 型的签名段由 CDN 去掉后再回源。
 
 **本地假 CDN（开发与 e2e）**：本地存储源（`storage.conf` 的 `type = "local"`、`basePath`）没有公网地址，假 CDN 直接读存储根目录即可，不需要后端新增回源路由：
 
