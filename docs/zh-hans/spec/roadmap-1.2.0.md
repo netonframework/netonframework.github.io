@@ -1,6 +1,6 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r5 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r6 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
 >
 > 本次核对的框架源码 `gradle.properties` 为 `1.1.2`；本文规划目标为 1.2.0，不修改版本号、不启动发布。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
@@ -227,7 +227,7 @@ Saga 状态与消息意图必须能在同一持久事务提交；不同数据库
 
 **Outbox：** 发送记录与业务变更复用同一个 DbSession/事务。提交后 worker 用短事务 claim，在数据库事务外执行网络发送，再以 claim token 条件更新结果。传输持久接收与最终消费完成分开记录；发送成功后本地确认丢失会重发，因此只能承诺至少一次。首版明确轮询批次、并发、积压容量与退避上限。
 
-**Inbox：** `(可信来源, 租户, 消费者, messageId)` 唯一约束与业务更新在同一事务内生效，重复并发不能靠“先查再写”判断。处理失败回滚本地效果。同步处理模式在业务提交后确认；异步接收模式先持久保存完整载荷/有效引用和待处理状态，才返回 RECEIVED，随后由可恢复 worker 执行“业务更新 + COMPLETED”事务。重复收到 RECEIVED 不能被当成已处理而删除；先 ACK 再只在内存排队不合格。外部调用不能长时间占着此事务，转为持久外部步骤执行。
+**Inbox：** `(可信来源, 租户, 消费者, messageId)` 唯一约束保证接收身份不重复，业务 operation 的完成状态与业务更新同事务生效；接收身份存在本身不证明业务执行过，不能靠“先查再写”判断。处理失败回滚本地效果。同步处理模式在业务提交后确认；异步接收模式先持久保存完整载荷/有效引用和待处理状态，才返回 RECEIVED，随后由可恢复 worker 执行“业务更新 + COMPLETED”事务。重复收到 RECEIVED 不能被当成已处理而删除；先 ACK 再只在内存排队不合格。外部调用不能长时间占着此事务，转为持久外部步骤执行。
 
 协议明确 RECEIVED、COMPLETED、REJECTED、UNKNOWN 的含义与关联操作 ID；传输成功最多按适配声明证明持久接收。Saga 等待业务结果，结果消息本身也必须可靠投递或可查询。相同消息身份还绑定载荷摘要，重复身份但载荷变化隔离报错；接收方在转换之前核验稳定摘要，不能因 codec 升级误判为新消息。
 
@@ -296,6 +296,12 @@ COMMIT 成功但连接断开可能导致调用方不知道提交结果：应按�
 | DC-20 | 嵌套事务返回后外层回滚 | 不提前发 durable ACK，不投递未提交事件 |
 | DC-21 | 备份回退丢失已确认的状态 | 隔离发送并对账，不自动重放造成重复副作用 |
 | DC-22 | 取消与最后一步成功并发 | 合法条件提交决定结果；迟到副作用不被丢弃 |
+| DC-23 | RESULT 重复、回执丢失 | 不产生结果确认循环，消息重投不重复推进 |
+| DC-24 | 本地 handler 写入后业务拒绝 | 业务修改先全部回滚，FAILED 独立持久化 |
+| DC-25 | 换 messageId 重发同 invocation / startKey | 不重复业务动作或 Saga；内容变化拒绝 |
+| DC-26 | 结果先于 ACK、续租与完成竞争、锁内跨租约期限 | 一次合法提交，无过期网络 worker 强写 |
+| DC-27 | schema/旧表迁移中断或回滚、旧 worker 复活 | 无双执行、不丢身份；不兼容写入被阻止 |
+| DC-28 | 清理与活动流程、payload 引用竞争 | 身份保护和有效载荷不提前删除，恢复依据完整 |
 
 端到端场景最终校验订单、库存、支付账目之间的业务不变量，以及持久记录、计时器、连接和 worker 的释放；不能只断言返回 200 或最终有一条成功日志。输出每次故障的提交摘要、恢复轨迹、最终业务状态、重复次数与资源指标。
 
@@ -315,11 +321,11 @@ COMMIT 成功但连接断开可能导致调用方不知道提交结果：应按�
 | P2 | 事件投递器/jobs/客户端的重试与生命周期所有权可能重叠 | §8.3 单一状态权威与统一 attempt 预算；DC-11、13 |
 | P2 | 大载荷引用的提交与回收缺少时序规则 | §8.6 外部引用生命周期；DC-19 |
 
-状态迁移、存储原子批次和传输确认的候选契约已在 r5 的 §8.11–8.14 补齐，尚未通过实现验证。开始运行时代码前仍须评审公共 API 映射、事件 v1 兼容桥与迁移方案、幂等期限/墓碑配置及容量/故障注入参数。不能仅凭本路线图冻结全部接口。目标是先把不变量写成可执行契约，再实现；不是声称设计已无任何漏洞。
+状态迁移、存储原子批次和传输确认见 §8.11–8.14；r6 的公共 API、schema 与迁移候选见 §8.15–8.18。均未通过实现验证。开始运行时代码前仍须评审事件 v1 和 database-session 的显式变更、各平台接口可表达性、容量参数及具体迁移 SQL。不能仅凭本路线图冻结全部接口。
 
 ### 8.11 状态迁移契约
 
-以下状态是语义标识，不是已发布 Kotlin 枚举。每个聚合有独立 version；所有变更按预期版本条件提交。worker 变更还检查未过期 owner token；外部回调通过认证和 invocation 身份校验后，由当前处理者提交，不接受回调自称 owner。
+以下状态是语义标识，不是已发布 Kotlin 枚举。每个聚合有独立 version；所有变更按预期版本条件提交。worker 操作在获取提交所需行锁后检查 token 与租约；短本地事务取得有效锁后可持锁完成有界事务，期间租约自然到期不使已获锁的提交权失效，其他领取者必须等待/跳过锁行。未获得锁时已过期则拒绝。网络期间不得持锁，网络回来后必须重新校验；外部回调只携带操作身份，不接受其自称 owner。
 
 #### A. 单一目的地的投递记录
 
@@ -351,16 +357,21 @@ HANDED_OFF 不再自动重发：接收方已承担持久恢复责任。接收方
 | UNKNOWN | 权威证据确认结果 | SUCCEEDED / FAILED；记录证据和结果 Outbox |
 | UNKNOWN | 权威确认未执行且仍在安全窗口 | RETRY_WAIT；保持业务幂等键 |
 | 非终态 | 预算耗尽/版本缺失/无法安全恢复 | NEEDS_ATTENTION；保留待处理责任和诊断 |
+| NEEDS_ATTENTION | 授权恢复且版本/证据有效 | RETRY_WAIT 或 UNKNOWN；不能直接重置成新操作 |
 
 旧文中 COMPLETED 是完成的统称，具体结果必须区分 SUCCEEDED/FAILED。SUCCEEDED/FAILED 的结果不可覆写；重复一致结果返回原记录，矛盾结果隔离。NEEDS_ATTENTION 不是可清理的成功终态；人工恢复必须提供证据、预期版本和恢复目标，不允许裸 `setStatus`。
 
 本地模式失败后若恢复状态尚未来得及保存就崩溃，旧 RUNNING 的租约回收负责再次执行；业务事务回滚或已提交的终态决定是否允许执行，不能仅据 RUNNING 字样判断。对已接受的工作，取消 HTTP 等待者不撤销它；worker 取消同样不得提前 ACK 完成。
+
+本地 handler 的确定业务拒绝必须先回滚本次全部业务写入，再在新的短恢复事务中以有效所有权保存 FAILED 与可选结果 Outbox；不能 catch 异常后在原业务事务提交部分修改。异常与取消保持现有数据库语义，只有明确的业务拒绝被分类为 FAILED；提交结果不明先查询原记录。失败记录尚未提交时崩溃允许重新执行已回滚的本地事务。需要“写入拒绝记录”等业务副作用时，必须另行建模为成功的领域动作，不偷换 FAILED 含义。
 
 #### C. Saga 与步骤
 
 | 原状态 | 条件/事件 | 新状态与原子效果 |
 |---|---|---|
 | 无 | 有效且幂等的启动请求 | RUNNING；固定流程版本、输入摘要和首步计划 |
+| RUNNING | 启动后尚未计划首步就重启 | 扫描恢复同一流程，CAS 计划首步，不能创建第二流程 |
+| RUNNING | 无在途步骤且取消意图有效 | COMPENSATING 或 COMPENSATED；没有补偿项时结束并记录取消原因 |
 | RUNNING | 发出下一步 | WAITING；步骤 PREPARED、操作键、补偿责任和命令 Outbox 同事务提交 |
 | WAITING | 当前步骤权威成功 | RUNNING 或 SUCCEEDED；步骤成功和下一步计划/最终结果同事务提交 |
 | WAITING | 确定业务失败/可安全取消 | COMPENSATING；冻结前向计划，生成首个安全补偿意图 |
@@ -368,8 +379,11 @@ HANDED_OFF 不再自动重发：接收方已承担持久恢复责任。接收方
 | COMPENSATING | 当前补偿权威成功 | 保持 COMPENSATING 并计划下一项，或 COMPENSATED |
 | COMPENSATING | 补偿结果未知/可重试失败 | 保持并查证/重试；超预算进入 NEEDS_ATTENTION |
 | NEEDS_ATTENTION | 授权且有证据的恢复 | 恢复到明确检查点；原子追加恢复命令与审计 |
+| RUNNING / WAITING / COMPENSATING | 缺少处理版本、证据冲突或无法安全继续 | NEEDS_ATTENTION；保留原检查点及未决责任 |
 
-SUCCEEDED、COMPENSATED 是不可改写的结束记录；结束后的新业务动作是新流程，不能篡改旧流程。COMPENSATED 仅在所有要求的补偿完成标准满足时成立；异步退款的“已受理”不能算“已退款”。步骤 PREPARED、RUNNING、UNKNOWN、SUCCEEDED、FAILED 的变化使用 B 表规则并区分前向/补偿方向。串行流程同一时刻只能有一个可推进步骤，但查询/迟到回调仍可能并发，必须用 CAS 与步骤身份抵御竞争。
+SUCCEEDED、COMPENSATED 是不可改写的结束记录；结束后的新业务动作是新流程，不能篡改旧流程。COMPENSATED 仅在所有要求的补偿完成标准满足时成立；异步退款的“已受理”不能算“已退款”。串行流程同一时刻只能有一个可推进步骤，但查询/迟到回调仍可能并发，必须用 CAS 与步骤身份抵御竞争。
+
+协调器步骤与参与者 Inbox 不是同一行状态：步骤为 PREPARED → AWAITING_RESULT（可选，收到接收回执后）→ SUCCEEDED/FAILED；结果先于接收回执到达时允许 PREPARED 直接转终态。PREPARED/AWAITING_RESULT 到期可转 UNKNOWN；UNKNOWN 只按权威结果结束，或在确认未执行时以同一 invocationId 回到 PREPARED。补偿拥有独立方向与 invocationId，不复用前向终态。步骤不暴露参与者 RUNNING/租约状态作为协调器事实。
 
 对“取消”和“成功回调”的竞态，以同一持久状态的条件提交顺序决定：成功终态已提交则取消返回已结束；取消意图先提交则成功回调记录真实副作用并进入约定补偿路径，不能丢弃迟到成功。非法迁移返回冲突，不悄悄覆盖或自动重置。
 
@@ -383,7 +397,7 @@ SUCCEEDED、COMPENSATED 是不可改写的结束记录；结束后的新业务�
 | `accept` | 唯一性检查、载荷持久引用、RECEIVED、稳定 receiptId | 重复同摘要返回原 receipt；不同摘要冲突 |
 | `claimBatch` | 有界领取、owner token、attempt、租约 | 并发 worker 不同时取得有效提交权；不保证外部执行只发生一次 |
 | `renew / release / reschedule` | 校验 token、version、存储时间下的租约有效性并修改 | 失去所有权返回明确冲突；不复活旧 token |
-| `completeLocal` | 校验并锁定当前所有权、执行本地业务、终态结果、结果 Outbox | 任一失败整体回滚；不能在事务中调用远端 |
+| `completeLocal` | 校验并锁定当前所有权、执行本地业务、SUCCEEDED 结果、可选结果 Outbox | 任一失败整体回滚；拒绝结果按 B 表另事务持久化；不能调用远端 |
 | `recordExternalResult` | 校验当前 invocation、证据、状态版本，保存结果和后续意图 | 重复结果幂等；矛盾/迟到结果进入核查，不覆盖 |
 | `advanceSaga` | 消费结果去重、流程/步骤 version、下一动作/补偿与 Outbox | 竞争仅一个推进；另一方重读，不重复发新操作 |
 | `manage / expire` | 授权操作的审计、CAS、期限/引用/去重保护检查 | 不允许越权重放、删除未结束状态或重置身份 |
@@ -405,7 +419,7 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 | 协议结果 | 可以断言什么 | 发送方动作 |
 |---|---|---|
 | RECEIVED + receiptId | 接收方持久保存并承担恢复责任 | 标记 HANDED_OFF；需要业务结果时继续等待/查询 |
-| SUCCEEDED / FAILED + resultVersion | 对应操作的业务终态已持久提交 | 校验来源、身份、摘要与版本后记录；不能仅凭 HTTP 状态判断 |
+| SUCCEEDED / FAILED + receiptId + resultVersion | 对应操作的业务终态已持久提交，也证明接收成立 | 可同时记录 HANDED_OFF 与业务结果；校验来源、身份、摘要与版本，不能仅凭 HTTP 状态判断 |
 | IN_PROGRESS | 已知操作尚未确定结果 | 按有界间隔查询，不重新启动业务 |
 | UNKNOWN | 存在未决副作用或查询不能判定 | 保持未知，查询/对账，不盲目补偿 |
 | REJECTED（未接受） | 经认证的本次请求未被持久接受 | 根据原因修正或重试；不证明历史同一操作从未执行 |
@@ -417,6 +431,10 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 
 结果由接收方的结果 Outbox 发送至事先注册的可信目标，或由发送方查询；不能接受任意回调 URL 绕过 egress。回调也先经过持久 Inbox，再原子更新 Saga，因此回调已 ACK 但 Saga 尚未推进时可恢复。轮询与回调共用同一结果身份/version，重复不二次推进。有效回执到达时原发送 worker 已失去 lease，可由新处理者重新核验并 CAS 记录，旧 worker 不绕过 fencing 强写。
 
+信封增加 `kind=EVENT|COMMAND|RESULT` 与受校验的 `replyMode=NONE|QUERY|CALLBACK`。只有请求结果的 COMMAND 可创建业务结果 Outbox；EVENT 默认只承诺可靠接收，RESULT 只返回持久接收回执，绝不自动产生“结果的结果”。QUERY 模式必须持久保存可查询结果但不必回调。相同 invocationId 的多个不同 messageId 仍关联同一个业务操作，不能通过更换消息 ID 绕过业务去重；业务身份同时绑定操作类型、方向和输入摘要。
+
+确认匹配 namespace/tenant/source/target/messageId/invocationId/requestDigest/protocolVersion；认证在传输边界完成，不信任载荷自称来源。新接收前检查有效期；对已存在且摘要一致的消息，即使交付期限刚过，也允许在授权与结果保留期内查询已有 receipt，不能因超期使已交接责任变成不存在。有效期限制新接收，不取消已接受的执行责任；执行期限与去重保留期限独立配置。
+
 未来 broker 适配需区分 broker 持久接收与终端消费者业务结果，明确重投、保留、ACK 与消费者恢复责任；不能把 broker ACK 翻译成 SUCCEEDED。兼容性测试覆盖协议版本、字段长度、未知字段与不支持 schema；已接受消息升级后仍需可读，未知业务版本进入隔离而不是丢弃。
 
 ### 8.14 新增契约验收与冻结条件
@@ -427,7 +445,95 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 - 模块验收证明无独立 PostgreSQL 产物、只复用一个所选原生 driver；数据库后端禁用时没有额外池/扫描器，启用却缺能力时启动失败。
 - 新增 DC-20：嵌套事务返回后外层回滚，不能发送 durable ACK 或可见事件；DC-21：备份回退丢失已确认状态时禁止自动发送并进入对账；DC-22：取消与最后一步成功并发，只有一个合法终态且迟到副作用可追踪。
 
-这些用例与 DC-01–19 合并为一个发布门槛。当前只有规格，没有实现或通过记录；详细 API、数据库最小事务证明、存储 schema/索引与迁移、协议编码样例需要在编码前评审。不同模块分批开发不等于降低完整闭环的验收标准。
+这些用例与 §8.18 合并为一个发布门槛。当前只有规格，没有实现或通过记录；§8.15–8.17 给出 API、事务证明、schema 与迁移候选，须评审后才进入编码。不同模块分批开发不等于降低完整闭环的验收标准。
+
+### 8.15 公共 API 候选（非现有可调用代码）
+
+以下签名为设计记法，未创建 Kotlin 文件；所有类型归属和空值语义在实现前用编译样例核验。普通用户不接触 claim token、原始状态 UPDATE 或驱动。业务接口、运维接口、存储 SPI 分别授权/分级，不能把内部 store 注册给 Controller 任意调用。
+
+| 所属接口 / 操作 | 输入 → 输出 | 语义与边界 |
+|---|---|---|
+| `DurableClient.submit`（suspend） | `Submission` → `SubmissionReceipt` | 独立持久提交成功才返回；有外层业务事务时拒绝，改用事务桥；异常/取消不证明未提交 |
+| `DurableTransactions.enqueue`（suspend） | `TransactionProof, Submission` → `EnlistedMessage` | 加入同资源当前事务；返回待提交句柄，不能转成远端 ACK |
+| `DurableClient.status`（suspend） | `OperationRef` → `OperationView` | 每次鉴权；返回状态、结果版本及查询权威性，不暴露内部可变对象 |
+| `DurableClient.awaitResult`（suspend） | `OperationRef, WaitBudget` → `WaitResult` | 有界等待；超时返回未结束/未知观察，取消只终止等待 |
+| `SagaClient.start`（suspend） | `SagaStart` → `SagaReceipt` | 稳定启动键、固定版本及摘要，重复返回同一 sagaId；不得嵌套于业务事务 |
+| `SagaTransactions.start`（suspend） | `TransactionProof, SagaStart` → `EnlistedSaga` | 同资源原子启动；不同存储时必须从业务 Outbox 发送启动命令，不做双写 |
+| `SagaClient.status / awaitResult`（suspend） | `SagaRef / WaitBudget` → `SagaView / WaitResult` | 与 durable 查询/等待同样的授权、取消及未知语义 |
+| `SagaClient.cancel`（suspend） | `SagaRef, commandId, reason` → `CancelReceipt` | 持久取消意图，返回不等于补偿完成；同 commandId 幂等 |
+| `DurableAdministration.recover`（suspend） | 目标、预期版本、命令 ID、证据、恢复动作 → `RecoveryReceipt` | 独立权限、CAS 与审计；仅允许白名单恢复动作，不提供 setStatus |
+
+**值类型契约：** `Submission` 含稳定提交键、逻辑目的地、操作/schema 版本、kind/replyMode、载荷及三个独立期限（新接收、执行、去重保留）。调用方不能伪造可信租户/来源；由已认证上下文或明确的后台服务身份注入。`OperationRef` 含作用域和稳定 ID，持有它不等于有权限。`SubmissionReceipt` 表示本方已持久接受投递责任，不是远端 RECEIVED；`EnlistedMessage/EnlistedSaga` 不能提供 `awaitCommitted()`，避免在外层事务内等待自己提交的死锁。
+
+`SagaStart` 的唯一键为 `(namespace, tenant, callerScope, flowName, startKey)`，流程版本和输入摘要绑定在该键上；重试时改变版本/内容返回冲突，不创建新流程。所有输入在第一次挂起前建立不可变快照或明确所有权转移，受单条大小与总预算限制。取消异常原样传播，持久接受结果未知时使用原提交键查询，文档明确禁止自动生成新键重试。
+
+**处理器注册：** 启动期注册稳定 `HandlerId + schemaVersion`，freeze 后只读。`LocalHandler<I,O>` 在受控业务事务内执行，正常成功提交；明确拒绝/异常按 §8.11 回滚。`ExternalHandler<I,O>` 的 execute/query 接口在无业务事务环境执行，必须声明对端幂等窗口、权威查询能力和恢复策略。不能以“可查询”声称查询总能证明未执行。SagaDefinition 以稳定步骤 ID、方向、输入/输出 codec、补偿规则和期限注册；不持久化函数引用、KClass 名或捕获闭包作为流程身份。
+
+**数据库新增契约：** database 层提供 `requireTransactionProof(resourceId)` 的候选能力，返回由它创建、不可序列化且不可由业务构造的证明；含资源、事务代次与活动状态，随外层提交/回滚失效。每次 enqueue 校验当前协程事务与证明匹配，不使用线程局部变量，不允许跨协程并行复用。现有 DbContext 继续拥有提交，durable 不能提前 commit。持久接收入口必须拥有顶层事务边界；存在调用方事务时拒绝，不伪装独立事务。COMMIT 中断后的 UNKNOWN 是观测结果，不能由“取消应回滚”的本地约定推断服务器已经回滚；该澄清须同步评审 database-session。
+
+**SPI：** `DurableStore` 提供 §8.12 的语义操作，返回 `Applied(newVersion)`、`AlreadyApplied(snapshot)`、`Conflict(snapshot)`、`UnknownCommit(operationRef)`；不能将数据库异常一律翻译成 NotFound。`DurableTransport.deliver/query` 返回经过验证的协议结果或不确定传输结果，不直接改存储。原子批次限制在同一资源，不公开一个任意跨库 transaction(block) 冒充原子性。首版业务 API 走显式组件安装，不新增扫描式装配。
+
+### 8.16 存储 schema 候选（PostgreSQL 首个验证方言）
+
+这是逻辑 schema 与约束清单，不是可执行迁移 SQL。表名建议 `nd_*`；Saga 表只在安装 Saga 存储能力时由显式 migration 创建。已有应用业务表不改名，外键不跨数据库；每个本地资源可拥有自己的 durable 表。
+
+公共字段：内部 ID 为 UUID，版本/计数为非负 bigint，时间为存储端 UTC timestamptz；namespace、tenant、来源、操作类型等限定最大长度且非空，无租户场景使用显式保留域而非 NULL 绕过唯一约束。状态用稳定文本值和 CHECK，不依赖 Kotlin 枚举 ordinal。载荷为有上限的 bytea 或持久引用二选一，摘要保存算法版本与固定长度值。敏感字段不放未脱敏 JSON 日志。
+
+| 表 | 关键字段与唯一性 | 原子约束/主要索引 |
+|---|---|---|
+| `nd_submission` | 作用域、submissionKey、摘要、operationId、目的地快照、retentionUntil | UNIQUE(作用域, submissionKey)；与 Outbox 同事务插入；保留稳定提交查询 |
+| `nd_outbox` | messageId、固定 targetId、operationId、kind、replyMode、载荷、状态、attempt、nextAt、version、ownerToken、leaseUntil、receipt | UNIQUE(来源作用域, messageId, targetId)；READY/RETRY_WAIT 到期部分索引、LEASED 过期索引；扇出每目标独立行 |
+| `nd_inbox` | 来源/租户/consumerId/messageId、摘要、receiptId、operationId、receivedAt | 消息键唯一；receiptId 唯一；提交接收不等于完成，处理状态从 operation 读取 |
+| `nd_operation` | 作用域、操作类型/方向、invocationKey、请求摘要、模式、本地/外部处理器版本、状态、结果/version、lease、nextAt | UNIQUE(作用域, 操作类型, 方向, invocationKey)；Inbox 与 operation 原子创建/关联；同 invocation 多消息仍仅一次本地效果 |
+| `nd_saga` | 作用域/startKey、flowName/version、输入摘要、状态、currentStep、cancelRequested、version、nextAt、lease | 启动键唯一且不含 flowVersion；活动流程/到期扫描索引；取消意图独立字段 |
+| `nd_saga_step` | sagaId、stepId、方向、invocationId、输入/结果、状态、version、补偿责任 | UNIQUE(sagaId, stepId, 方向)；invocationId 唯一；串行执行权由 saga version 决定 |
+| `nd_timer` | ownerType/id、timerKind、generation、dueAt、状态、lease | UNIQUE(ownerType, ownerId, timerKind, generation)；与计划步骤/状态同事务；触发消费和后续计划原子化 |
+| `nd_identity_guard` | 作用域、键类别、键或关闭代次、摘要/终态引用、拒绝边界 | 墓碑/已关闭代次防历史重放；压缩结果不删除仍有效的身份保护 |
+| `nd_audit` | commandId、目标、前后 version、主体、证据引用、动作、时间 | 管理命令唯一；审计与状态变更同事务；追加写，不以日志替代 |
+| `nd_payload_ref` | 对象引用、摘要、大小、状态、最短保留期限 | 引用关联表跟踪有效 owner；GC 先原子标记可回收，再删对象，幂等恢复 |
+| `nd_control` | 存储 schemaVersion、读写兼容范围、部署/迁移 epoch、停写/停 claim 标志 | 每资源唯一；worker 写入校验 epoch，防旧版本继续接管 |
+
+inbox 是接收身份，operation 是业务状态；两者不能各自存一份可独立更新的业务终态。operation 与 result Outbox、Saga 消费结果与下一命令各在同一事务。回调接收记录与对应 Saga 必须在同一个协调器资源提交，不能通过两个数据库表模拟原子推进。
+
+ownerToken 与 leaseUntil 同时为空或同时存在；仅有执行权的状态允许存在有效租约。成功/失败结果固定 resultVersion，不可修改；传输重投保持消息与操作身份。到期扫描采用有界批次与行锁/条件更新，锁等待有期限。租约续期也增加记录版本，worker 必须刷新预期版本，不可因续期使自己的完成更新无条件覆盖竞争者。
+
+统一锁顺序：管理/流程根记录 → operation/step → 待消费 inbox → 新 outbox/timer/audit；领取事务不跨网络、不长时间持有多个聚合。批量按稳定 ID 排序；死锁可回滚重试纯存储事务，不能自动重跑已经发生外部效果的整个 handler。业务自己的锁仍需遵守数据库约束并接受死锁回滚测试。
+
+索引/唯一键的作用域在类型定义、DDL 和查询中必须一致，不能只依赖调用者过滤 tenant。不存在主键碰撞、CHECK 或唯一冲突时的静默 upsert 覆盖请求摘要。迁移历史复用现有 migration 机制，不另建自动升级服务；保留窗口、结果查询窗口与载荷 GC 的外键/引用约束一起测试。
+
+### 8.17 版本升级、旧事件桥与回滚
+
+**新 schema 升级：** 显式 CLI migration，单一迁移锁、版本和 checksum；先 expand（新增兼容表/列/索引）→ 新旧兼容读写验证 → 分批 backfill（游标、幂等、校验）→ 切换写入版本 → 确认旧 worker 退出后 contract。运行期启动只校验兼容范围，不修改生产 schema。非事务 DDL 步骤必须有可恢复检查点，失败不得伪记成功。
+
+**回滚边界：** 数据库扩展兼容时可回滚二进制；已经写入旧版本不理解的状态/schema 后，禁止直接回退旧 worker，先暂停接收/claim 并运行经过验证的数据转换或前向修复。终态、幂等键和已确认 receipt 不能通过 down migration 删除。备份还原属于灾难恢复，提升恢复 epoch 并隔离发送、对账后解封，不把数据回退当普通发布回滚。
+
+**旧 event v1：首版默认共存，不原地接管。** 老的 RETRYABLE 继续由原投递器处理旧表；新集成事件通过显式桥写新 Outbox。桥从稳定旧事件身份/监听者身份派生唯一映射，发布时选择一条路，不能旧 listener 和新 subscriber 同时执行同一业务副作用。只有未来跨进程选定事件才外发，旧 SYNC/BEST_EFFORT 不变。
+
+如需搬迁历史积压，执行以下独立、可中断的运维流程：
+
+1. 验证事件类型/schema、消费者、租户与幂等键映射；无法唯一映射的行隔离，不能生成随机新 ID。
+2. 暂停对应发布与旧 claim，等待旧 worker 和外部在途动作排空/查证。旧实现不认识新 epoch 时必须停止并撤销其写入/发送能力，单写新控制表不足以 fence 旧进程。
+3. 在停写屏障内复制稳定 ID、状态、attempt、期限、载荷和消费身份，记录唯一 old→new 映射与批次校验。相同数据库可事务复制；跨库用可恢复复制日志，确认目标完成前不删源。
+4. UNKNOWN、旧版本缺失或对端幂等窗口已过的记录保持隔离；新记录仍禁用 claim。核对行数、摘要、消息/业务身份和账目，再切换唯一发布/消费所有权。
+5. 观察恢复后逐步放量。新 worker 已执行外部动作后不得简单重开旧 worker；回滚必须同步已执行事实并重新排空/对账，不能仅切配置。
+6. 保留旧表只读和映射至重放/审计期限结束，再显式清理。不同版本的长期并存须公布兼容矩阵，禁止无限期双写。
+
+schemaVersion、协议版本、事件 schemaVersion、流程版本和部署 epoch 是不同维度，不用一个框架版本号替代。已接受工作在升级后仍能找到固定 handler/codec；移除版本前必须证明无活跃引用，或将对应工作隔离并给出迁移方案。
+
+### 8.18 r5 交叉评审与补充验收
+
+| 级别 | r5 矛盾/遗漏 | r6 处理 |
+|---|---|---|
+| P1 | 所有结果都产生结果 Outbox，可能形成无限确认循环 | RESULT 只做持久接收确认，COMMAND 的 replyMode 控制业务结果 |
+| P1 | handler 业务拒绝未规定先回滚，可能提交部分业务写入 | 拒绝先回滚，再短事务存 FAILED；COMMIT 未知先查证 |
+| P1 | 未过期 token 要求与持锁事务跨期限冲突 | 获取锁时校验；持锁有界事务独占，网络返回后重新校验 |
+| P1 | messageId 防重不等于业务 invocation 防重；启动超时可能重复建 Saga | 消息、操作、启动三层唯一键与摘要绑定 |
+| P1 | 协调器 PREPARED 套用参与者表，且结果先到无法推进 | 独立步骤状态；终态含 receipt，可先于接收回执推进 |
+| P1 | 旧 worker 不识别新 fencing，复制历史后可能双执行 | 默认共存；搬迁必须停写、排空、唯一映射和所有权切换 |
+
+新增 DC-23：RESULT 重复/丢回执不产生结果循环；DC-24：本地 handler 写入后拒绝，业务修改全部回滚；DC-25：换 messageId 保持同 invocation/startKey，不重复动作/流程；DC-26：结果先于 ACK、完成与续租竞争、锁内跨期限，仅一次合法推进；DC-27：迁移中断/回滚、旧 worker 复活和不兼容状态写入被阻止；DC-28：清理身份保护、payload 引用与活动流程竞争，不丢恢复依据。
+
+公共 API 验收还包括：Kotlin/Native 编译样例、取消语义、不可伪造/过期事务证明、嵌套事务待提交句柄不可当 ACK，以及零业务 DB 的外部 API 编排。schema 验收必须运行真实 DDL、唯一约束、CHECK、并发锁顺序和 expand/contract 测试；文档构建不能证明这些用例已通过。全部 DC-01–28 与 API/schema/协议测试是整套交付条件。
 
 ## 9. CQRS：按需分离，不强制事件溯源（P1）
 
@@ -584,10 +690,10 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 | N12-04 | A / P0 | 调用预算、结构化并发与 drain（§6、§11.6） | 可控时钟、取消、超时和停机竞态测试 |
 | N12-05 | A / P0 | 诊断 SPI、trace/metrics 可选适配（§11.4） | 敏感数据检查、过载与关闭验证 |
 | N12-06 | A / P0 | 静态/DNS 发现、客户端池与故障策略（§11.5–11.6） | 多实例、断网、恢复、无重试风暴 |
-| N12-07 | A / P0 | neton-durable、内部数据库桥、可靠交付与恢复（§8.3–8.7、8.11–8.14） | §8.10 前置评审、事件边界修订与迁移；DC-01–05、09–15、17–21 |
+| N12-07 | A / P0 | neton-durable、内部数据库桥、可靠交付与恢复（§8.3–8.7、8.11–8.18） | API/schema/迁移及事件边界评审；DC-01–05、09–15、17–21、23–28 中适用场景 |
 | N12-08 | A / P0 | 性能回归、可复现证据与发布闸门 | 普通 HTTP/WS/多系统混合负载 |
 | N12-09 | B / P1 | 一个真实注册中心适配 | 租约、权限、过期、滚动退出 |
-| N12-10 | B / P1；整套交付必选 | neton-saga 完整闭环（§8.8–8.14），非仅原型 | 依赖 N12-07；DC-01–22 及三服务业务不变量、运维与迁移 |
+| N12-10 | B / P1；整套交付必选 | neton-saga 完整闭环（§8.8–8.18），非仅原型 | 依赖 N12-07；DC-01–28 及三服务业务不变量、运维与迁移 |
 | N12-11 | B / P1 | CQRS 示例与投影支持 | 重复、乱序、重建、读写一致性说明 |
 | N12-12 | B / P1 | 开发设施与集成测试工具 | 可重复启动/清理，不影响宿主环境 |
 | N12-13 | 调研 / P2 | 独立统一网关可行性 | 与现成代理的差距、成本和实测，不先建产品 |
