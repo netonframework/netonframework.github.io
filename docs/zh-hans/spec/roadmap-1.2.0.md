@@ -1,6 +1,6 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r7 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r8 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
 >
 > 本次核对的框架源码 `gradle.properties` 为 `1.1.2`；本文规划目标为 1.2.0，不修改版本号、不启动发布。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
@@ -308,6 +308,12 @@ COMMIT 成功但连接断开可能导致调用方不知道提交结果：应按�
 | DC-32 | 定时器已领取后续期/取消，旧定时器迟到与重启 | generation 失效不推进；有效触发与后续状态同事务；未知副作用只查询 |
 | DC-33 | 载荷回收标记后并发附加引用、删除后进程崩溃 | 回收中的对象不可被重新引用；删除可恢复；活动恢复引用不丢失 |
 | DC-34 | 旧数字 ID 跨资源重复、迁移批次提交回执丢失 | 唯一映射稳定；不改已有外部幂等键；检查点重放不重复导入或提前切换 |
+| DC-35 | 查询跨状态更新/清理、等待登记时结果提交且通知丢失 | 单次视图一致，等待重读/轮询不漏结果；结果已清理返回 Expired；不泄露撤权后的结果 |
+| DC-36 | 两个首次管理命令并发、同键异参、冲突结果提交回执丢失 | 一次命令决策/审计；重复返回原结果；无已提交半成品占位；每次重新鉴权 |
+| DC-37 | 定时器重领后旧 worker 取消，owner 重建与 generation 复用 | 旧 token 不改记录；旧 owner 代次不能命中新 owner；触发和取消锁序一致 |
+| DC-38 | 查询读取载荷时清理、过期上传迟到完成、清理进程重启 | 读取租约阻止回收；迟到上传不能挂接；未证明上传静止前不遗忘清理责任 |
+| DC-39 | 投递已隔离/等待重试时回执或终态迟到，并发人工恢复 | 合法证据只确认原投递；不重开业务；旧 worker 不直接越权写入 |
+| DC-40 | 迁移中查询/回调/管理/上传继续进入，复制旧 token 与过期 timer | 入口与 claim 一起受屏障约束；读不产生错误未找到；激活后只发新 token，保留逻辑身份 |
 
 端到端场景最终校验订单、库存、支付账目之间的业务不变量，以及持久记录、计时器、连接和 worker 的释放；不能只断言返回 200 或最终有一条成功日志。输出每次故障的提交摘要、恢复轨迹、最终业务状态、重复次数与资源指标。
 
@@ -327,7 +333,7 @@ COMMIT 成功但连接断开可能导致调用方不知道提交结果：应按�
 | P2 | 事件投递器/jobs/客户端的重试与生命周期所有权可能重叠 | §8.3 单一状态权威与统一 attempt 预算；DC-11、13 |
 | P2 | 大载荷引用的提交与回收缺少时序规则 | §8.6 外部引用生命周期；DC-19 |
 
-状态迁移、存储原子批次和传输确认见 §8.11–8.14；公共 API、schema 与迁移候选及 r7 交叉检查见 §8.15–8.19。均未通过实现验证。开始运行时代码前仍须评审事件 v1 和 database-session 的显式变更、各平台接口可表达性、容量参数及具体迁移 SQL。不能仅凭本路线图冻结全部接口。
+状态迁移、存储原子批次和传输确认见 §8.11–8.14；公共 API、schema 与迁移候选及交叉检查见 §8.15–8.20。均未通过实现验证。开始运行时代码前仍须评审事件 v1 和 database-session 的显式变更、各平台接口可表达性、容量参数及具体迁移 SQL。不能仅凭本路线图冻结全部接口。
 
 ### 8.11 状态迁移契约
 
@@ -340,6 +346,7 @@ COMMIT 成功但连接断开可能导致调用方不知道提交结果：应按�
 | 无 | 发布事务提交 | READY；稳定 messageId、目标与载荷摘要落库 |
 | READY / RETRY_WAIT | 到期且获得 claim | LEASED；发新 token、attempt 序号、租约期限 |
 | LEASED | 合法的持久接收回执 | HANDED_OFF；保存接收方及 receiptId，不表示业务成功 |
+| READY / RETRY_WAIT / LEASED / QUARANTINED | 独立证据接收事务核验迟到的持久回执或业务终态 | HANDED_OFF；同一消息/目标/摘要，只补确认事实；撤销当前投递 token，不重执行业务 |
 | LEASED | 超时/断连/可重试失败 | RETRY_WAIT；记录原因、下次时间；保持 messageId |
 | LEASED | 租约到期并被重新领取 | LEASED；换 token；旧 worker 不能再写结果 |
 | LEASED | 不可投递或重试耗尽 | QUARANTINED；保留消息与人工恢复入口 |
@@ -451,7 +458,7 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 - 模块验收证明无独立 PostgreSQL 产物、只复用一个所选原生 driver；数据库后端禁用时没有额外池/扫描器，启用却缺能力时启动失败。
 - 新增 DC-20：嵌套事务返回后外层回滚，不能发送 durable ACK 或可见事件；DC-21：备份回退丢失已确认状态时禁止自动发送并进入对账；DC-22：取消与最后一步成功并发，只有一个合法终态且迟到副作用可追踪。
 
-这些用例与 §8.18–8.19 合并为一个发布门槛。当前只有规格，没有实现或通过记录；§8.15–8.17 给出 API、事务证明、schema 与迁移候选，须评审后才进入编码。不同模块分批开发不等于降低完整闭环的验收标准。
+这些用例与 §8.18–8.20 合并为一个发布门槛。当前只有规格，没有实现或通过记录；§8.15–8.17 给出 API、事务证明、schema 与迁移候选，须评审后才进入编码。不同模块分批开发不等于降低完整闭环的验收标准。
 
 ### 8.15 公共 API 候选（非现有可调用代码）
 
@@ -463,7 +470,7 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 | `DurableTransactions.enqueue`（suspend） | `TransactionProof, Submission` → `EnlistedMessage` | 加入同资源当前事务；返回待提交句柄，不能转成远端 ACK |
 | `DurableClient.status`（suspend） | `OperationRef` → `OperationView` | 每次鉴权；返回状态、结果版本及查询权威性，不暴露内部可变对象 |
 | `DurableClient.findSubmission`（suspend） | `SubmissionKey` → `Lookup<SubmissionReceipt>` | 无回执时按原键查本方持久记录；作用域由可信上下文补齐，不能跨租户查找 |
-| `DurableClient.awaitResult`（suspend） | `OperationRef, WaitBudget` → `WaitResult` | 有界等待；超时返回未结束/未知观察，取消只终止等待 |
+| `DurableClient.awaitResult`（suspend） | `OperationRef, TargetSelection, WaitBudget` → `WaitResult` | 有界等待；超时返回未结束/未知观察，取消只终止等待 |
 | `SagaClient.start`（suspend） | `SagaStart` → `SagaReceipt` | 稳定启动键、固定版本及摘要，重复返回同一 sagaId；不得嵌套于业务事务 |
 | `SagaTransactions.start`（suspend） | `TransactionProof, SagaStart` → `EnlistedSaga` | 同资源原子启动；不同存储时必须从业务 Outbox 发送启动命令，不做双写 |
 | `SagaClient.status / awaitResult`（suspend） | `SagaRef / WaitBudget` → `SagaView / WaitResult` | 与 durable 查询/等待同样的授权、取消及未知语义 |
@@ -480,17 +487,21 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 
 **数据库新增契约：** database 层提供 `requireTransactionProof(resourceId)` 的候选能力，返回由它创建、不可序列化且不可由业务构造的证明；含资源、事务代次与活动状态，随外层提交/回滚失效。每次 enqueue 校验当前协程事务与证明匹配，不使用线程局部变量，不允许跨协程并行复用。现有 DbContext 继续拥有提交，durable 不能提前 commit。持久接收入口必须拥有顶层事务边界；存在调用方事务时拒绝，不伪装独立事务。COMMIT 中断后的 UNKNOWN 是观测结果，不能由“取消应回滚”的本地约定推断服务器已经回滚；该澄清须同步评审 database-session。
 
-**SPI：** `DurableStore` 提供 §8.12 的语义操作，返回 `Applied(newVersion)`、`AlreadyApplied(snapshot)`、`Conflict(snapshot)`、`UnknownCommit(operationRef)`；不能将数据库异常一律翻译成 NotFound。`DurableTransport.deliver/query` 返回经过验证的协议结果或不确定传输结果，不直接改存储。原子批次限制在同一资源，不公开一个任意跨库 transaction(block) 冒充原子性。首版业务 API 走显式组件安装，不新增扫描式装配。
+**SPI：** `DurableStore` 提供 §8.12 的语义操作，返回 `Applied(newVersion)`、`AlreadyApplied(snapshot)`、`Conflict(snapshot)`、`UnknownCommit(recoveryKey)`；recoveryKey 是调用前已知的类型化提交/启动/管理键，worker 则用原记录 ID 与动作代次查证；不能将数据库异常一律翻译成 NotFound。`DurableTransport.deliver/query` 返回经过验证的协议结果或不确定传输结果，不直接改存储。原子批次限制在同一资源，不公开一个任意跨库 transaction(block) 冒充原子性。首版业务 API 走显式组件安装，不新增扫描式装配。
 
 **查询与结果类型补全：** `Lookup<T>` 区分 Found、NotFound（附权威性/保留边界）、Expired 和 Unknown；不能把超时、从库延迟或权限拒绝包装成 NotFound。不存在的观察也不能排除原提交仍在进行，只允许相同键、相同内容重试。身份保护仍在但详细结果已清理时返回 Expired，不创建新操作。`UnknownCommit` 必须携带可查询的原提交/启动/管理键，不能只携带调用方尚未收到的内部 ID。
 
 发送侧 `OperationView` 是本地投递与远端结果的组合视图，不复用参与者执行状态字段：每个固定 targetId 分别展示 deliveryState、receipt、remoteOperationRef、resultVersion、业务结果及来源/新鲜度。`awaitResult` 的等待选择明确为单目标或全部固定目标，返回 Completed、Pending（含已完成目标）、Unknown 或 ResultNotRequested；replyMode=NONE 立即返回 ResultNotRequested，HANDED_OFF 永不伪装业务成功。扇出不提供隐式“任一成功即整体成功”，Saga 使用明确的单目标步骤或显式聚合规则。观察超时不修改持久业务状态。
+
+**查询/等待竞态：** 单次本地 OperationView 从同一数据库快照读取目标集合、回执和结果；READ COMMITTED 下分别查多张表不能拼成声称一致的快照。远端新鲜度单独标注，不承诺跨服务同一时刻快照。详情清理与身份保护建立同事务；查询看见墓碑返回 Expired，不能在二者之间返回 NotFound。WaitResult 另含 Expired；TargetSelection 只能引用已持久固定的目标，非法目标立即报错。等待采用“读持久状态 → 登记唤醒 → 再读”，并有有界轮询与期限结束前的最终重读；通知只作优化，重启/丢通知不影响查证。所有查询、重复命令返回和等待完成交付前均按当前授权检查；拒绝不返回已有结果，取消释放观察资源，不持锁等待。结果载荷读取按 §8.16 获取读取租约，不因已读取到引用就假设对象仍存在。
 
 ### 8.16 存储 schema 候选（PostgreSQL 首个验证方言）
 
 这是逻辑 schema 与约束清单，不是可执行迁移 SQL。表名建议 `nd_*`；Saga 表只在安装 Saga 存储能力时由显式 migration 创建。已有应用业务表不改名，外键不跨数据库；每个本地资源可拥有自己的 durable 表。
 
 公共字段：内部 ID 为 UUID，版本/计数为非负 bigint，时间为存储端 UTC timestamptz；namespace、tenant、来源、操作类型等限定最大长度且非空，无租户场景使用显式保留域而非 NULL 绕过唯一约束。状态用稳定文本值和 CHECK，不依赖 Kotlin 枚举 ordinal。载荷为有上限的 bytea 或持久引用二选一，摘要保存算法版本与固定长度值。敏感字段不放未脱敏 JSON 日志。
+
+拥有计时器的聚合须有持久 incarnation 和按 timerKind 保存的单调 generation（同表字段或带 owner 外键的子表）；不只存在于 worker 内存。计时器的 owner 关联按类型建立可验证外键或等价原子约束，不允许通过多态字符串绕开删除检查。
 
 | 表 | 关键字段与唯一性 | 原子约束/主要索引 |
 |---|---|---|
@@ -501,20 +512,21 @@ PostgreSQL 实现可用唯一约束、条件 UPDATE 和短行锁实现以上语�
 | `nd_operation` | 作用域、操作类型/方向、invocationKey、请求摘要、模式、本地/外部处理器版本、状态、结果/version、lease、nextAt | UNIQUE(作用域, 操作类型, 方向, invocationKey)；Inbox 与 operation 原子创建/关联；同 invocation 多消息仍仅一次本地效果 |
 | `nd_saga` | 作用域/startKey、flowName/version、输入摘要、状态、currentStep、cancelRequested、version、nextAt、lease | 启动键唯一且不含 flowVersion；活动流程/到期扫描索引；取消意图独立字段 |
 | `nd_saga_step` | sagaId、stepId、方向、invocationId、输入/结果、状态、version、补偿责任 | UNIQUE(sagaId, stepId, 方向)；invocationId 唯一；串行执行权由 saga version 决定 |
-| `nd_timer` | ownerType/id、timerKind、generation、dueAt、状态、lease | UNIQUE(ownerType, ownerId, timerKind, generation)；与计划步骤/状态同事务；触发消费和后续计划原子化 |
+| `nd_timer` | 作用域、ownerType/id/incarnation、timerKind、generation、dueAt、状态、version、ownerToken、leaseUntil | UNIQUE(作用域, ownerType, ownerId, incarnation, timerKind, generation)；当前 generation 持久保存在 owner；触发消费和后续计划原子化 |
 | `nd_identity_guard` | 作用域、键类别、键或关闭代次、摘要/终态引用、拒绝边界 | 墓碑/已关闭代次防历史重放；压缩结果不删除仍有效的身份保护 |
 | `nd_audit` | commandId、目标、前后 version、主体、证据引用、动作、时间 | 管理命令唯一；审计与状态变更同事务；追加写，不以日志替代 |
 | `nd_management_command` | 可信作用域、目标类型/ID、commandId、请求摘要（含 expectedVersion）、主体、结果/结果版本、retentionUntil | UNIQUE(作用域, 目标类型, 目标ID, commandId)；取消/恢复意图、命令结果与审计同事务提交；同键异参冲突 |
 | `nd_payload_ref` | 对象引用、摘要、大小、状态、上传 token/期限、最短保留期限 | 引用关联表跟踪有效 owner；上传完成 CAS 与过期回收互斥；GC 先原子标记可回收，再删对象，幂等恢复 |
 | `nd_*_payload_link`（按 owner 类型建表） | 作用域、ownerId、payloadId、用途 | owner/payload 复合外键包含作用域；UNIQUE(ownerId, payloadId, 用途)；禁止仅靠无外键的 ownerType/id 字符串宣称引用完整 |
+| `nd_payload_reader` | 作用域、payloadId、readerToken、leaseUntil | 有界读取租约；获取/续期与 GC 锁同一 payload 行；到期不可续活旧 token；无效租约不授权继续读 |
 | `nd_migration_batch / nd_migration_mapping` | migrationId、源资源/表/主键/消费者、目标 ID、摘要、游标、阶段、校验结果 | 映射源身份唯一且不可覆盖；批次 checkpoint 与目标导入同事务；跨库源进度仅在目标可查证提交后推进 |
-| `nd_control` | 存储 schemaVersion、读写兼容范围、部署/迁移 epoch、停写/停 claim 标志 | 每资源唯一；worker 写入校验 epoch，防旧版本继续接管 |
+| `nd_control` | 存储 schemaVersion、读写兼容范围、部署/迁移 epoch、写入屏障、停 claim 标志 | 每资源唯一；所有变更入口（含回调、命令、上传/引用/读取租约、GC）与 worker 事务校验 epoch/屏障；只读查询明确权威位置 |
 
 inbox 是接收身份，operation 是业务状态；两者不能各自存一份可独立更新的业务终态。operation 与 result Outbox、Saga 消费结果与下一命令各在同一事务。回调接收记录与对应 Saga 必须在同一个协调器资源提交，不能通过两个数据库表模拟原子推进。
 
 ownerToken 与 leaseUntil 同时为空或同时存在；仅有执行权的状态允许存在有效租约。成功/失败结果固定 resultVersion，不可修改；传输重投保持消息与操作身份。到期扫描采用有界批次与行锁/条件更新，锁等待有期限。租约续期也增加记录版本，worker 必须刷新预期版本，不可因续期使自己的完成更新无条件覆盖竞争者。
 
-统一锁顺序：管理/流程根记录 → operation/step → 待消费 inbox → 新 outbox/timer/audit；领取事务不跨网络、不长时间持有多个聚合。批量按稳定 ID 排序；死锁可回滚重试纯存储事务，不能自动重跑已经发生外部效果的整个 handler。业务自己的锁仍需遵守数据库约束并接受死锁回滚测试。
+统一锁顺序：管理命令唯一键占位（若有）→ 管理/流程根记录 → operation/step → 待消费 inbox → outbox/timer → payload/引用/读取租约 → audit。批量同层按稳定 ID 排序。仅领取 timer 的短事务提交后释放锁，触发事务再从 owner 开始；禁止持 timer 锁反向等 owner。payload GC/读取租约只锁 payload 及其引用，不反向锁 owner；附加/移除引用从 owner 开始。领取事务不跨网络、不长时间持有多个聚合；死锁可回滚重试纯存储事务，不能自动重跑已经发生外部效果的整个 handler。业务自己的锁仍需遵守数据库约束并接受死锁回滚测试。
 
 索引/唯一键的作用域在类型定义、DDL 和查询中必须一致，不能只依赖调用者过滤 tenant。不存在主键碰撞、CHECK 或唯一冲突时的静默 upsert 覆盖请求摘要。迁移历史复用现有 migration 机制，不另建自动升级服务；保留窗口、结果查询窗口与载荷 GC 的外键/引用约束一起测试。
 
@@ -522,9 +534,17 @@ ownerToken 与 leaseUntil 同时为空或同时存在；仅有执行权的状态
 
 同目标同 resultVersion 同内容为重复；同版本异内容或已终态后出现矛盾结果保持原结果，持久记录冲突并交运维，不以 last-write-wins 覆盖。首次有效终态可以先于 ACK 写入结果及 HANDED_OFF；结果关联、消息身份和摘要校验在同一事务内完成。管理命令重试先查命令记录再检查目标当前 version，避免已成功命令因自己的修改被误报 CAS 冲突；持久的冲突结果也作为该 commandId 的固定结果，修正参数必须新建命令 ID。命令保留期结束后保留拒绝重放依据，不能悄悄当作新命令执行。
 
-**持久定时器：** 状态为 SCHEDULED → LEASED → FIRED，或 SCHEDULED/LEASED → CANCELLED；过期 LEASED 可重新领取。owner 保存每类计时的当前 generation，重新安排/取消与 generation 变化同事务。触发时按统一锁顺序锁 owner，再验证 generation、状态、到期时间及 token；失效触发只记 CANCELLED，不改变 owner。有效触发、owner 迁移、下一计划和 FIRED 同事务提交；丢提交回执后重新查询，不能重复派生命令。nextAt 只服务于该记录的重试扫描或作为计时索引投影，不能和 nd_timer 各自拥有一套独立的业务超时决定权。外部执行期限到期只能触发查询/UNKNOWN，不能证明副作用未发生。
+**管理命令首次并发：** 先验证当前调用者权限，再在同一事务尝试插入命令唯一键占位，唯一冲突者等待该事务结束后重读并核对请求摘要。占位、目标 CAS/意图、命令固定结果和一次审计一起提交，不能提交无结果的 PENDING 行；事务回滚则占位一起回滚。语义 CAS 冲突可以作为固定结果提交，锁等待超时、连接故障和取消不是固定业务拒绝；提交不明按 commandId 查证。摘要包含动作、目标、expectedVersion（如适用）、理由及不可变证据摘要；同键异参不覆盖原命令。鉴权失败不占键，不让无权请求封堵合法命令。跨服务恢复动作只原子记录 Outbox 意图，CommandReceipt 表示意图已持久接受而非远端动作已完成；结果通过关联 OperationRef 另查。重复操作仍须鉴权，原审计主体不可由重试者替换。
+
+**迟到确认接收：** 失去租约的 worker 不能直接改 outbox；它可把原始回执交给独立证据接收路径，后者重新验证来源、完整身份与摘要、锁记录并按当前 version 应用 A 表迁移。过期交付窗口不否认已经发生的接收。HANDED_OFF 上相同证据幂等，矛盾证据记录冲突不覆盖；人工重放与确认串行化，确认胜出后不再重新 READY。已离开本地的在途发送可能仍到达，仍靠接收方原身份去重，不承诺数据库撤 token 能撤回网络包。
+
+**持久定时器：** 状态为 SCHEDULED → LEASED → FIRED，或 SCHEDULED/LEASED → CANCELLED；过期 LEASED 可重新领取新 token/version。owner 持久保存 incarnation 及每类计时的当前 generation；重新安排/取消与 generation 增加同事务，不能删除计时器后从零重用 generation，溢出拒绝并告警。owner 重建必须新 incarnation，迁移保留逻辑 incarnation/generation。触发先锁 owner 再锁 timer，核验 token/version/租约、incarnation/generation、owner 状态与 dueAt。失去 token/version/租约的旧 worker **不写任何状态**；仅持有有效所有权但发现逻辑计时失效时才可记 CANCELLED。owner 的权威取消事务可锁定并 CANCELLED 原 timer，同时撤销 token；它不是冒用旧 worker 的完成路径。FIRED/CANCELLED 终态不改写，有效触发、owner 迁移、下一计划和 FIRED 同事务提交。nextAt 只用于重试扫描或计时索引投影，不另作业务超时权威。外部期限到期只触发查询/UNKNOWN，不能证明副作用未发生。owner 清理前原子取消未终结 timer，保留所需身份保护；不能制造无 owner 可查的活动 timer。
 
 **载荷回收：** 先持久注册 UPLOADING 与不可复用的对象 key、上传 token/期限；对象持久上传并校验后 CAS 为 STAGED，过期上传不能再完成注册。附加有效 owner 引用与业务记录同事务，转为 LIVE。附加引用和回收均锁同一 payload 行：只有无引用且保留期已过才可由 STAGED/LIVE 转 RETIRING；过期 UPLOADING 也可在 fencing 上传完成后转 RETIRING。RETIRING 不允许重新附加，必须创建新的对象身份。删除对象后标 DELETED，崩溃可幂等续删；对象 key 不复用。所有等待恢复/结果查询的 owner 都须持有引用；终态不自动等于可删除。对象存储仍可能收到过期上传者的迟到写入，删除墓碑和暂存区巡检必须覆盖最大上传期限，重复清理这些迟到孤儿；不能因一次删除成功立即遗忘 key，也不扫描删除任意业务对象。
+
+**读取与迟到上传补充约束：** GC 进入 RETIRING 还须无有效 nd_payload_reader。查询/worker 在授权及 owner 引用仍有效时，锁 payload 建立读取租约后才读对象；详情清理先赢则返回 Expired，租约先赢则允许该有界读取完成。长读必须在到期前续租，续租失败停止读取并报告不可用，不能输出截断内容当成功；不得跨对象 I/O 持数据库锁。若持久记录声称仍有效而对象缺失，报告损坏/不可用并隔离，不伪装正常 Expired。
+
+数据库上传 token 不能 fence 对象存储的 PUT。对象完成校验后必须不可变，读取固定 objectVersion 或等价不可覆盖 key；上传权限须按 key/期限隔离，不给 worker 永久覆盖能力。DELETED 只表示一次删除完成，不表示迟到写入已不可能；只有存储适配证明上传能力已撤销、在途 PUT/分片完成已排空或被终止、对象不存在，才可终结清理责任。仅“等待一个最大上传时间”不足以证明静止。无法证明时持续保留墓碑并周期核对/清理，容量不足拒绝新上传，不能为省空间遗忘。迁移也必须保留这些未终结清理记录及对象版本。
 
 ### 8.17 版本升级、旧事件桥与回滚
 
@@ -547,6 +567,12 @@ schemaVersion、协议版本、事件 schemaVersion、流程版本和部署 epoc
 
 **迁移身份与检查点补全：** 旧主键不要求是 UUID。迁移前冻结映射版本，从源资源、表、原主键和消费者形成唯一源身份，在目标事务中建立不可变 old→new 映射（内部 UUID 只分配一次）；重新导入必须查映射并校验摘要。已有外部 message/invocation/idempotency key 原样保留，内部换 UUID 不得改变对端去重键。不能证明历史租户、消费者或外部键的记录隔离待人工核对，不猜默认域。批次阶段为 COPYING → VERIFIED → ACTIVATED；目标复制和游标提交原子，丢回执按 migrationId/批次查询；跨库中断只重放相同映射。VERIFIED 必须校验引用闭包、墓碑、结果/计时器、原状态及总数摘要，非仅业务载荷。ACTIVATED 之前有停旧端/撤权证据且所有目标记录禁止 claim；释放目标 claim 与本资源控制 epoch 切换原子完成。多资源分别保持屏障，不能宣称跨库原子切换。
 
+**迁移屏障覆盖全部入口：** 停 claim 不等于停写。每个修改事务以本资源控制行的兼容共享锁校验 epoch/屏障并持有至提交；屏障切换取排他锁等待这些短事务结束，避免“检查开放后、屏障完成才提交”的窗口。它不是每请求更新同一计数行，锁序排在 §8.16 全部业务锁之前；旧实现不支持该协议时依旧必须停止并撤权。搬迁期间 submit/accept、结果回调、管理命令、timer、GC、上传完成及读取租约变更均不得绕过屏障。未持久接受的回调返回可重试维护错误，不伪 ACK；已接受的回调连同未消费标记复制。普通查询在源端保持只读权威，需新载荷租约的查询暂不可用；目标激活前不能对缺失记录返回权威 NotFound。等待者收到迁移/暂不可用后仍按原键查证，期限与取消保持有效。
+
+屏障前排空/撤销载荷读者和上传者，不能把仍活跃的 reader lease 或 worker token 当作业务状态复制使用；无法排空则阻止激活。保留 message/invocation/receipt、命令结果、owner incarnation/generation、原 dueAt 和清理责任；清除旧执行 token，目标激活后生成新 token。旧 LEASED timer 恢复为同 generation 的 SCHEDULED，过期按有界批次重新核验 owner；业务 RUNNING/外部 UNKNOWN 仍按原恢复契约查证，不能统一重置 READY。旧 epoch 的事务、读取续租和上传完成均被拒绝。逻辑引用保持有效，由可信路由解析新的权威资源，不向业务暴露可任意改写的物理数据库地址。激活事务同时记录本资源批次 ACTIVATED、控制 epoch 和入口开放；跨资源切换失败保持未切换部分屏障，不能同时宣称源和目标都可写。
+
+事务桥也必须遵守屏障锁序：需要 enqueue 的业务事务在执行第一条业务 SQL 前显式 enlist durable 资源并取得受保护的 TransactionProof，直到外层事务结束才释放；已执行业务 SQL 后才首次 enlist 的调用拒绝，不临时反向获取控制锁。此为 database 事务桥新增要求，须通过文档中的显式接口变更评审，不假定现有 DbSession 已具备。屏障管理事务仅切控制状态，不持控制排他锁再执行业务搬迁；切换提交后才复制。迁移恢复不复用旧执行租约，清除 token/lease 的导入记录携带隔离标记，激活时按模式原子转换为可领取或 UNKNOWN，满足状态与租约成对约束。
+
 ### 8.18 r5 交叉评审与补充验收
 
 | 级别 | r5 矛盾/遗漏 | r6 处理 |
@@ -560,7 +586,7 @@ schemaVersion、协议版本、事件 schemaVersion、流程版本和部署 epoc
 
 新增 DC-23：RESULT 重复/丢回执不产生结果循环；DC-24：本地 handler 写入后拒绝，业务修改全部回滚；DC-25：换 messageId 保持同 invocation/startKey，不重复动作/流程；DC-26：结果先于 ACK、完成与续租竞争、锁内跨期限，仅一次合法推进；DC-27：迁移中断/回滚、旧 worker 复活和不兼容状态写入被阻止；DC-28：清理身份保护、payload 引用与活动流程竞争，不丢恢复依据。
 
-公共 API 验收还包括：Kotlin/Native 编译样例、取消语义、不可伪造/过期事务证明、嵌套事务待提交句柄不可当 ACK，以及零业务 DB 的外部 API 编排。schema 验收必须运行真实 DDL、唯一约束、CHECK、并发锁顺序和 expand/contract 测试；文档构建不能证明这些用例已通过。全部 DC-01–34 与 API/schema/协议测试是整套交付条件。
+公共 API 验收还包括：Kotlin/Native 编译样例、取消语义、不可伪造/过期事务证明、嵌套事务待提交句柄不可当 ACK，以及零业务 DB 的外部 API 编排。schema 验收必须运行真实 DDL、唯一约束、CHECK、并发锁顺序和 expand/contract 测试；文档构建不能证明这些用例已通过。全部 DC-01–40 与 API/schema/协议测试是整套交付条件。
 
 ### 8.19 r6 交叉评审：恢复契约的可表达性
 
@@ -574,6 +600,19 @@ schemaVersion、协议版本、事件 schemaVersion、流程版本和部署 epoc
 | P1 | 旧 ID 与新 UUID、跨库 checkpoint 缺持久映射协议 | 映射/批次表、保留外部键、核对引用闭包、停旧端后解锁新 claim | DC-34 |
 
 本轮只完成规范闭环检查，不等于实现可发布。尚未执行真实 schema/锁竞争/迁移故障测试，也未编译候选 API。下一次实现准入仍要求这些设计通过评审，并将具体 SQL 与平台编译样例作为第一批验证产物；不直接跳到运行 worker 或迁移生产数据。
+
+### 8.20 r7 竞态评审与修订
+
+| 级别 | r7 问题/触发时序 | r8 规则 | 验收 |
+|---|---|---|---|
+| P1 | 查询多表跨更新/清理；首次读后结果完成但监听尚未登记 | 同一本地快照；身份墓碑原子替换；登记后重读、有界轮询；Expired/目标选择补齐 | DC-35 |
+| P1 | 两个请求都未查到管理命令，随后各自决定结果；权限撤销后重复读取旧结果 | 唯一占位与目标决策/结果/审计同事务；重试重读并重新鉴权 | DC-36 |
+| P1 | 旧 timer worker 丢失 token，却按“失效触发记 CANCELLED”取消新领取者 | token 失效不写；generation 失效且仍有所有权才能取消；owner 代次防复用 | DC-37 |
+| P1 | 查询拿到对象引用后 GC 删除；上传超时后迟到 PUT 复活对象 | 有界读取租约；不可变对象；存储侧静止证明或保留清理责任，时间经过不等于 fencing | DC-38 |
+| P1 | 迟到证据规则允许确认，A 表却只允许从 LEASED 确认 | 独立证据事务允许非终态投递补确认，保持原身份、撤 token，不重执行业务 | DC-39 |
+| P1 | 迁移只停发布/claim，回调、管理、GC 仍会改快照；旧 lease 被复制 | 全入口事务屏障；复制逻辑身份，不复制执行权；查询权威与激活一并定义 | DC-40 |
+
+补充存储验收：所有管理/计时/载荷路径遵守同一锁序；在锁获取前后、提交前后和通知登记前后设置确定性故障点。载荷适配须分别证明不可覆盖、权限失效与在途写排空能力；不能由数据库测试代替对象存储测试。控制行共享锁的多核开销需基准验证，后续若改机制必须仍通过屏障窗口测试。本轮仍只修规范，40 项是待执行的验收要求，不是通过记录。
 
 ## 9. CQRS：按需分离，不强制事件溯源（P1）
 
@@ -730,10 +769,10 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 | N12-04 | A / P0 | 调用预算、结构化并发与 drain（§6、§11.6） | 可控时钟、取消、超时和停机竞态测试 |
 | N12-05 | A / P0 | 诊断 SPI、trace/metrics 可选适配（§11.4） | 敏感数据检查、过载与关闭验证 |
 | N12-06 | A / P0 | 静态/DNS 发现、客户端池与故障策略（§11.5–11.6） | 多实例、断网、恢复、无重试风暴 |
-| N12-07 | A / P0 | neton-durable、内部数据库桥、可靠交付与恢复（§8.3–8.7、8.11–8.19） | API/schema/迁移及事件边界评审；DC-01–05、09–15、17–21、23–34 中适用场景 |
+| N12-07 | A / P0 | neton-durable、内部数据库桥、可靠交付与恢复（§8.3–8.7、8.11–8.20） | API/schema/迁移及事件边界评审；DC-01–05、09–15、17–21、23–40 中适用场景 |
 | N12-08 | A / P0 | 性能回归、可复现证据与发布闸门 | 普通 HTTP/WS/多系统混合负载 |
 | N12-09 | B / P1 | 一个真实注册中心适配 | 租约、权限、过期、滚动退出 |
-| N12-10 | B / P1；整套交付必选 | neton-saga 完整闭环（§8.8–8.19），非仅原型 | 依赖 N12-07；DC-01–34 及三服务业务不变量、运维与迁移 |
+| N12-10 | B / P1；整套交付必选 | neton-saga 完整闭环（§8.8–8.20），非仅原型 | 依赖 N12-07；DC-01–40 及三服务业务不变量、运维与迁移 |
 | N12-11 | B / P1 | CQRS 示例与投影支持 | 重复、乱序、重建、读写一致性说明 |
 | N12-12 | B / P1 | 开发设施与集成测试工具 | 可重复启动/清理，不影响宿主环境 |
 | N12-13 | 调研 / P2 | 独立统一网关可行性 | 与现成代理的差距、成本和实测，不先建产品 |

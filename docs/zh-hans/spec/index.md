@@ -62,5 +62,5 @@
 
 ## 项目管理
 
-- [Neton 1.2.0 TODO 草案](./roadmap-1.2.0.md) — 五项基础建设参考；durable/Saga 公共 API、状态/确认契约、schema 与迁移、34 项故障验收；CQRS 与网关边界 **(Draft r7；待评审，非已实现能力或发布承诺)**
+- [Neton 1.2.0 TODO 草案](./roadmap-1.2.0.md) — 五项基础建设参考；durable/Saga 公共 API、状态/确认契约、schema 与迁移、40 项故障验收；CQRS 与网关边界 **(Draft r8；待评审，非已实现能力或发布承诺)**
 - [路线图 v1](./roadmap.md) — 9 大方向、P0-P3 优先级
