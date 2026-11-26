@@ -1,8 +1,8 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r14 · 2026-11-26 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r15 · 2026-11-27 · 待评审，不是已实现能力或发布承诺。**
 >
-> 本次核对的框架源码 `gradle.properties` 为 `1.1.2`；本文规划目标为 1.2.0，不修改版本号、不启动发布。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
+> 初始核对的框架源码版本为 `1.1.2`；r15 同步远端已有的 1.2.0 候选配置，不启动发布。规范功能仍不实施；依赖升级作为独立构建维护执行并记录验证边界。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
 ## 1. 定位与取舍
 
@@ -34,6 +34,35 @@
 源码交叉核对：`neton-core/.../event/DomainEventBus.kt` 已有 RETRYABLE 持久化端口和缺失设施校验，不能把 outbox 描述成从零新增。持久化表、迁移与业务运维实现继续遵守现有事件规范的应用层边界。
 
 [旧路线图](./roadmap.md)保留历史。本文是新的候选规划；发生冲突时，以具体有效契约和实现证据为基准，逐项提变更，不把历史 TODO 当作当前能力缺口。
+
+### 2.1 1.2.0 稳定依赖升级清单（2026-11-27）
+
+大版本升级不沿用未经复核的旧工具链。以 Maven Central 的对应坐标 `maven-metadata.xml`、官方 release 和 Gradle 发布接口核查；排除 RC/Beta/快照，不把 `release` 字段中的预发布版直接当稳定版。选择后锁定具体版本，不能使用 `latest`/动态版本。下表是框架版本目录、模块直接坐标与构建工具的核查结果，不冒称已检查所有独立仓库、所有传递库或所有目标平台。
+
+| 依赖/工具 | 升级前 | 本轮稳定版本/处理 |
+|---|---|---|
+| Kotlin 插件/stdlib/reflect | 2.4.20 | 2.4.21；不选 2.5.0-RC2 |
+| KSP 插件/API/测试运行组件 | 2.3.12 | 2.3.14；测试运行组件必须一起对齐 |
+| Gradle wrapper | 8.14.4 | 9.9.2；使用官方 SHA-256，wrapper 由任务重新生成 |
+| kotlinx-serialization JSON/Protobuf | 1.12.0 | 1.13.0 |
+| kotlinx-io bytestring | 0.9.1 | 0.9.3（版本目录条目，不把未使用条目算作运行期依赖） |
+| sqlx4k postgres/mysql/sqlite | 1.17.0 | 1.18.0；保留单驱动 variant，不同时链接三个驱动 |
+| rethis | 0.4.4 | 0.4.5 |
+| coroutines core/test | 1.11.0 | 已是核查到的最新稳定版 |
+| datetime | 0.8.0 | 保持；不切到面向旧 API 的 0.6.x-compat 分支 |
+| kctfork core/ksp | 0.14.0 | 已是最新稳定版，但其 POM 内嵌 Kotlin 2.4.20/KSP 2.3.12；测试配置显式对齐新工具链 |
+| Konform | 0.11.1 | 已是最新稳定版；目前仅目录声明，不能把它当作现有验证执行依据 |
+| com.netonstream io/http/tls/websocket | 0.4.1 / 0.3.1 / 0.3.1 / 0.3.1 | 已是核查到的最新稳定产物；保留发布版本，不把兄弟源码当成新发行版 |
+| com.netonstream openssl | 4.1.0-1 | 已是核查到的最新稳定封装产物 |
+| GitHub checkout/setup-java/setup-python | v4 / v4 / v5 | v7.0.1 / v6.3.0 / v7.1.0 |
+| GitHub upload/download-artifact | v4 / v4 | v7.0.2 / v8.0.2，配套更新，须 CI 验证产物往返 |
+| Gradle Actions wrapper-validation | v3 | v6.4.1 |
+
+版本证据：[Kotlin 2.4.21](https://github.com/JetBrains/kotlin/releases/tag/v2.4.21)、[KSP 2.3.14](https://github.com/google/ksp/releases/tag/2.3.14)、[Gradle 稳定发布接口](https://services.gradle.org/versions/current)、[Maven Central](https://repo.maven.apache.org/maven2/)。测试工具的版本约束不能只升级 API：本轮初次 KSP 测试已复现新 API 与旧执行组件混用造成 NoSuchMethodError，必须修正依赖解析，不修改断言绕过。
+
+**升级验收与边界：** KSP 编译测试、真实 Native 消费者、序列化往返、三个数据库 variant 的编译/事务验证、Redis 集成、已发布协议栈与本地 composite 两种模式分别验收；不能凭 dependency resolution 或 JVM 测试认定 Native ABI 安全。CI Actions 更新要在真实 runner 验证。保留现有 JDK 17 和 PostgreSQL/Redis 服务版本作为兼容性测试基线，它们不是随库版本一起替换的数据迁移对象；最新服务端版本另加覆盖，不能删除旧兼容覆盖。独立协议仓库的工具链升级要在对应仓库单独验证发布，本轮不擅自重发它们。所有传递依赖通过实际解析报告再评估，不全局强制最高版本破坏上游 ABI；安全例外、待验证项和阻塞必须列明，不将“配置已更新”标为发布完成。
+
+本轮已验证：KSP 编译测试 58/58；macOS ARM64（关闭本地源码替换）Core 95/95、HTTP 301/301、WebSocket 53/53；PostgreSQL/MySQL/SQLite 三个 variant 与 Redis 模块编译通过。validation 模块编译通过，但该模块 Native 测试任务无源码、被跳过，不能算测试通过。发布基线规则测试 15/15、离线策略检查、已发布依赖模式的 Gradle `help --warning-mode=fail` 与 wrapper 官方摘要检查通过；升级所触发的框架构建脚本弃用语法已作等价迁移，没有放宽 warning 闸门。本地 composite 的 `help` 配置通过，但兄弟仓库仍有弃用警告，未视为该模式严格门禁/全量运行通过。Linux/Windows、真实数据库与 Redis 运行、新版 Actions 和全部传递依赖兼容性仍需完整发布验收；以上数字不是本草案新功能的实现证据。
 
 ## 3. 架构边界
 
@@ -824,7 +853,7 @@ AI gateway 的模型路由、计费和协议转换是业务产品，不等于通
 
 **r14 源码复审补充：** 同一基线的 `ControllerProcessor.generateHandlerCall` 对非空 Header 缺失使用空字符串，Cookie 缺失则报 REQUIRED；`generateArgConversion` 对非字面量默认值存在警告后回退零值的行为。因此不能用 Kotlin 非空性/源码默认值直接声明 required/default。必须以实际绑定器的缺失、空串、重复值和转换行为做对照；若运行行为本身与声明矛盾，先修绑定契约再生成，不用文档掩盖。`validation/ValidationSupport.validatorRefFor` 能按名称发现依赖模块校验器，但不能据此还原其约束；契约片段还必须证明该操作实际调用了该校验器。`SecurityPreHandle` 的匿名放行由路由声明、组白名单和组策略共同决定；导出器不得另写一套覆盖优先级。
 
-**KSP 工具链事实与候选升级：** 当前 `gradle/libs.versions.toml` 锁定 **2.3.12**，`neton-ksp/build.gradle.kts` 的 symbol-processing-api 复用该版本，并非已使用 2.3.14。[Google KSP 2.3.14 发布说明](https://github.com/google/ksp/releases/tag/2.3.14)包含并发执行时库符号丢失修复、context parameter 支持、注解 vararg/默认参数修复等，适合作为 1.2.0 升级候选；本次只记录、不升级。插件与 processor API 同步升级，须验证当前 Kotlin/Gradle、Native 消费构建、多模块并发、无改动增量及注解默认值。KSP 是符号处理器，不是 OpenAPI 实现，也不能求值任意函数体、默认表达式或 DSL；版本升级不改变这条边界。
+**KSP 工具链事实与升级：** r14 检查时 `gradle/libs.versions.toml` 锁定 2.3.12，r15 按用户要求升级配置至 **2.3.14**，`neton-ksp/build.gradle.kts` 的 symbol-processing-api 复用同一版本。[Google KSP 2.3.14 发布说明](https://github.com/google/ksp/releases/tag/2.3.14)包含并发执行时库符号丢失修复、context parameter 支持、注解 vararg/默认参数修复等。插件与 processor API 同步升级，仍须验证 Kotlin/Gradle、Native 消费构建、多模块并发、无改动增量及注解默认值；配置更新不代表全部验收完成。KSP 是符号处理器，不是 OpenAPI 实现，也不能求值任意函数体、默认表达式或 DSL；版本升级不改变这条边界。
 
 | 信息 | 权威来源 | 不允许的做法 |
 |---|---|---|
@@ -879,6 +908,14 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 4. 片段随生产模块作为构建元数据产物发布并由 Gradle 显式解析，不依赖临时生成目录/mavenLocal，也不向业务源码追加手写 manifest。记录格式版本、模块/variant、类型身份、serializer/validator 身份与摘要；common/平台重复片段按身份和内容去重，冲突失败。对没有约束的第三方标准类型不强求它发布 Neton 片段，可用已验证内建映射；有未知校验/serializer 语义的类型才要求 contributor 或失败。
 5. 片段输出声明正确的 KSP 源依赖；聚合任务将片段集合、依赖版本和 profile 配置全部计为输入。删除/移动源码、移除依赖、修改安全配置、增量无脏文件和并行多 target 构建后，必须与 clean build 得到相同契约；旧片段不能残留。以上复用 KSP/Gradle 产物机制，不新建契约注册服务或另一套构建系统。
 
+**r15 装配与产物一致性补充（约束上述步骤，不新建第二套装配框架）：**
+
+- 当前 `RoutingComponent.init` 同时读取 routing 配置、建立限流 store 并绑定服务。契约模式不得直接调用该 init，也不能执行用户构造器/闭包后才尝试屏蔽 I/O。应从现有路径提取同一份纯配置归并与路由/策略描述，运行时和契约模式共同消费；handler 工厂保持未求值。无法拆出的动态注册明确报缺口，不以虚假的 Context 或空数据库替身模拟“装配成功”。纯 typed DSL 复用描述层；不新增一份由业务维护的 OpenAPI 路由表。“纯”是已验证的描述构建入口契约，不是 KSP 能证明任意 Kotlin 闭包无副作用；导出器不能自行调用未知应用入口。未接入描述层的旧 DSL 保持运行兼容，导出需显式适配或报告缺口，不承诺自动安全执行任意注册代码。
+- 生成时冻结路由、绑定、serializer 和策略描述的同一个快照；不能分别读取配置后拼接。产物区分结构摘要（不含绝对路径/时间戳）与构建来源（提交、依赖、工具链），将公开脱敏内容与内部验证数据分开。profile 的有效挂载、认证和编码配置必须纳入输入，密钥/凭据不进入产物或可猜测的公开摘要。启用契约一致性闸门时，在真实应用装配冻结点比较语义摘要；不匹配拒绝该 profile 的契约发布/部署验收，不启动另一套扫描器。热变更若会影响契约，须产生新快照并重新验证；v1 不做后台自动热同步文档。
+- 库片段描述声明和可用 validator，消费者选择实际调用路径后才赋予约束；不能因为存在校验器就给所有使用该 DTO 的响应/未校验输入套上同样约束。序列化可空/缺省/命名受应用配置影响时，在装配阶段绑定，生产片段只记录所需配置和 serializer 身份，不预先把生产模块的默认配置当成应用配置。
+- 片段和所解析的二进制/klib 必须来自同一 Gradle component/variant 与发布集合，校验对应摘要；不能仅凭模块版本字符串配对。旧依赖无片段可使用显式已验证映射，不能读取工作区另一个版本的源码来补。平台差异产生对应 target/profile 产物，不合并成虚假的平台并集。
+- 发布模块片段只在该轮处理完成、延迟符号解决后有效；未完成符号必须导致失败而非少导出。多轮/多 target 使用隔离输出；同一最终产物只有一个聚合任务写入，校验完成后原子替换。构建失败不得把上轮成功文件当作本轮输出；发布任务依赖本次成功任务及摘要。增量输入同时包含 processor/格式版本、serializer 配置、依赖片段集合及影响契约的配置文件，不能只追踪 Kotlin 源码。无脏文件跳过处理也必须保留并验证有效产物，不清空片段。
+
 **核心与完整支持的差距与决策：** 不按规范章节数虚构“支持百分比”。输出合法的 3.2.1 文档、准确描述 Neton 路由，与能导入并处理所有合法 OpenAPI 文档是三种不同承诺。1.2.0 优先前两项；导入仅指本核心范围的契约校验/差异比较，不额外承诺通用 server stub、任意外部文档往返或通用客户端生成器。OA-05 的客户端选定经验证的工具链完成，不为了该验收自建跨语言 SDK 平台。
 
 | 维度 | 1.2.0 核心承诺 | 扩大到完整处理的额外工作 |
@@ -892,7 +929,7 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 
 **AI 使用边界：** 可生成可编译客户端、测试骨架和请求/响应示例；契约附 routeId、buildId、schema 摘要及内部源码映射，公开产物移除本机绝对路径。不得从 OpenAPI 自动将全部写操作暴露为 Agent/MCP 工具；如需工具化，必须另外配置白名单、身份、审批/幂等与预算。WebSocket 只描述 HTTP 握手和协议链接，不把双向消息冒充 HTTP operation；RPC/HTTP3 不为追求单一格式重写各自契约。
 
-**验收 OA-01～15：**
+**验收 OA-01～18：**
 
 | ID | 验收目标 |
 |---|---|
@@ -911,6 +948,9 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 | OA-13 | Header/Cookie/query 的缺失/空串/默认/重复值与 binder 一致；外来同名注解不识别；仅实际执行的校验进入约束 |
 | OA-14 | DSL/profile 装配不触发业务 I/O；多重挂载、host/组变体、等价 path 模板不覆盖丢失；实际路由与导出/排除清单闭合 |
 | OA-15 | 正式依赖片段与本地源码结果一致；删除依赖/路由、修改策略、增量/clean、多 target 并行一致；KSP 升级通过注解默认值和库符号回归 |
+| OA-16 | 契约装配不调用组件 init/业务构造器；I/O 型动态注册明确失败；同一冻结快照与真实运行配置一致，配置漂移可检测且不泄漏 secrets |
+| OA-17 | 相同 DTO 在已验证请求、未验证请求和响应中不误共享约束；消费者 serializer 配置、错误 variant/二进制与片段不匹配被识别 |
+| OA-18 | 多轮未解决符号、聚合失败、旧输出残留、无脏文件及并发 target 场景不发布缺失/过期契约；输出原子可见且与 clean build 一致 |
 
 ### 11.4 可追溯诊断：参考 Rust 与 Swift 的分层
 
@@ -974,7 +1014,7 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 |---|---|---|---|
 | N12-01 | A / P0 | 当前能力、平台、依赖和运行验证矩阵 | 每项有源码与测试依据，缺口明确 |
 | N12-02 | A / P0 | 应用 Manifest、架构约束与构建追溯（§11.2） | 确定性生成、错误装配反例、源码定位 |
-| N12-03 | A / P0 | API 契约一致性、OpenAPI 3.2.1 核心与自然协同的语义注解（§11.3–11.3.1） | OA-01～15；schema/serializer/客户端往返、跨模块契约、注解合并、装配/增量一致性与安全发布负例 |
+| N12-03 | A / P0 | API 契约一致性、OpenAPI 3.2.1 核心与自然协同的语义注解（§11.3–11.3.1） | OA-01～18；schema/serializer/客户端往返、跨模块契约、注解合并、装配/增量一致性与安全发布负例 |
 | N12-04 | A / P0 | 调用预算、结构化并发与 drain（§6、§11.6） | 可控时钟、取消、超时和停机竞态测试 |
 | N12-05 | A / P0 | 诊断 SPI、trace/metrics 可选适配（§11.4） | 敏感数据检查、过载与关闭验证 |
 | N12-06 | A / P0 | 静态/DNS 发现、客户端池与故障策略（§11.5–11.6） | 多实例、断网、恢复、无重试风暴 |
