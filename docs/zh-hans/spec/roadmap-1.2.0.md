@@ -1,6 +1,6 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r22 · 2026-11-27 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r23 · 2026-11-27 · 待评审，不是已实现能力或发布承诺。**
 >
 > 初始核对的框架源码版本为 `1.1.2`；r15 同步远端已有的 1.2.0 候选配置，不启动发布。规范功能仍不实施；依赖升级作为独立构建维护执行并记录验证边界。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
@@ -185,6 +185,8 @@ r15 已验证：KSP 编译测试 58/58；macOS ARM64（关闭本地源码替换�
 
 固定期限与注销目标在失败路径上也不更换：已过期签发结果不返回 Set-Cookie；恢复不能更新 issuedAt/expiresAt，不能只刷新 Cookie 的 Max-Age 伪装成凭据续期。注销重试若发现权威代次缺失、低于原目标 e 或无法读取，应失败/报告未知，不重置代次、不把状态回退解释为“尚未注销”。已完成目标的重试确认不需要清 Cookie；真正退出入口的 Cookie 清理仍可能与并发新登录响应竞争，服务端保证撤销目标正确，不保证网络响应最后到达的顺序。
 
+r23 澄清“原凭据认证”：可选结果恢复验证原 refresh 的签名、issuer/audience、类型、域/主体、期限及其与已提交结果的精确绑定，同时检查当前会话撤销状态。原 refresh 的 consumed 状态仅在这条“读取同一结果”路径中允许，不能要求它仍可首次兑换，也不能跳过其余认证检查。首次兑换、同结果恢复、已替换结果拒绝是不同分支；现有 `claimRefresh` 的并发宽限放行不是恢复证明。缺失结果记录时拒绝恢复，不能按首次兑换重新创建结果。可选恢复只输出已确认的原结果，不重新调用通用签发流程，不赋予原凭据发起下一次刷新或读取其他结果的权限。默认不支持恢复的桥无需新增记录或分支。
+
 **验收 WS-AUTH-01～11（待实现）：**
 
 | ID | 验收目标 |
@@ -199,7 +201,7 @@ r15 已验证：KSP 编译测试 58/58；macOS ARM64（关闭本地源码替换�
 | WS-AUTH-08 | touch/HTTP refresh 与单端/全端注销按两种提交顺序执行；登记前在途复核、登记中撤销、丢通知；过期或撤销代次不能被迟到成功覆盖 |
 | WS-AUTH-09 | touch 在途新增活动、跨 HTTP/WS 并发 touch、存储故障和期限边缘；不回退期限、不无界积压、不复活过期记录；关闭后队列、业务 scope 与索引释放 |
 | WS-AUTH-10 | 精确期限公式、两层缓存、滞后副本、非法 A/L、调用耗时超过 L、校时/休眠恢复；同会话不同凭据截止分别执行，已知到期不被服务故障掩盖 |
-| WS-AUTH-11 | 刷新检查后注销再签名、签名延迟至过期、响应丢失与迟到 Cookie；未知不分叉/清 Cookie，固定 e 重试不递增新代次且缺失/回退状态不复活；可选恢复在继任凭据已消耗/替换后拒绝、不沿链取新 token、不重算 TTL；浏览器乱序不冒称最终 Cookie 保证 |
+| WS-AUTH-11 | 刷新检查后注销再签名、签名延迟至过期、响应丢失与迟到 Cookie；固定 e 重试不递增新代次且缺失/回退状态不复活；可选恢复允许已消耗原凭据仅取精确绑定结果，错 issuer/audience/域/类型、缺记录或继任已替换时拒绝，不重新签发/重算 TTL；浏览器乱序不冒称最终 Cookie 保证 |
 
 参考 [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html) 的握手 Cookie 与帧边界，以及 [OWASP WebSocket Security](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html) 的长期会话复核/注销要求。本文的默认窗口是 Neton 候选策略，不是协议规定；不新增内嵌身份服务器或第二套 token 刷新协议。
 
@@ -1027,6 +1029,10 @@ suspend fun getOrder(@PathVariable id: Long): OrderView = orders.get(id)
 
 r22 收紧去重边界：跨配置关联使用 Gradle 实际选中的 component/variant 及稳定声明身份。菱形依赖重复到达同一选中产物的同一片段可以去重；不同产物的同名声明不能按名称或内容相同自动合并，冲突须定位来源。common 与 actual 的合法归并必须有明确关联。片段去重发生在声明层，不消除最终挂载实例；同一 Controller 被两个前缀/路由组挂载，分别保留有效配置与 operation 身份。不同来源注册了相同 method/path 时仍执行既有路由冲突规则，不用“去重”选赢家。库片段的二进制完整性匹配仍是必要条件，不因语义相同放过错误 target/variant；无需新增通用依赖匹配器。
 
+r23 修正“既有路由冲突规则”的适用范围：当前 `DefaultRequestEngine.registerRoute` 对同组、同 method/pattern 的重复注册只告警并保留第一个，故仅比较 `getRoutes()` 与导出集合无法证明没有静默遗漏。1.2.0 契约装配必须在声明被丢弃之前捕获来源和冲突；启用契约发布时，无法解释的重复注册阻止导出，不能依赖告警或把丢弃声明列入 E 伪装成主动排除。挂载前的组内冲突和挂载后有效地址冲突都须校验，复用路由注册/挂载描述，不新建另一套匹配器。菱形元数据去重不是重复运行注册的许可；只有已确认同一个元数据片段的重复读取可无损合并。同一稳定挂载身份被生成两次也应报错，不能先转 Set 再丢掉重数。
+
+R 的范围是最终选定 profile 的显式注册路由实例，不是所有可能返回 HTTP 响应的分支。当前 dispatcher 在路由查找前处理 CORS preflight，这类框架策略以及通用未命中/错误响应仍进入有效策略描述与对应验收，不凭空生成任意路径的 OPTIONS/404 operation。显式注册的 OPTIONS/HEAD、静态资源挂载等仍须覆盖或有理由地排除；存在前置策略遮蔽或改变行为时必须反映到对应契约，不能因路由集合覆盖成立就忽略实际调度差异。
+
 上述边界参照 [KSP 增量处理](https://kotlinlang.org/docs/ksp-incremental.html)、[Gradle 依赖锁](https://docs.gradle.org/9.9.2/userguide/dependency_locking.html) 与 [SkipWhenEmpty](https://docs.gradle.org/9.9.2/javadoc/org/gradle/api/tasks/SkipWhenEmpty.html)。验收只要求确定性构建任务与当前解析图闭合，不引入在线产物注册中心、跨机器锁或“所有构建必须全量重跑”。
 
 依据 [KSP 多轮处理](https://kotlinlang.org/docs/ksp-multi-round.html) 与 [Gradle 构建缓存概念](https://docs.gradle.org/9.9.2/userguide/build_cache_concepts.html) 核对以上边界；这是实现前置，不新增独立 processor 编排平台或缓存系统。
@@ -1076,8 +1082,8 @@ r22 收紧去重边界：跨配置关联使用 Gradle 实际选中的 component/
 | OA-24 | 后续 processor 轮生成 Controller/DTO，早轮符号未解析及处理失败；生成注册代码与契约集合一致，缓存命中不依赖 finish 再执行 |
 | OA-25 | A/B 两路由缓存恢复后只修改 A、删除 B、移除最后一条、再增加生成路由；注册/契约与 clean 一致，不能把 dirty 集合当模块全集 |
 | OA-26 | 顶层库不变但传递 serializer 变化、composite 替换、target/profile 切换及校验后依赖重选负例；库片段/应用 bundle/最终编译产物绑定无环且对应当前解析图 |
-| OA-27 | 缓存恢复后删空/恢复 KSP 路由且保留 DSL/其他模块；R/D/E 精确覆盖、不重叠、无幽灵导出，真空与全部排除分别验收；上游 NO-SOURCE 不掩盖片段缺失，不越权删除其他任务输出 |
-| OA-28 | 跨配置业务差异与 JVM/Native 正常差异、common/actual、菱形依赖同片段去重、同 Controller 多挂载保留、不同来源同名冲突、错误 target 同语义及合法传递升级；不要求整图相等，不以声明去重吞掉路由实例 |
+| OA-27 | 缓存恢复后删空/恢复 KSP 路由且保留 DSL/其他模块；R/D/E 精确覆盖，真空与全排除区分；显式 OPTIONS/HEAD 与 preflight 策略分开验收，集合覆盖不能掩盖前置调度行为；NO-SOURCE 不掩盖缺片段 |
+| OA-28 | 跨配置/common/actual 与合法传递升级、菱形片段去重及多挂载保留；同组重复注册、稳定挂载身份重复、挂载后冲突在丢弃前失败，不以 Set 掩盖重数；不同来源同名/错误 target 同语义不混用 |
 
 ### 11.4 可追溯诊断：参考 Rust 与 Swift 的分层
 
