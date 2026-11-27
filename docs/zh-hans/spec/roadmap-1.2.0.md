@@ -1,6 +1,6 @@
 # Neton 1.2.0 TODO：可验证的多系统协作底座
 
-> **Draft r23 · 2026-11-27 · 待评审，不是已实现能力或发布承诺。**
+> **Draft r24 · 2026-11-27 · 待评审，不是已实现能力或发布承诺。**
 >
 > 初始核对的框架源码版本为 `1.1.2`；r15 同步远端已有的 1.2.0 候选配置，不启动发布。规范功能仍不实施；依赖升级作为独立构建维护执行并记录验证边界。所有 TODO 都必须经过实现、测试和证据审查才能标为完成。涉及现有冻结契约的变化，先修订对应规范，不能凭本草案覆盖它们。
 
@@ -187,6 +187,8 @@ r15 已验证：KSP 编译测试 58/58；macOS ARM64（关闭本地源码替换�
 
 r23 澄清“原凭据认证”：可选结果恢复验证原 refresh 的签名、issuer/audience、类型、域/主体、期限及其与已提交结果的精确绑定，同时检查当前会话撤销状态。原 refresh 的 consumed 状态仅在这条“读取同一结果”路径中允许，不能要求它仍可首次兑换，也不能跳过其余认证检查。首次兑换、同结果恢复、已替换结果拒绝是不同分支；现有 `claimRefresh` 的并发宽限放行不是恢复证明。缺失结果记录时拒绝恢复，不能按首次兑换重新创建结果。可选恢复只输出已确认的原结果，不重新调用通用签发流程，不赋予原凭据发起下一次刷新或读取其他结果的权限。默认不支持恢复的桥无需新增记录或分支。
 
+r24 补充 HTTP 边界：恢复虽不生成新凭据，仍会返回敏感结果，必须复用刷新入口的传输与访问策略。Cookie 模式沿用实际 CSRF/Origin 防护，非浏览器模式沿用对应凭据认证，不能把“浏览器 CORS 允许读取”当服务端授权；预检成功也不授予恢复权限。恢复保持受控 POST 入口，不将 refresh 放在 URL，不记录 token/完整结果，敏感响应使用 no-store，并复用已有请求大小/速率限制。仅在“首次兑换禁止 consumed”这一判断上按已验证的恢复分支区别处理，不允许通过关闭整个安全链接入。默认不开启恢复，不另建凭据查询产品。
+
 **验收 WS-AUTH-01～11（待实现）：**
 
 | ID | 验收目标 |
@@ -201,7 +203,7 @@ r23 澄清“原凭据认证”：可选结果恢复验证原 refresh 的签名�
 | WS-AUTH-08 | touch/HTTP refresh 与单端/全端注销按两种提交顺序执行；登记前在途复核、登记中撤销、丢通知；过期或撤销代次不能被迟到成功覆盖 |
 | WS-AUTH-09 | touch 在途新增活动、跨 HTTP/WS 并发 touch、存储故障和期限边缘；不回退期限、不无界积压、不复活过期记录；关闭后队列、业务 scope 与索引释放 |
 | WS-AUTH-10 | 精确期限公式、两层缓存、滞后副本、非法 A/L、调用耗时超过 L、校时/休眠恢复；同会话不同凭据截止分别执行，已知到期不被服务故障掩盖 |
-| WS-AUTH-11 | 刷新检查后注销再签名、签名延迟至过期、响应丢失与迟到 Cookie；固定 e 重试不递增新代次且缺失/回退状态不复活；可选恢复允许已消耗原凭据仅取精确绑定结果，错 issuer/audience/域/类型、缺记录或继任已替换时拒绝，不重新签发/重算 TTL；浏览器乱序不冒称最终 Cookie 保证 |
+| WS-AUTH-11 | 刷新检查后注销再签名、签名延迟至过期、响应丢失与迟到 Cookie；固定 e 重试不递增新代次且缺失/回退状态不复活；可选恢复只允许 consumed 原凭据取精确绑定结果，错 issuer/audience/域/类型、缺记录或继任失效时拒绝，不重新签发/重算 TTL；Cookie 恢复的 CSRF/Origin、no-store、URL/日志脱敏与限流仍有效，预检成功不能绕过；不承诺浏览器最终 Cookie 顺序 |
 
 参考 [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html) 的握手 Cookie 与帧边界，以及 [OWASP WebSocket Security](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html) 的长期会话复核/注销要求。本文的默认窗口是 Neton 候选策略，不是协议规定；不新增内嵌身份服务器或第二套 token 刷新协议。
 
@@ -1033,6 +1035,13 @@ r23 修正“既有路由冲突规则”的适用范围：当前 `DefaultRequest
 
 R 的范围是最终选定 profile 的显式注册路由实例，不是所有可能返回 HTTP 响应的分支。当前 dispatcher 在路由查找前处理 CORS preflight，这类框架策略以及通用未命中/错误响应仍进入有效策略描述与对应验收，不凭空生成任意路径的 OPTIONS/404 operation。显式注册的 OPTIONS/HEAD、静态资源挂载等仍须覆盖或有理由地排除；存在前置策略遮蔽或改变行为时必须反映到对应契约，不能因路由集合覆盖成立就忽略实际调度差异。
 
+**r24 按实际分发路径收口：**
+
+- 当前 preflight 分支条件是 OPTIONS 加 Access-Control-Request-Method；未开启 CORS 返回 403，缺 Origin 返回 400，不允许的 Origin 返回 403，允许的 Origin 返回 204 和已配置的允许方法/头列表。它不查询目标路由，也不先执行该路由的登录/权限链；当前实现不会因为请求方法/头未列在允许列表中就改发拒绝状态。204 不证明路由存在、不证明浏览器允许后续请求，更不证明业务授权通过。导出器如实记录这项前置策略，不替运行时虚构 route-aware 预检；若以后修改行为，须同时更新共享策略与网络验收。
+- OPTIONS 没有该请求头时走普通路由；显式 OPTIONS handler 与预检分支分别验收，不把所有 OPTIONS 统一标为匿名，也不为预检新增逐路由手写声明。CORS 不是 CSRF 防护或业务权限系统，不以预检绕过安全链推导业务匿名。参考 [Fetch CORS-preflight](https://fetch.spec.whatwg.org/#cors-preflight-fetch)，原始 HTTP 状态/头与浏览器最终是否放行必须分开断言。
+- CORS 响应头属于最后写出契约：buffered 路径在 dispatch 后追加，streaming/live 路径须在提交前写入，upgrade 不依赖普通响应的 applyCors。现有 applyCors 用 putAll 写入 Vary，可能覆盖既有缓存维度，列为实现前置负例；要求验证并保留既有 Vary 成员（含 Vary: *），成功/错误/流式路径一致。这里只规定共享头合并与测试，不新增响应处理中间层；文档不能先声称实现已正确合并。
+- 挂载后冲突检查必须早于任何索引构建。当前 exactRoutes 经 associateBy 按最终路径建表，同 method/fullPattern 的后到声明会覆盖先到声明，掩盖冲突；仅检查注册表或索引构建后的 Map 都不够。参数模板同构冲突也要按共享的路径规则识别，不能仅比较参数名。合法的静态/参数/尾匹配重叠不一律判重复，保留运行时实际优先级并用对应请求验证；不能为让导出成功静默改变排序、另选 handler 或仅给“输掉”的路由加排除标记。
+
 上述边界参照 [KSP 增量处理](https://kotlinlang.org/docs/ksp-incremental.html)、[Gradle 依赖锁](https://docs.gradle.org/9.9.2/userguide/dependency_locking.html) 与 [SkipWhenEmpty](https://docs.gradle.org/9.9.2/javadoc/org/gradle/api/tasks/SkipWhenEmpty.html)。验收只要求确定性构建任务与当前解析图闭合，不引入在线产物注册中心、跨机器锁或“所有构建必须全量重跑”。
 
 依据 [KSP 多轮处理](https://kotlinlang.org/docs/ksp-multi-round.html) 与 [Gradle 构建缓存概念](https://docs.gradle.org/9.9.2/userguide/build_cache_concepts.html) 核对以上边界；这是实现前置，不新增独立 processor 编排平台或缓存系统。
@@ -1082,8 +1091,8 @@ R 的范围是最终选定 profile 的显式注册路由实例，不是所有可
 | OA-24 | 后续 processor 轮生成 Controller/DTO，早轮符号未解析及处理失败；生成注册代码与契约集合一致，缓存命中不依赖 finish 再执行 |
 | OA-25 | A/B 两路由缓存恢复后只修改 A、删除 B、移除最后一条、再增加生成路由；注册/契约与 clean 一致，不能把 dirty 集合当模块全集 |
 | OA-26 | 顶层库不变但传递 serializer 变化、composite 替换、target/profile 切换及校验后依赖重选负例；库片段/应用 bundle/最终编译产物绑定无环且对应当前解析图 |
-| OA-27 | 缓存恢复后删空/恢复 KSP 路由且保留 DSL/其他模块；R/D/E 精确覆盖，真空与全排除区分；显式 OPTIONS/HEAD 与 preflight 策略分开验收，集合覆盖不能掩盖前置调度行为；NO-SOURCE 不掩盖缺片段 |
-| OA-28 | 跨配置/common/actual 与合法传递升级、菱形片段去重及多挂载保留；同组重复注册、稳定挂载身份重复、挂载后冲突在丢弃前失败，不以 Set 掩盖重数；不同来源同名/错误 target 同语义不混用 |
+| OA-27 | 缓存恢复后删空/恢复 KSP 路由且保留 DSL/其他模块；R/D/E 精确覆盖，真空与全排除区分；预检在存在/不存在路径、CORS 关闭、缺/拒 Origin、方法/头不允许时分别检查原始响应和浏览器结果；显式 OPTIONS/HEAD 不误归类，错误/流式 Vary 与提交前注入验证，NO-SOURCE 不掩盖缺片段 |
+| OA-28 | 跨配置/common/actual 与合法传递升级、菱形片段去重及多挂载保留；同组重复注册、稳定挂载身份重复、挂载后冲突在 Set/associateBy 前失败；参数改名的同构冲突不漏报，合法静态/参数/尾匹配不误拒且实际优先级一致；不同来源同名/错误 target 同语义不混用 |
 
 ### 11.4 可追溯诊断：参考 Rust 与 Swift 的分层
 
